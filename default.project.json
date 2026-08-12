@@ -1,0 +1,82 @@
+{
+  "name": "forest-of-horrors",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$ignoreUnknownInstances": true,
+      "MonsterManager": {
+        "$path": "src/ReplicatedStorage/MonsterManager.luau"
+      },
+      "MonsterBombConfig": {
+        "$path": "src/ReplicatedStorage/MonsterBombConfig.luau"
+      }
+    },
+
+    "ServerStorage": {
+      "$ignoreUnknownInstances": true,
+      "ROBLOX_AIUtilities": {
+        "$path": "src/ServerStorage/ROBLOX_AIUtilities.luau"
+      },
+      "ROBLOX_DestroyService": {
+        "$path": "src/ServerStorage/ROBLOX_DestroyService.luau"
+      },
+      "ROBLOX_HumanoidList": {
+        "$path": "src/ServerStorage/ROBLOX_HumanoidList.luau"
+      },
+      "ROBLOX_PathfindingLibrary": {
+        "$path": "src/ServerStorage/ROBLOX_PathfindingLibrary.luau"
+      },
+      "ROBLOX_StateMachine": {
+        "$path": "src/ServerStorage/ROBLOX_StateMachine.luau"
+      },
+      "ROBLOX_ZombieAI": {
+        "$path": "src/ServerStorage/ROBLOX_ZombieAI.luau"
+      },
+      "MonsterBlasterServer": {
+        "$path": "src/ServerStorage/MonsterBlasterServer.server.luau"
+      },
+      "MonsterGunServer": {
+        "$path": "src/ServerStorage/MonsterGunServer.server.luau"
+      }
+    },
+
+    "ServerScriptService": {
+      "$ignoreUnknownInstances": true,
+      "MonsterSystem": {
+        "$path": "src/ServerScriptService/MonsterSystem.server.luau"
+      },
+      "MonsterBombSystem": {
+        "$path": "src/ServerScriptService/MonsterBombSystem.server.luau"
+      },
+      "LavaPoolZombieSpawner": {
+        "$path": "src/ServerScriptService/LavaPoolZombieSpawner.server.luau"
+      },
+      "GuardianMonsterSystem": {
+        "$path": "src/ServerScriptService/GuardianMonsterSystem.server.luau"
+      },
+      "ZombieAISystem": {
+        "$path": "src/ServerScriptService/ZombieAISystem.server.luau"
+      }
+    },
+
+    "StarterPlayer": {
+      "$ignoreUnknownInstances": true,
+      "StarterPlayerScripts": {
+        "$ignoreUnknownInstances": true,
+      "ScoreGui": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/ScoreGui.client.luau"
+      },
+      "MonsterHudClient": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterHudClient.client.luau"
+      },
+      "GameFlowHud": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/GameFlowHud.client.luau"
+      },
+      "MonsterContourClient": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterContourClient.client.luau"
+      }
+    }
+  }
+}
+}
