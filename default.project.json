@@ -55,8 +55,20 @@
       "GuardianMonsterSystem": {
         "$path": "src/ServerScriptService/GuardianMonsterSystem.server.luau"
       },
+      "CreepyMonsterSystem": {
+        "$path": "src/ServerScriptService/CreepyMonsterSystem.server.luau"
+      },
       "ZombieAISystem": {
         "$path": "src/ServerScriptService/ZombieAISystem.server.luau"
+      },
+      "MonsterGunDamageSystem": {
+        "$path": "src/ServerScriptService/MonsterGunDamageSystem.server.luau"
+      },
+      "MonsterDeathSafetySystem": {
+        "$path": "src/ServerScriptService/MonsterDeathSafetySystem.server.luau"
+      },
+      "WeaponInventoryGuard": {
+        "$path": "src/ServerScriptService/WeaponInventoryGuard.server.luau"
       }
     },
 
@@ -75,6 +87,12 @@
       },
       "MonsterContourClient": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterContourClient.client.luau"
+      },
+      "CameraController": {
+		"$path": "src/StarterPlayer/StarterPlayerScripts/CameraController.client.luau"
+	  },
+	  "WeaponTargetContour": {
+		"$path": "src/StarterPlayer/StarterPlayerScripts/WeaponTargetContour.client.luau"
       }
     }
   }

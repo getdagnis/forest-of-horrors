@@ -8,7 +8,9 @@ local MonsterManager = {}
 local MONSTER_CONFIG = {
 	["Drooling Zombie"] = { hp = 90, points = 1 },
 	["weird monster thing"] = { hp = 160, points = 3 },
-	["creepyMonster"] = { hp = 330, points = 5 },
+	["creepyMonster"] = { hp = 320, points = 5 },
+	["creepyMonsterOrange"] = { hp = 420, points = 10 },
+	["creepyMonsterWhite"] = { hp = 520, points = 15 },
 	["Monster"] = { hp = 430, points = 5 },
 	["Fouke Monster"] = { hp = 230, points = 3 },
 	["Smiler"] = { hp = 800, points = 10 },
