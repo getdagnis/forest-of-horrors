@@ -8,6 +8,9 @@
       "MonsterManager": {
         "$path": "src/ReplicatedStorage/MonsterManager.luau"
       },
+      "MonsterHitFeedback": {
+        "$path": "src/ReplicatedStorage/MonsterHitFeedback.luau"
+      },
       "MonsterBombConfig": {
         "$path": "src/ReplicatedStorage/MonsterBombConfig.luau"
       }
@@ -64,11 +67,17 @@
       "MonsterGunDamageSystem": {
         "$path": "src/ServerScriptService/MonsterGunDamageSystem.server.luau"
       },
+      "PlayerHealthSystem": {
+        "$path": "src/ServerScriptService/PlayerHealthSystem.luau"
+      },
       "MonsterDeathSafetySystem": {
         "$path": "src/ServerScriptService/MonsterDeathSafetySystem.server.luau"
       },
       "WeaponInventoryGuard": {
         "$path": "src/ServerScriptService/WeaponInventoryGuard.server.luau"
+      },
+      "WeaponSpawnSystem": {
+        "$path": "src/ServerScriptService/WeaponSpawnSystem.luau"
       }
     },
 

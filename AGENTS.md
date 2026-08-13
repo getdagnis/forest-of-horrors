@@ -24,6 +24,7 @@
 | `src/ServerStorage/MonsterBlasterServer.server.luau` | Active MonsterBlaster Tool’s `ServerScript` | It is **not** a ScriptService script. |
 | `src/ServerStorage/WeaponTemplates/ClientScript.luau` | MonsterGun Tool `ClientScript` LocalScript | Gun visual/client input. |
 | `src/ServerStorage/WeaponTemplates/MonsterBlasterClientScript.luau` | MonsterBlaster Tool `ClientScript` LocalScript | Blaster charge/beam/HUD client behavior. |
+| `src/ServerStorage/WeaponTemplates/MonsterBlasterGunSpawner.luau` | MonsterBlaster Tool `GunSpawner` Script | World-pickup replacement timer; defers for duplicate-pickup rejection. |
 | `src/ServerStorage/WeaponTemplates/WeaponCrosshairClient.luau` | Each gun Tool’s `WeaponCrosshairClient` **LocalScript** | Must be a child of each Tool, never a server Script. |
 | `src/StarterPlayer/StarterPlayerScripts/CameraController.client.luau` | `StarterPlayer.StarterPlayerScripts.CameraController` LocalScript | Global Z/FPS and RMB shoulder aim. |
 | `src/StarterPlayer/StarterPlayerScripts/WeaponTargetContour.client.luau` | `StarterPlayer.StarterPlayerScripts.WeaponTargetContour` LocalScript | Local pink/blue weapon target outline. |
@@ -82,7 +83,7 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 
 ### Inventory, camera, crosshair, and contours
 
-- `WeaponInventoryGuard` previously caused MonsterGun pickup/fall-over bugs. Keep it **disabled** until a narrowly tested replacement exists.
+- `WeaponInventoryGuard` leaves Roblox's default Tool pickup untouched. It destroys only the newly transferred second copy of a named unique weapon, leaving the first normal Tool in the player's Backpack/Character. Do not add prompts, return-to-world behavior, pivots, or AnchorScript changes.
 - There have been duplicate `WeaponRuntimeSystem` Scripts in `ServerScriptService`; keep all old duplicates **disabled**. They caused camera/tool conflicts.
 - There was a `SoundManager` Script containing a misplaced client `CameraController`; it must stay disabled because `Players.LocalPlayer` is nil on the server.
 - Do not leave `CameraAimSafety` active. It fights the actual controller by continuously restoring third-person camera state.

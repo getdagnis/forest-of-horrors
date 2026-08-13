@@ -43,18 +43,21 @@ end
 -- Find a part we can use to read/move the monster's position.
 -- Recursive search so we find root parts nested in sub-models
 -- (e.g. creepyMonster's HumanoidRootPart lives inside its "Noob" child).
+-- Falls back to any BasePart so models like the bomb "Monster" (which
+-- has no standard root part) are still tracked.
 local function getRootPart(model)
 	return model.PrimaryPart
 		or model:FindFirstChild("HumanoidRootPart", true)
 		or model:FindFirstChild("Torso", true)
 		or model:FindFirstChild("Head", true)
+		or model:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function isMonster(model)
 	return MonsterManager.getConfig(model) ~= nil
 end
 
--- homeZone[model] = the zone the monster belongs to, or nil if it belongs outside.
+-- homeZone[model] = the zone the monster belongs to, or false if it belongs outside.
 local registered = {}
 local homeZone = {}
 
@@ -68,21 +71,35 @@ local function registerMonster(model)
 			if model.Parent then
 				local r = getRootPart(model)
 				if r then
-					homeZone[model] = findZone(r.Position.X, r.Position.Z)
+					homeZone[model] = findZone(r.Position.X, r.Position.Z) or false
 				end
 			end
 		end)
 		return
 	end
 	local p = root.Position
-	homeZone[model] = findZone(p.X, p.Z)
+	-- Use `false` sentinel instead of nil so the key stays in the table.
+	-- In Lua, t[key] = nil removes the key, which would make the monitor
+	-- loop skip monsters that belong outside the safe zone.
+	homeZone[model] = findZone(p.X, p.Z) or false
 end
 
 local function teleport(model, targetPos)
 	local root = getRootPart(model)
 	if not root then return end
-	-- Preserve the monster's current rotation.
-	root.CFrame = CFrame.new(targetPos) * (root.CFrame - root.CFrame.Position)
+	-- If the root part is a proper assembly root (PrimaryPart/HRP/Torso/Head),
+	-- move it directly so welded assemblies follow. Otherwise use PivotTo
+	-- so all parts in the model move together (e.g. bomb Monster model).
+	local isProperRoot = root == model.PrimaryPart
+		or root.Name == "HumanoidRootPart"
+		or root.Name == "Torso"
+		or root.Name == "Head"
+	if isProperRoot then
+		root.CFrame = CFrame.new(targetPos) * (root.CFrame - root.CFrame.Position)
+	else
+		local pivot = model:GetPivot()
+		model:PivotTo(CFrame.new(targetPos) * (pivot - pivot.Position))
+	end
 end
 
 -- Given a point inside a zone, return a point just outside the nearest edge.

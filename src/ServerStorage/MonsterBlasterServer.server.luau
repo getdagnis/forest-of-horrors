@@ -1,3 +1,4 @@
+-- MonsterBlaster ServerScript
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -6,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 local tool = script.Parent
 local shootEvent = tool:WaitForChild("ShootEvent")
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
+local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFeedback"))
 
 local MIN_DAMAGE = 150
 local MAX_DAMAGE = 450
@@ -14,8 +16,6 @@ local GROUND_SHOCKWAVE_RADIUS = 20
 local GROUND_SHOCKWAVE_DAMAGE = 150
 local FLASH_COLOR = Color3.fromRGB(62, 169, 255)
 local BOMB_MONSTER_NAME = "Monster"
-
-local activeFlashes = {}
 
 local function getMonsterModelFromHit(instance)
 	local current = instance
@@ -64,49 +64,7 @@ local function setBodyColors(bodyColors, color)
 end
 
 local function flashMonster(model)
-	if activeFlashes[model] then return end
-	local original = {}
-	activeFlashes[model] = original
-
-	for _, item in model:GetDescendants() do
-		if item:IsA("BodyColors") then
-			original[item] = {
-				type = "BodyColors",
-				head = item.HeadColor3,
-				leftArm = item.LeftArmColor3,
-				rightArm = item.RightArmColor3,
-				leftLeg = item.LeftLegColor3,
-				rightLeg = item.RightLegColor3,
-				torso = item.TorsoColor3,
-			}
-			setBodyColors(item, FLASH_COLOR)
-		elseif item:IsA("BasePart") then
-			original[item] = { type = "BasePart", color = item.Color, material = item.Material }
-			item.Color = FLASH_COLOR
-			item.Material = Enum.Material.Neon
-		end
-	end
-
-	task.delay(0.25, function()
-		local saved = activeFlashes[model]
-		activeFlashes[model] = nil
-		if not saved or not model.Parent then return end
-		for item, values in pairs(saved) do
-			if item.Parent then
-				if values.type == "BodyColors" then
-					item.HeadColor3 = values.head
-					item.LeftArmColor3 = values.leftArm
-					item.RightArmColor3 = values.rightArm
-					item.LeftLegColor3 = values.leftLeg
-					item.RightLegColor3 = values.rightLeg
-					item.TorsoColor3 = values.torso
-				else
-					item.Color = values.color
-					item.Material = values.material
-				end
-			end
-		end
-	end)
+	MonsterHitFeedback.flash(model, FLASH_COLOR, 0.25)
 end
 
 local function makeMonsterBlue(model)
@@ -142,34 +100,6 @@ local function disintegrateMonster(model, blastOrigin)
 	end
 end
 
-local function showHitpoints(model, humanoid)
-	local root = model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChild("Head", true)
-	if not root or not root:IsA("BasePart") then return end
-	local gui = model:FindFirstChild("MonsterHealthGui")
-	if not gui then
-		gui = Instance.new("BillboardGui")
-		gui.Name = "MonsterHealthGui"
-		gui.Size = UDim2.new(0, 180, 0, 44)
-		gui.StudsOffset = Vector3.new(0, 4, 0)
-		gui.AlwaysOnTop = true
-		gui.Parent = model
-		local label = Instance.new("TextLabel")
-		label.Name = "Label"
-		label.BackgroundTransparency = 1
-		label.Size = UDim2.fromScale(1, 1)
-		label.Font = Enum.Font.GothamBold
-		label.TextScaled = true
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.TextStrokeTransparency = 0
-		label.Parent = gui
-	end
-	gui.Adornee = root
-	gui.Enabled = true
-	local label = gui:FindFirstChild("Label")
-	if label then label.Text = math.max(0, math.ceil(humanoid.Health)) .. " / " .. math.ceil(humanoid.MaxHealth) end
-	task.delay(1.5, function() if gui.Parent then gui.Enabled = false end end)
-end
-
 local function getShotOrigin(player)
 	local barrel = tool:FindFirstChild("Barrel")
 	if barrel and barrel:IsA("BasePart") then return barrel.Position end
@@ -197,33 +127,70 @@ local function shouldGroundShockwave(result)
 end
 
 local function makeGroundShockwave(position)
-	local segmentCount = 26
-	local startRadius, endRadius = 1.25, GROUND_SHOCKWAVE_RADIUS
-	local segmentLength = (2 * math.pi * endRadius) / segmentCount + 0.5
+	local core = Instance.new("Part")
+	core.Name = "BlasterGroundShockwaveCore"
+	core.Shape = Enum.PartType.Ball
+	core.Size = Vector3.new(2, 2, 2)
+	core.CFrame = CFrame.new(position + Vector3.new(0, 1, 0))
+	core.Anchored = true
+	core.CanCollide = false
+	core.CanQuery = false
+	core.CanTouch = false
+	core.CastShadow = false
+	core.Material = Enum.Material.Neon
+	core.Color = FLASH_COLOR
+	core.Transparency = 0.15
+	core.Parent = workspace
 
-	for index = 1, segmentCount do
-		local angle = (index - 1) / segmentCount * math.pi * 2
-		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
-		local segment = Instance.new("Part")
-		segment.Name = "BlasterGroundShockwaveSegment"
-		segment.Anchored = true
-		segment.CanCollide = false
-		segment.CanQuery = false
-		segment.CanTouch = false
-		segment.CastShadow = false
-		segment.Material = Enum.Material.Neon
-		segment.Color = FLASH_COLOR
-		segment.Transparency = 0.08
-		segment.Size = Vector3.new(0.8, 0.55, 0.8)
-		segment.CFrame = CFrame.new(position + direction * startRadius + Vector3.new(0, 0.7, 0)) * CFrame.Angles(0, angle, 0)
-		segment.Parent = workspace
+	local coreLight = Instance.new("PointLight")
+	coreLight.Color = FLASH_COLOR
+	coreLight.Brightness = 28
+	coreLight.Range = GROUND_SHOCKWAVE_RADIUS * 1.5
+	coreLight.Shadows = true
+	coreLight.Parent = core
 
-		TweenService:Create(segment, TweenInfo.new(0.48, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-			Size = Vector3.new(1.15, 0.55, segmentLength),
-			CFrame = CFrame.new(position + direction * endRadius + Vector3.new(0, 0.7, 0)) * CFrame.Angles(0, angle, 0),
-			Transparency = 1,
-		}):Play()
-		Debris:AddItem(segment, 0.62)
+	TweenService:Create(core, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(GROUND_SHOCKWAVE_RADIUS * 2, 2.5, GROUND_SHOCKWAVE_RADIUS * 2),
+		Transparency = 1,
+	}):Play()
+	TweenService:Create(coreLight, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = 0,
+		Range = 0,
+	}):Play()
+	Debris:AddItem(core, 0.9)
+
+	for wave = 1, 2 do
+		task.delay((wave - 1) * 0.22, function()
+			local segmentCount = 30
+			local startRadius = 1.25
+			local endRadius = GROUND_SHOCKWAVE_RADIUS
+			local segmentLength = (2 * math.pi * endRadius) / segmentCount + 0.7
+
+			for index = 1, segmentCount do
+				local angle = (index - 1) / segmentCount * math.pi * 2
+				local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+				local segment = Instance.new("Part")
+				segment.Name = "BlasterGroundShockwaveSegment"
+				segment.Anchored = true
+				segment.CanCollide = false
+				segment.CanQuery = false
+				segment.CanTouch = false
+				segment.CastShadow = false
+				segment.Material = Enum.Material.Neon
+				segment.Color = FLASH_COLOR
+				segment.Transparency = 0.02
+				segment.Size = Vector3.new(1.2, 0.7, 1.2)
+				segment.CFrame = CFrame.new(position + direction * startRadius + Vector3.new(0, 1, 0)) * CFrame.Angles(0, angle, 0)
+				segment.Parent = workspace
+
+				TweenService:Create(segment, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					Size = Vector3.new(1.8, 0.7, segmentLength),
+					CFrame = CFrame.new(position + direction * endRadius + Vector3.new(0, 1, 0)) * CFrame.Angles(0, angle, 0),
+					Transparency = 1,
+				}):Play()
+				Debris:AddItem(segment, 0.85)
+			end
+		end)
 	end
 end
 
@@ -245,9 +212,11 @@ local function damageMonster(player, model, damage, blastOrigin)
 		disintegrateMonster(model, blastOrigin)
 	end
 	humanoid:TakeDamage(damage)
+	MonsterHitFeedback.showHealth(model, humanoid)
 	if not willDie then
 		flashMonster(model)
-		showHitpoints(model, humanoid)
+	else
+		MonsterHitFeedback.illuminate(model, FLASH_COLOR, 0.3)
 	end
 end
 

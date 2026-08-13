@@ -6,7 +6,7 @@ local tool = script.Parent
 local shootEvent = tool:WaitForChild("ShootEvent")
 
 local RANGE = 300
-local COLOR = Color3.fromRGB(255, 105, 180)
+local COLOR = Color3.fromRGB(211, 80, 135)
 local GUNSHOT_SOUND = "rbxassetid://138074730724614"
 
 local faceToken = 0
@@ -46,7 +46,7 @@ local function muzzleFlash()
 	local flash = Instance.new("Part")
 	flash.Name = "MonsterGunMuzzleFlash"
 	flash.Shape = Enum.PartType.Ball
-	flash.Size = Vector3.new(1, 1, 1)
+	flash.Size = Vector3.new(0.5, 0.5, 0.5)
 	flash.Material = Enum.Material.Neon
 	flash.Color = COLOR
 	flash.Anchored = true

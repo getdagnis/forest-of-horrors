@@ -1,4 +1,8 @@
 -- MonsterBombSystem
+--
+-- Deliberately small state sequence:
+-- idle wait -> 10 warning beeps/lights -> one damage call + bomb fade ->
+-- one four-second expanding Neon sphere.  Bombs never damage other bombs.
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -14,72 +18,134 @@ local function isBombMonster(model)
 	return model:IsA("Model") and model.Name == Config.MODEL_NAME
 end
 
-local function getWarningSound(model)
-	return model:FindFirstChild("WarningSound", true) or model:FindFirstChild("WarningSound1", true)
+local function getRoot(model)
+	return model:FindFirstChild("HumanoidRootPart", true)
+		or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function makeBlastVisual(position)
-	local bubble = Instance.new("Part")
-	bubble.Name = "MonsterBlastBubble"
-	bubble.Shape = Enum.PartType.Ball
-	bubble.Anchored = true
-	bubble.CanCollide = false
-	bubble.CanQuery = false
-	bubble.CanTouch = false
-	bubble.CastShadow = false
-	bubble.Material = Enum.Material.Neon
-	bubble.Color = Config.BLAST_COLOR
-	bubble.Transparency = 0.5
-	bubble.Size = Vector3.new(2, 2, 2)
-	bubble.CFrame = CFrame.new(position)
-	bubble.Parent = workspace
+local function playWarning(model)
+	local root = getRoot(model)
+	if not root or not root:IsA("BasePart") then return end
+
+	local sound = model:FindFirstChild("WarningSound", true) or model:FindFirstChild("WarningSound1", true)
+	if sound and sound:IsA("Sound") then
+		-- A Sound must be attached to a part to honour its spatial rolloff.
+		if sound.Parent ~= root then
+			sound.Parent = root
+		end
+		sound.RollOffMode = Enum.RollOffMode.InverseTapered
+		sound.RollOffMinDistance = 8
+		sound.RollOffMaxDistance = Config.WARNING_SOUND_RADIUS
+		sound.TimePosition = 0
+		sound:Play()
+	end
+
+	local light = Instance.new("PointLight")
+	light.Name = "MonsterBombWarningLight"
+	light.Color = Config.BLAST_COLOR
+	light.Brightness = 20
+	light.Range = 36
+	light.Shadows = true
+	light.Parent = root
+
+	TweenService:Create(light, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = 0,
+		Range = 0,
+	}):Play()
+	Debris:AddItem(light, 0.4)
+end
+
+local function playExplosionSound(model, position)
+	local source = model:FindFirstChild(Config.EXPLOSION_SOUND_NAME, true)
+	if not source or not source:IsA("Sound") then return end
+
+	-- The bomb model may be removed while the sound is playing, so play a clone
+	-- from a short-lived invisible world emitter instead.
+	local emitter = Instance.new("Part")
+	emitter.Name = "MonsterBombExplosionSoundEmitter"
+	emitter.Anchored = true
+	emitter.CanCollide = false
+	emitter.CanTouch = false
+	emitter.CanQuery = false
+	emitter.Transparency = 1
+	emitter.Size = Vector3.new(0.1, 0.1, 0.1)
+	emitter.Position = position
+	emitter.Parent = workspace
+
+	local sound = source:Clone()
+	sound.Looped = false
+	sound.RollOffMode = Enum.RollOffMode.InverseTapered
+	sound.RollOffMinDistance = 8
+	sound.RollOffMaxDistance = Config.EXPLOSION_SOUND_RADIUS
+	sound.TimePosition = 0
+	sound.Parent = emitter
+	sound.Ended:Once(function()
+		if emitter.Parent then
+			emitter:Destroy()
+		end
+	end)
+	sound:Play()
+
+	-- Covers unavailable or malformed assets that never emit Sound.Ended.
+	Debris:AddItem(emitter, Config.EXPLOSION_SOUND_LIFETIME)
+end
+
+local function makeExplosionVisual(position)
+	local sphere = Instance.new("Part")
+	sphere.Name = "MonsterBombExplosion"
+	sphere.Shape = Enum.PartType.Ball
+	sphere.Anchored = true
+	sphere.CanCollide = false
+	sphere.CanTouch = false
+	sphere.CanQuery = false
+	sphere.CastShadow = false
+	sphere.Material = Enum.Material.Neon
+	sphere.Color = Config.BLAST_COLOR
+	sphere.Transparency = 0.12
+	sphere.Size = Vector3.new(4, 4, 4)
+	sphere.CFrame = CFrame.new(position)
+	sphere.Parent = workspace
 
 	local light = Instance.new("PointLight")
 	light.Color = Config.BLAST_COLOR
-	light.Brightness = 24
-	light.Range = Config.BLAST_RADIUS
+	light.Brightness = 34
+	light.Range = Config.BLAST_RADIUS * 1.2
 	light.Shadows = true
-	light.Parent = bubble
+	light.Parent = sphere
 
-	TweenService:Create(
-		bubble,
-		TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{
-			Size = Vector3.new(Config.BLAST_RADIUS * 2, Config.BLAST_RADIUS * 2, Config.BLAST_RADIUS * 2),
-			Transparency = 1,
-		}
-	):Play()
+	TweenService:Create(sphere, TweenInfo.new(Config.BLAST_VISUAL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = Vector3.new(Config.BLAST_RADIUS * 2, Config.BLAST_RADIUS * 2, Config.BLAST_RADIUS * 2),
+		Transparency = 1,
+	}):Play()
+	TweenService:Create(light, TweenInfo.new(Config.BLAST_VISUAL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Brightness = 0,
+		Range = 0,
+	}):Play()
 
-	TweenService:Create(
-		light,
-		TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{
-			Brightness = 0,
-			Range = Config.BLAST_RADIUS * 1.25,
-		}
-	):Play()
-
-	Debris:AddItem(bubble, 0.7)
+	-- Debris is a useful backstop, but this explicit destroy guarantees that a
+	-- completed explosion cannot leave a bright sphere in Workspace indefinitely.
+	task.delay(Config.BLAST_VISUAL_DURATION + 0.1, function()
+		if sphere.Parent then
+			sphere:Destroy()
+		end
+	end)
+	Debris:AddItem(sphere, Config.BLAST_VISUAL_DURATION + 0.1)
 end
 
-local function fadeBody(model)
+local function fadeAndRemoveBomb(model)
 	for _, item in model:GetDescendants() do
 		if item:IsA("BasePart") then
 			item.CanCollide = false
 			item.CanTouch = false
 			item.CanQuery = false
-
-			TweenService:Create(
-				item,
-				TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-				{ Transparency = 1 }
-			):Play()
+			TweenService:Create(item, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = 1,
+			}):Play()
 		elseif item:IsA("Decal") or item:IsA("Texture") then
-			TweenService:Create(
-				item,
-				TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.Out),
-				{ Transparency = 1 }
-			):Play()
+			TweenService:Create(item, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+				Transparency = 1,
+			}):Play()
 		end
 	end
 end
@@ -89,143 +155,95 @@ local function damagePlayers(position)
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-
-		if root and humanoid and humanoid.Health > 0 then
-			if (root.Position - position).Magnitude <= Config.BLAST_RADIUS then
-				humanoid:TakeDamage(humanoid.MaxHealth * Config.PLAYER_DAMAGE_FRACTION)
-			end
+		if root and humanoid and humanoid.Health > 0 and (root.Position - position).Magnitude <= Config.BLAST_RADIUS then
+			humanoid:TakeDamage(humanoid.MaxHealth * Config.PLAYER_DAMAGE_FRACTION)
 		end
 	end
 end
 
 local function damageMonsters(sourceModel, position)
-	for _, instance in workspace:GetDescendants() do
-		if instance:IsA("Model")
-			and instance ~= sourceModel
-			and not isBombMonster(instance)
-			and MonsterManager.getConfig(instance)
+	for _, model in workspace:GetDescendants() do
+		if model:IsA("Model")
+			and model ~= sourceModel
+			and not isBombMonster(model)
+			and MonsterManager.getConfig(model)
 		then
-			local humanoid = MonsterManager.getMonsterHumanoid(instance)
-
-			if humanoid and humanoid.Health > 0 then
-				local root = instance:FindFirstChild("HumanoidRootPart", true)
-				local targetPosition = root and root.Position or instance:GetPivot().Position
-
-				if (targetPosition - position).Magnitude <= Config.BLAST_RADIUS then
-					humanoid:TakeDamage(Config.MONSTER_DAMAGE)
-				end
+			local humanoid = MonsterManager.getMonsterHumanoid(model)
+			local root = getRoot(model)
+			if humanoid and root and humanoid.Health > 0 and (root.Position - position).Magnitude <= Config.BLAST_RADIUS then
+				humanoid:TakeDamage(Config.MONSTER_DAMAGE)
 			end
 		end
 	end
 end
 
 local function setupBomb(model)
-	if activeBombs[model] then return end
-	if not model:IsA("Model") then return end
-	if not isBombMonster(model) then return end
-
+	if activeBombs[model] or not isBombMonster(model) then return end
 	activeBombs[model] = true
 
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
-	if not humanoid then
-		humanoid = Instance.new("Humanoid")
-		humanoid.Name = "Humanoid"
-		humanoid.Parent = model
-	end
-
+	if not humanoid then return end
 	humanoid.MaxHealth = Config.HEALTH
 	humanoid.Health = Config.HEALTH
 	humanoid.BreakJointsOnDeath = false
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
-	local state = {
-		warningActive = false,
-		exploded = false,
-		basePivot = model:GetPivot(),
-	}
-
+	local exploded = false
 	local function explode()
-		if state.exploded then return end
-		state.exploded = true
-		state.warningActive = false
+		if exploded then return end
+		exploded = true
 
-		local position = model:GetPivot().Position
-
-		makeBlastVisual(position)
+		local root = getRoot(model)
+		local position = root and root.Position or model:GetPivot().Position
+		makeExplosionVisual(position)
+		playExplosionSound(model, position)
 		damagePlayers(position)
 		damageMonsters(model, position)
-		fadeBody(model)
+		fadeAndRemoveBomb(model)
 
-		task.delay(0.15, function()
-			if humanoid and humanoid.Parent and humanoid.Health > 0 then
-				humanoid.Health = 0
-			end
-		end)
-	end
-
-	local function playWarning()
-		local sound = getWarningSound(model)
-
-		if sound and sound:IsA("Sound") then
-			sound.TimePosition = 0
-			sound:Play()
+		-- Mark this as a normal bomb death. MonsterSystem may respawn it; only
+		-- MonsterGun/MonsterBlaster set permanent weapon-kill attributes.
+		if humanoid.Health > 0 then
+			humanoid.Health = 0
 		end
 	end
 
-	task.spawn(function()
-		local startedAt = os.clock()
-
-		while model.Parent and humanoid.Health > 0 and not state.exploded do
-			local elapsed = os.clock() - startedAt
-			local height = state.warningActive and Config.WARNING_PULSE_HEIGHT or Config.IDLE_PULSE_HEIGHT
-			local speed = state.warningActive and Config.WARNING_PULSE_SPEED or Config.IDLE_PULSE_SPEED
-			local offset = math.sin(elapsed * speed) * height
-
-			model:PivotTo(state.basePivot * CFrame.new(0, offset, 0))
-			task.wait(0.03)
-		end
-	end)
+	humanoid.Died:Connect(explode)
 
 	task.spawn(function()
-		while model.Parent and humanoid.Health > 0 and not state.exploded do
-			task.wait(math.random(Config.MIN_WAIT, Config.MAX_WAIT))
+		task.wait(math.random(Config.MIN_WAIT, Config.MAX_WAIT))
+		if exploded or not model.Parent or humanoid.Health <= 0 then return end
 
-			if not model.Parent or humanoid.Health <= 0 or state.exploded then
-				break
-			end
-
-			state.warningActive = true
-			playWarning()
-
-			task.wait(Config.WARNING_TIME)
-
-			if model.Parent and humanoid.Health > 0 and not state.exploded then
-				explode()
-			end
+		for _ = 1, Config.WARNING_TIME do
+			if exploded or not model.Parent or humanoid.Health <= 0 then return end
+			playWarning(model)
+			task.wait(Config.WARNING_BEEP_INTERVAL)
 		end
-	end)
 
-	humanoid.Died:Connect(function()
 		explode()
 	end)
 
-	model.AncestryChanged:Connect(function(_, parent)
-		if not parent then
-			activeBombs[model] = nil
-		end
+	model.Destroying:Connect(function()
+		activeBombs[model] = nil
 	end)
 end
 
+-- Clear only runtime spheres left by the previous implementation, so a fresh
+-- server session never inherits an old permanent-looking explosion visual.
 for _, item in workspace:GetDescendants() do
-	if item:IsA("Model") then
-		setupBomb(item)
+	if item:IsA("BasePart") and item.Name == "MonsterBombExplosion" then
+		item:Destroy()
 	end
+end
+
+for _, item in workspace:GetDescendants() do
+	if item:IsA("Model") then setupBomb(item) end
 end
 
 workspace.DescendantAdded:Connect(function(item)
 	if item:IsA("Model") then
 		task.defer(function()
-			setupBomb(item)
+			if item.Parent then setupBomb(item) end
 		end)
 	end
 end)

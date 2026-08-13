@@ -1,3 +1,4 @@
+--MonsterBlasterClientScript
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -180,6 +181,13 @@ local function muzzleFlash(chargeRatio)
 	flash.CastShadow = false
 	flash.CFrame = barrel.CFrame * CFrame.new(0, 0, -barrel.Size.Z / 2 - 0.6)
 	flash.Parent = workspace
+
+	local light = Instance.new("PointLight")
+	light.Color = COLOR
+	light.Brightness = 18 + 18 * chargeRatio
+	light.Range = 28 + 32 * chargeRatio
+	light.Shadows = true
+	light.Parent = flash
 	Debris:AddItem(flash, 0.12)
 end
 
@@ -223,6 +231,13 @@ local function showShotBeam(barrel, hitPosition, chargeRatio)
 	endPart.Position = hitPosition
 	endPart.Parent = workspace
 
+	local hitLight = Instance.new("PointLight")
+	hitLight.Color = COLOR
+	hitLight.Brightness = 12 + 16 * chargeRatio
+	hitLight.Range = 16 + 24 * chargeRatio
+	hitLight.Shadows = true
+	hitLight.Parent = endPart
+
 	local startAttachment = Instance.new("Attachment")
 	startAttachment.Parent = barrel
 	local endAttachment = Instance.new("Attachment")
@@ -232,17 +247,17 @@ local function showShotBeam(barrel, hitPosition, chargeRatio)
 	beam.Attachment0 = startAttachment
 	beam.Attachment1 = endAttachment
 	beam.FaceCamera = true
-	beam.Width0 = math.max(0.18, chargeRatio)
-	beam.Width1 = math.max(0.08, 0.5 * chargeRatio)
+	beam.Width0 = math.max(0.35, 1.2 * chargeRatio)
+	beam.Width1 = math.max(0.18, 0.65 * chargeRatio)
 	beam.LightInfluence = 0
 	beam.LightEmission = 1
-	beam.Transparency = NumberSequence.new(0.25)
+	beam.Transparency = NumberSequence.new(0.08)
 	beam.Color = ColorSequence.new(COLOR)
 	beam.Parent = barrel
 
-	Debris:AddItem(beam, 0.18)
-	Debris:AddItem(startAttachment, 0.18)
-	Debris:AddItem(endPart, 0.18)
+	Debris:AddItem(beam, 0.24)
+	Debris:AddItem(startAttachment, 0.24)
+	Debris:AddItem(endPart, 0.24)
 end
 
 local function fire(mouse, chargeRatio)
