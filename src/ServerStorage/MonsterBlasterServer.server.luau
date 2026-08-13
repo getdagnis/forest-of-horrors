@@ -12,10 +12,68 @@ local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFee
 local MIN_DAMAGE = 150
 local MAX_DAMAGE = 450
 local RANGE = 350
+local MIN_GROUND_SHOCKWAVE_RADIUS = 6
 local GROUND_SHOCKWAVE_RADIUS = 20
+local MIN_GROUND_SHOCKWAVE_DAMAGE = 45
 local GROUND_SHOCKWAVE_DAMAGE = 150
 local FLASH_COLOR = Color3.fromRGB(62, 169, 255)
 local BOMB_MONSTER_NAME = "Monster"
+
+local function isHeldByPlayer()
+	local parent = tool.Parent
+	return parent and (
+		(parent:IsA("Model") and Players:GetPlayerFromCharacter(parent) ~= nil)
+		or (parent:IsA("Backpack") and parent.Parent:IsA("Player"))
+	)
+end
+
+local function disableLegacyAnchorScript()
+	local legacyAnchor = tool:FindFirstChild("AnchorScript")
+	if legacyAnchor and legacyAnchor:IsA("BaseScript") then
+		-- This old script races RightGrip and restores touch/collision settings
+		-- from the pickup location, which can pull a player back to that location.
+		legacyAnchor.Disabled = true
+	end
+end
+
+local function hasToolJoint(handle, part)
+	for _, item in tool:GetDescendants() do
+		if item:IsA("WeldConstraint") or item:IsA("Weld") or item:IsA("Motor6D") then
+			if (item.Part0 == handle and item.Part1 == part) or (item.Part0 == part and item.Part1 == handle) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+local function stabilizeToolAssembly()
+	local handle = tool:FindFirstChild("Handle", true)
+	if not handle or not handle:IsA("BasePart") then
+		warn("MonsterBlaster needs a BasePart named Handle:", tool:GetFullName())
+		return
+	end
+
+	local held = isHeldByPlayer()
+	for _, item in tool:GetDescendants() do
+		if item:IsA("BasePart") then
+			item.Massless = true
+			item.CanCollide = false
+			item.Anchored = not held
+			-- An equipped Tool must never activate map touch triggers, including
+			-- the teleport part that may be next to its pickup spawn.
+			item.CanTouch = not held and item == handle
+
+			if item ~= handle and not hasToolJoint(handle, item) then
+				local weld = Instance.new("WeldConstraint")
+				weld.Name = "MonsterBlasterAssemblyWeld"
+				weld.Part0 = handle
+				weld.Part1 = item
+				weld.Parent = handle
+			end
+		end
+	end
+end
 
 local function getMonsterModelFromHit(instance)
 	local current = instance
@@ -126,7 +184,9 @@ local function shouldGroundShockwave(result)
 	return not (model and Players:GetPlayerFromCharacter(model))
 end
 
-local function makeGroundShockwave(position)
+local function makeGroundShockwave(position, chargeRatio)
+	local radius = MIN_GROUND_SHOCKWAVE_RADIUS
+		+ ((GROUND_SHOCKWAVE_RADIUS - MIN_GROUND_SHOCKWAVE_RADIUS) * chargeRatio)
 	local core = Instance.new("Part")
 	core.Name = "BlasterGroundShockwaveCore"
 	core.Shape = Enum.PartType.Ball
@@ -144,13 +204,13 @@ local function makeGroundShockwave(position)
 
 	local coreLight = Instance.new("PointLight")
 	coreLight.Color = FLASH_COLOR
-	coreLight.Brightness = 28
-	coreLight.Range = GROUND_SHOCKWAVE_RADIUS * 1.5
+	coreLight.Brightness = 42
+	coreLight.Range = radius * 2
 	coreLight.Shadows = true
 	coreLight.Parent = core
 
 	TweenService:Create(core, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = Vector3.new(GROUND_SHOCKWAVE_RADIUS * 2, 2.5, GROUND_SHOCKWAVE_RADIUS * 2),
+		Size = Vector3.new(radius * 2, 2.5, radius * 2),
 		Transparency = 1,
 	}):Play()
 	TweenService:Create(coreLight, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -159,38 +219,42 @@ local function makeGroundShockwave(position)
 	}):Play()
 	Debris:AddItem(core, 0.9)
 
-	for wave = 1, 2 do
-		task.delay((wave - 1) * 0.22, function()
-			local segmentCount = 30
-			local startRadius = 1.25
-			local endRadius = GROUND_SHOCKWAVE_RADIUS
-			local segmentLength = (2 * math.pi * endRadius) / segmentCount + 0.7
+	-- The light and every ring segment start in the same frame as the hit.
+	local segmentCount = 30
+	local startRadius = 1.25
+	local segmentLength = (2 * math.pi * radius) / segmentCount + 0.7
+	for index = 1, segmentCount do
+		local angle = (index - 1) / segmentCount * math.pi * 2
+		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
+		local segment = Instance.new("Part")
+		segment.Name = "BlasterGroundShockwaveSegment"
+		segment.Anchored = true
+		segment.CanCollide = false
+		segment.CanQuery = false
+		segment.CanTouch = false
+		segment.CastShadow = false
+		segment.Material = Enum.Material.Neon
+		segment.Color = FLASH_COLOR
+		segment.Transparency = 0
+		segment.Size = Vector3.new(1.8, 0.7, 1.8)
+		segment.CFrame = CFrame.new(position + direction * startRadius + Vector3.new(0, 1, 0)) * CFrame.Angles(0, angle, 0)
+		segment.Parent = workspace
 
-			for index = 1, segmentCount do
-				local angle = (index - 1) / segmentCount * math.pi * 2
-				local direction = Vector3.new(math.cos(angle), 0, math.sin(angle))
-				local segment = Instance.new("Part")
-				segment.Name = "BlasterGroundShockwaveSegment"
-				segment.Anchored = true
-				segment.CanCollide = false
-				segment.CanQuery = false
-				segment.CanTouch = false
-				segment.CastShadow = false
-				segment.Material = Enum.Material.Neon
-				segment.Color = FLASH_COLOR
-				segment.Transparency = 0.02
-				segment.Size = Vector3.new(1.2, 0.7, 1.2)
-				segment.CFrame = CFrame.new(position + direction * startRadius + Vector3.new(0, 1, 0)) * CFrame.Angles(0, angle, 0)
-				segment.Parent = workspace
+		local segmentLight = Instance.new("SurfaceLight")
+		segmentLight.Face = Enum.NormalId.Top
+		segmentLight.Angle = 180
+		segmentLight.Brightness = 4
+		segmentLight.Range = 10
+		segmentLight.Color = FLASH_COLOR
+		segmentLight.Shadows = false
+		segmentLight.Parent = segment
 
-				TweenService:Create(segment, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-					Size = Vector3.new(1.8, 0.7, segmentLength),
-					CFrame = CFrame.new(position + direction * endRadius + Vector3.new(0, 1, 0)) * CFrame.Angles(0, angle, 0),
-					Transparency = 1,
-				}):Play()
-				Debris:AddItem(segment, 0.85)
-			end
-		end)
+		TweenService:Create(segment, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = Vector3.new(2.2, 0.7, segmentLength),
+			CFrame = CFrame.new(position + direction * radius + Vector3.new(0, 1, 0)) * CFrame.Angles(0, angle, 0),
+			Transparency = 1,
+		}):Play()
+		Debris:AddItem(segment, 0.45)
 	end
 end
 
@@ -220,15 +284,19 @@ local function damageMonster(player, model, damage, blastOrigin)
 	end
 end
 
-local function damageGroundShockwave(player, position)
+local function damageGroundShockwave(player, position, chargeRatio)
+	local radius = MIN_GROUND_SHOCKWAVE_RADIUS
+		+ ((GROUND_SHOCKWAVE_RADIUS - MIN_GROUND_SHOCKWAVE_RADIUS) * chargeRatio)
+	local damage = math.floor(MIN_GROUND_SHOCKWAVE_DAMAGE
+		+ ((GROUND_SHOCKWAVE_DAMAGE - MIN_GROUND_SHOCKWAVE_DAMAGE) * chargeRatio))
 	local damaged = {}
 	for _, instance in workspace:GetDescendants() do
 		if instance:IsA("Model") and not damaged[instance] and MonsterManager.getConfig(instance) then
 			damaged[instance] = true
 			local root = instance:FindFirstChild("HumanoidRootPart", true) or instance:FindFirstChild("Head", true)
 			local targetPosition = root and root:IsA("BasePart") and root.Position or instance:GetPivot().Position
-			if (targetPosition - position).Magnitude <= GROUND_SHOCKWAVE_RADIUS then
-				damageMonster(player, instance, GROUND_SHOCKWAVE_DAMAGE, position)
+			if (targetPosition - position).Magnitude <= radius then
+				damageMonster(player, instance, damage, position)
 			end
 		end
 	end
@@ -254,8 +322,8 @@ shootEvent.OnServerEvent:Connect(function(player, clientHitInstance, shotDirecti
 	pushShooterBack(player, shotDirection)
 
 	if shouldGroundShockwave(serverResult) then
-		makeGroundShockwave(serverResult.Position)
-		damageGroundShockwave(player, serverResult.Position)
+		makeGroundShockwave(serverResult.Position, chargeRatio)
+		damageGroundShockwave(player, serverResult.Position, chargeRatio)
 		return
 	end
 
@@ -271,4 +339,13 @@ shootEvent.OnServerEvent:Connect(function(player, clientHitInstance, shotDirecti
 	local hitInstance = serverResult and serverResult.Instance or clientHitInstance
 	local monster = getMonsterModelFromHit(hitInstance)
 	if monster then damageMonster(player, monster, damage, getShotOrigin(player) or monster:GetPivot().Position) end
+end)
+
+disableLegacyAnchorScript()
+stabilizeToolAssembly()
+tool.AncestryChanged:Connect(function()
+	-- Do this synchronously before Roblox evaluates RightGrip, then repeat once
+	-- after the transfer settles for every cloned visual part.
+	stabilizeToolAssembly()
+	task.defer(stabilizeToolAssembly)
 end)

@@ -9,7 +9,7 @@ local shootEvent = tool:WaitForChild("ShootEvent")
 
 local RANGE = 350
 local CHARGE_TIME = 5
-local COOLDOWN = 2
+local COOLDOWN = 0.4
 local COLOR = Color3.fromRGB(62, 169, 255)
 local GUNSHOT_SOUND = "rbxassetid://131794614393147"
 local CHARGE_SOUND = "rbxassetid://140102991925260"
@@ -130,6 +130,19 @@ chargeFill.Size = UDim2.new(0, 0, 1, 0)
 chargeFill.BorderSizePixel = 0
 chargeFill.Parent = chargeBack
 
+local chargePercent = chargeGui:FindFirstChild("ChargePercent") or Instance.new("TextLabel")
+chargePercent.Name = "ChargePercent"
+chargePercent.AnchorPoint = Vector2.new(0.5, 1)
+chargePercent.Position = UDim2.new(0.5, 0, 1, -102)
+chargePercent.Size = UDim2.fromOffset(180, 22)
+chargePercent.BackgroundTransparency = 1
+chargePercent.Font = Enum.Font.GothamBold
+chargePercent.TextSize = 15
+chargePercent.TextColor3 = COLOR
+chargePercent.TextStrokeTransparency = 0.45
+chargePercent.Text = "CHARGE 0%"
+chargePercent.Parent = chargeGui
+
 local function resetChargeState()
 	charging = false
 	charged = false
@@ -139,10 +152,7 @@ local function resetChargeState()
 	stopHandlePulse(Enum.Material.Metal)
 	stopChargeSound()
 	chargeGui.Enabled = false
-end
-
-local function easeOutCubic(value)
-	return 1 - ((1 - math.clamp(value, 0, 1)) ^ 3)
+	chargePercent.Text = "CHARGE 0%"
 end
 
 RunService.RenderStepped:Connect(function()
@@ -152,16 +162,21 @@ RunService.RenderStepped:Connect(function()
 		return
 	end
 	if charging then
-		local progress = charged and 1 or easeOutCubic(getChargeRatio())
+		-- Display raw charge so the shown percentage is exactly the power that
+		-- the server uses for shot damage and ground-shockwave strength.
+		local progress = charged and 1 or getChargeRatio()
 		chargeFill.Size = UDim2.new(progress, 0, 1, 0)
-		chargeFill.BackgroundColor3 = Color3.fromRGB(65, 115, 128):Lerp(Color3.fromRGB(67, 207, 255), progress)
+		chargeFill.BackgroundColor3 = Color3.fromRGB(89, 208, 255):Lerp(COLOR, progress)
+		chargePercent.Text = string.format("CHARGE %d%%", math.floor(progress * 100 + 0.5))
 	elseif coolingDown then
-		local progress = easeOutCubic((os.clock() - cooldownStartedAt) / COOLDOWN)
+		local progress = math.clamp((os.clock() - cooldownStartedAt) / COOLDOWN, 0, 1)
 		chargeFill.Size = UDim2.new(progress, 0, 1, 0)
-		chargeFill.BackgroundColor3 = Color3.fromRGB(17, 53, 59):Lerp(Color3.fromRGB(65, 115, 128), progress)
+		chargeFill.BackgroundColor3 = Color3.fromRGB(17, 53, 59):Lerp(Color3.fromRGB(89, 208, 255), progress)
+		chargePercent.Text = "READYING"
 	else
 		chargeFill.Size = UDim2.new(1, 0, 1, 0)
-		chargeFill.BackgroundColor3 = Color3.fromRGB(65, 115, 128)
+		chargeFill.BackgroundColor3 = Color3.fromRGB(89, 208, 255)
+		chargePercent.Text = "READY"
 	end
 end)
 
