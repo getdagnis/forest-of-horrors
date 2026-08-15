@@ -186,7 +186,10 @@ local function setupBomb(model)
 	humanoid.MaxHealth = Config.HEALTH
 	humanoid.Health = Config.HEALTH
 	humanoid.BreakJointsOnDeath = false
-	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	-- Keep the same no-name, damaged-only health display used by every monster.
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+	humanoid.NameDisplayDistance = 0
+	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.DisplayWhenDamaged
 
 	local exploded = false
 	local function explode()

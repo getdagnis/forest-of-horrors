@@ -5,6 +5,8 @@ local UserInputService = game:GetService("UserInputService")
 local player = Players.LocalPlayer
 local AIM_WEAPONS = {
 	MonsterGun = true,
+	MonsterGun2 = true,
+	MonsterGun3 = true,
 	MonsterBlaster = true,
 }
 

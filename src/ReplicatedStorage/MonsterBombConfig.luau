@@ -3,7 +3,7 @@
 local MonsterBombConfig = {}
 
 -- Exact model name recognised as a timed bomb monster.
-MonsterBombConfig.MODEL_NAME = "Monster"
+MonsterBombConfig.MODEL_NAME = "BombMonster"
 
 -- Bomb monster hit points before it is destroyed by a weapon or its own timer.
 MonsterBombConfig.HEALTH = 430

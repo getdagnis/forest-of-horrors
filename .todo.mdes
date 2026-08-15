@@ -2,9 +2,13 @@
 
 ## jāizdara uzreiz
 
-- spawneri rotē, blasterim skaņa, lightsaber daudz stiprāks, portāli tālāk, šahta atverasS vēlāk
+- jāsalabo weapon spawners blasteriem, jāsalabo otrs blasters, spawneri griežas
 
-- multikill -- balss! iegūtie punkti + bonuss x nogalinātie monstri
+- spawneris monster gun salūzis
+
+- GUI jāizlabo -- par lielu, click, lai atvērtu
+
+- multikill -- balss! iegūtie punkti reiz nogalinātie monstri
 
 - 0.8 koeficients monstriem
 
@@ -20,7 +24,10 @@
 
 - kontra vienā telpā ar ātri skrienošiem monstriem un pilna spektra ieročiem pieejamiem - MONSTER KILLING ARENA
 
-- coini tiek iegūti pēc punktu varbūtības -- 1 punkts 10%, 5 - 50%, 15 - medium to max coin vai cits bonuss
+- zombie spawner apple centrā! kā novāc kādu briesmoni, tā 0.9 iespēja, ka zombijs tur reģenerējas un nāk no turienes
+
+- kad spēle tiek uzvarēta nokļūst nākamajā līmenī -- sapņa armagedons, viss sarkanā gaismā, sāk pazust, disintegrēties zeme, visi 
+krīt, arī monstri, visi randomā piezemējas uz salām apakšzemē un turpina no turienes...
 
 
 ## random ideas

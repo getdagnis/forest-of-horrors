@@ -43,7 +43,7 @@ end
 -- Find a part we can use to read/move the monster's position.
 -- Recursive search so we find root parts nested in sub-models
 -- (e.g. creepyMonster's HumanoidRootPart lives inside its "Noob" child).
--- Falls back to any BasePart so models like the bomb "Monster" (which
+-- Falls back to any BasePart so models like "BombMonster" (which
 -- has no standard root part) are still tracked.
 local function getRootPart(model)
 	return model.PrimaryPart

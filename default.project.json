@@ -13,6 +13,9 @@
       },
       "MonsterBombConfig": {
         "$path": "src/ReplicatedStorage/MonsterBombConfig.luau"
+      },
+      "MonsterBlasterConfig": {
+        "$path": "src/ReplicatedStorage/MonsterBlasterConfig.luau"
       }
     },
 
@@ -39,9 +42,6 @@
       "MonsterBlasterServer": {
         "$path": "src/ServerStorage/MonsterBlasterServer.server.luau"
       },
-      "MonsterGunServer": {
-        "$path": "src/ServerStorage/MonsterGunServer.server.luau"
-      }
     },
 
     "ServerScriptService": {
@@ -66,6 +66,21 @@
       },
       "MonsterGunDamageSystem": {
         "$path": "src/ServerScriptService/MonsterGunDamageSystem.server.luau"
+      },
+      "GunLoadoutSystem": {
+        "$path": "src/ServerScriptService/GunLoadoutSystem.server.luau"
+      },
+      "MonsterGunSpawnSystem": {
+        "$path": "src/ServerScriptService/MonsterGunSpawnSystem.server.luau"
+      },
+      "MonsterBlasterSpawnSystem": {
+        "$path": "src/ServerScriptService/MonsterBlasterSpawnSystem.server.luau"
+      },
+      "DarkForestMusicSystem": {
+        "$path": "src/ServerScriptService/DarkForestMusicSystem.server.luau"
+      },
+      "McDonaldsJukebox": {
+        "$path": "src/ServerScriptService/McDonaldsJukebox.server.luau"
       },
       "PlayerHealthSystem": {
         "$path": "src/ServerScriptService/PlayerHealthSystem.luau"
@@ -100,8 +115,17 @@
       "CameraController": {
 		"$path": "src/StarterPlayer/StarterPlayerScripts/CameraController.client.luau"
 	  },
-	  "WeaponTargetContour": {
+      "WeaponTargetContour": {
 		"$path": "src/StarterPlayer/StarterPlayerScripts/WeaponTargetContour.client.luau"
+      },
+      "GunClientController": {
+		"$path": "src/StarterPlayer/StarterPlayerScripts/GunClientController.client.luau"
+      },
+      "MonsterDamageLabelClient": {
+		"$path": "src/StarterPlayer/StarterPlayerScripts/MonsterDamageLabelClient.client.luau"
+      },
+      "McDonaldsJukeboxClient": {
+		"$path": "src/StarterPlayer/StarterPlayerScripts/McDonaldsJukeboxClient.client.luau"
       }
     }
   }

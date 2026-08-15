@@ -22,9 +22,10 @@
 | `src/ServerScriptService/CreepyMonsterSystem.server.luau` | `ServerScriptService.CreepyMonsterSystem` Script | Central creepy AI; disables old `Follow` / `Damage Script` descendants itself. |
 | `src/ServerScriptService/MonsterGunDamageSystem.server.luau` | `ServerScriptService.MonsterGunDamageSystem` Script | Binds active MonsterGun Tools dynamically. |
 | `src/ServerStorage/MonsterBlasterServer.server.luau` | Active MonsterBlaster Tool’s `ServerScript` | It is **not** a ScriptService script. |
+| `src/ReplicatedStorage/MonsterBlasterConfig.luau` | `ReplicatedStorage.MonsterBlasterConfig` ModuleScript | Shared charge, damage, cooldown, and shockwave tuning. |
 | `src/ServerStorage/WeaponTemplates/ClientScript.luau` | MonsterGun Tool `ClientScript` LocalScript | Gun visual/client input. |
 | `src/ServerStorage/WeaponTemplates/MonsterBlasterClientScript.luau` | MonsterBlaster Tool `ClientScript` LocalScript | Blaster charge/beam/HUD client behavior. |
-| `src/ServerStorage/WeaponTemplates/MonsterBlasterGunSpawner.luau` | MonsterBlaster Tool `GunSpawner` Script | World-pickup replacement timer; defers for duplicate-pickup rejection. |
+| `src/ServerScriptService/MonsterBlasterSpawnSystem.server.luau` | `ServerScriptService.MonsterBlasterSpawnSystem` Script | Sole world-pickup owner; clones `ServerStorage.WeaponTemplates.MonsterBlaster`. |
 | `src/ServerStorage/WeaponTemplates/WeaponCrosshairClient.luau` | Each gun Tool’s `WeaponCrosshairClient` **LocalScript** | Must be a child of each Tool, never a server Script. |
 | `src/StarterPlayer/StarterPlayerScripts/CameraController.client.luau` | `StarterPlayer.StarterPlayerScripts.CameraController` LocalScript | Global Z/FPS and RMB shoulder aim. |
 | `src/StarterPlayer/StarterPlayerScripts/WeaponTargetContour.client.luau` | `StarterPlayer.StarterPlayerScripts.WeaponTargetContour` LocalScript | Local pink/blue weapon target outline. |
@@ -76,8 +77,11 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 
 ### MonsterBlaster
 
-- Only one active world pickup should exist (normally `Workspace.Folder.MonsterBlaster`). Remove accidental duplicates carefully; do not delete its active Tool hierarchy.
-- Its server Script validates hits and handles damage/score. Ground shots create a 20-stud blue shockwave for 150 damage. Hit monsters briefly flash blue Neon for 0.25 seconds.
+- Keep one canonical `ServerStorage.WeaponTemplates.MonsterBlaster` Tool, with its ServerScript, LocalScript, `ShootEvent`, `ChargeEvent`, WeaponHud, `AmbientLoop`, and `Shockwave` children. The template is the source for world pickups; do not put another enabled Tool-local respawner in it.
+- `src/ServerStorage/WeaponTemplates/MonsterBlaster.rbxm` and `.rbxmx` are legacy exports, not the canonical source for this Tool. Do not import their embedded old scripts over the current `.luau` files.
+- Only one active world pickup should exist. `MonsterBlasterSpawnSystem` owns a `Workspace.WeaponSpawnPoints` Part whose `WeaponName` is `MonsterBlaster`; remove accidental duplicates carefully only after that spawn is confirmed in Play.
+- Its server Script validates hold time, cooldown, hits, and damage. Direct damage is 40–420, with a full charge piercing monsters until map geometry blocks it. Ground shots are emergency shockwaves scaling from 40–120 damage and 6–20 studs. Hit monsters briefly flash blue Neon for 0.25 seconds.
+- AmbientLoop is local to the equipped owner and stops on unequip. Shockwave is server-triggered at the validated impact so nearby players hear it.
 - The charge HUD uses `ResetOnSpawn = false`, so the Blaster client must explicitly hide/reset it on unequip, respawn, or whenever the Tool is no longer equipped.
 - Do not make bombs damage/explode each other. Only weapon damage can permanently kill bomb monsters.
 
@@ -88,6 +92,7 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 - There was a `SoundManager` Script containing a misplaced client `CameraController`; it must stay disabled because `Players.LocalPlayer` is nil on the server.
 - Do not leave `CameraAimSafety` active. It fights the actual controller by continuously restoring third-person camera state.
 - Camera behavior: `Z` toggles persistent first person (including respawn). Holding RMB with MonsterGun/MonsterBlaster temporarily uses a close over-the-shoulder third-person view; release restores normal camera. RMB must not force permanent first person.
+- Cross-platform combat input must use Tool `Activated`/`Deactivated` or a contextual touch action; mouse buttons, RMB, and keyboard keys must never be the only way to fire, charge, or release a weapon. Touch players aim with the native camera and must receive visible aim feedback. Require a real touch-device Play test before calling mobile combat fixed.
 - Use the Tool’s existing `WeaponHud` and existing Crosshair element. Do not create a competing `WeaponAimHud`/second reticle.
 - `WeaponTargetContour` is client-only. It outlines only direct, unobstructed, living monster targets: pink for MonsterGun, blue for MonsterBlaster. It must coexist with the red last-20-monsters contour (`MonsterContourClient`) rather than replacing it.
 

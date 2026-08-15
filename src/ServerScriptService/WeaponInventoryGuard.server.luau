@@ -9,6 +9,8 @@ local Players = game:GetService("Players")
 
 local UNIQUE_WEAPONS = {
 	["MonsterGun"] = true,
+	["MonsterGun2"] = true,
+	["MonsterGun3"] = true,
 	["MonsterBlaster"] = true,
 	["LightSaber"] = true,
 }

@@ -11,9 +11,9 @@ local MONSTER_CONFIG = {
 	["creepyMonster"] = { hp = 320, points = 5 },
 	["creepyMonsterOrange"] = { hp = 420, points = 10 },
 	["creepyMonsterWhite"] = { hp = 520, points = 15 },
-	["Monster"] = { hp = 430, points = 5 },
+	["BombMonster"] = { hp = 430, points = 5 },
 	["Fouke Monster"] = { hp = 230, points = 3 },
-	["Smiler"] = { hp = 800, points = 10 },
+	["Smiler"] = { hp = 800, points = 15 },
 	["Brown Skinwalker"] = { hp = 400, points = 5 },
 }
 
@@ -102,6 +102,11 @@ function MonsterManager.applyHP(model)
 	if hum and config then
 		hum.MaxHealth = config.hp
 		hum.Health = config.hp
+		-- Hide names completely. Show Roblox's health bar only after damage; the
+		-- private current/max label remains available to the player who hit it.
+		hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+		hum.NameDisplayDistance = 0
+		hum.HealthDisplayType = Enum.HumanoidHealthDisplayType.DisplayWhenDamaged
 	end
 end
 

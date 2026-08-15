@@ -36,11 +36,11 @@ function MonsterHitFeedback.illuminate(model, color, duration)
 	light.Range = 20
 	light.Shadows = true
 	light.Parent = adornee
-	Debris:AddItem(light, (duration or 0.25) + 0.05)
+	Debris:AddItem(light, (duration or 0.15) + 0.15)
 end
 
 function MonsterHitFeedback.flash(model, color, duration)
-	duration = duration or 0.25
+	duration = duration or 0.15
 
 	local state = activeFlashes[model]
 	if not state then
@@ -107,47 +107,6 @@ function MonsterHitFeedback.flash(model, color, duration)
 				part.Color = values.color
 				part.Material = values.material
 			end
-		end
-	end)
-end
-
-function MonsterHitFeedback.showHealth(model, humanoid, displayHealth)
-	local adornee = getDisplayPart(model)
-	if not adornee then return end
-
-	local gui = model:FindFirstChild("MonsterHealthGui")
-	if not gui then
-		gui = Instance.new("BillboardGui")
-		gui.Name = "MonsterHealthGui"
-		gui.Size = UDim2.fromOffset(180, 44)
-		gui.StudsOffset = Vector3.new(0, 4, 0)
-		gui.AlwaysOnTop = true
-		gui.Parent = model
-
-		local label = Instance.new("TextLabel")
-		label.Name = "Label"
-		label.BackgroundTransparency = 1
-		label.Size = UDim2.fromScale(1, 1)
-		label.Font = Enum.Font.GothamBold
-		label.TextScaled = true
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.TextStrokeTransparency = 0
-		label.Parent = gui
-	end
-
-	gui.Adornee = adornee
-	gui.Enabled = true
-	local label = gui:FindFirstChild("Label")
-	if label then
-		label.Text = math.max(0, math.ceil(displayHealth == nil and humanoid.Health or displayHealth))
-			.. " / " .. math.ceil(humanoid.MaxHealth)
-	end
-
-	local token = (gui:GetAttribute("HideToken") or 0) + 1
-	gui:SetAttribute("HideToken", token)
-	task.delay(1.5, function()
-		if gui.Parent and gui:GetAttribute("HideToken") == token then
-			gui.Enabled = false
 		end
 	end)
 end

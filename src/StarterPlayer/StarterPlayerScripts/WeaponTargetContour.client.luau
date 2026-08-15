@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local mouse = player:GetMouse()
@@ -8,6 +9,8 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local WEAPON_COLORS = {
 	MonsterGun = Color3.fromRGB(255, 105, 180),
+	MonsterGun2 = Color3.fromRGB(255, 160, 225),
+	MonsterGun3 = Color3.fromRGB(255, 230, 255),
 	MonsterBlaster = Color3.fromRGB(62, 169, 255),
 }
 
@@ -61,6 +64,12 @@ local function getCenteredAimHit(weapon)
 	return result and result.Instance or nil
 end
 
+local function isCenteredAim()
+	return (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+		or player:GetAttribute("WeaponShoulderAim") == true
+		or player:GetAttribute("WeaponFirstPerson") == true
+end
+
 RunService.RenderStepped:Connect(function()
 	local weapon = getEquippedWeapon()
 	if not weapon then
@@ -70,8 +79,7 @@ RunService.RenderStepped:Connect(function()
 	end
 
 	local hitInstance
-	if player:GetAttribute("WeaponShoulderAim") == true
-		or player:GetAttribute("WeaponFirstPerson") == true then
+	if isCenteredAim() then
 		hitInstance = getCenteredAimHit(weapon)
 	else
 		hitInstance = mouse.Target

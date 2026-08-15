@@ -21,7 +21,7 @@ local roundComplete = false
 local RESPAWN_TIME = 15 -- seconds before a killed monster respawns
 local RESPAWN_CHANCE = 0.8
 local MAX_MONSTERS = 90
-local BOMB_MONSTER_NAME = "Monster"
+local BOMB_MONSTER_NAME = "BombMonster"
 
 local function getOrCreateRemoteEvent(name)
 	local event = rs:FindFirstChild(name)
@@ -356,11 +356,16 @@ local function setupMonster(model)
 	if not config then return end
 	local hum = MonsterManager.getMonsterHumanoid(model)
 	if not hum then return end
+	local isBombMonster = model.Name == BOMB_MONSTER_NAME
+	-- Timed bombs must return after their own explosion even when their legacy
+	-- marketplace model carries NoAutoRespawn. Weapon kills remain permanent in
+	-- onMonsterKilled below, so this does not reintroduce killed bomb monsters.
+	local shouldAutoRespawn = isBombMonster or not model:GetAttribute("NoAutoRespawn")
 
 	MonsterManager.applyHP(model)
 	disableSelfRespawn(model)
 
-	if not model:GetAttribute("NoAutoRespawn") and not model:GetAttribute("RoundRespawned") then
+	if shouldAutoRespawn and not model:GetAttribute("RoundRespawned") then
 		table.insert(roundTemplates, {
 			template = model:Clone(),
 			cframe = model:GetPivot(),
@@ -368,7 +373,7 @@ local function setupMonster(model)
 		model:SetAttribute("RoundRespawned", true)
 	end
 
-	if not model:GetAttribute("NoAutoRespawn") and not spawns[model] then
+	if shouldAutoRespawn and not spawns[model] then
 		spawns[model] = {
 			template = model:Clone(),
 			cframe = model:GetPivot(),
