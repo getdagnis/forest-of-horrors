@@ -1,8 +1,10 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local player = Players.LocalPlayer
+local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 local AIM_WEAPONS = {
 	MonsterGun = true,
 	MonsterGun2 = true,
@@ -10,12 +12,13 @@ local AIM_WEAPONS = {
 	MonsterBlaster = true,
 }
 
-local SHOULDER_DISTANCE = 7
-local SHOULDER_OFFSET = Vector3.new(1.5, 1, 0)
+local SHOULDER_DISTANCE = AimConfig.ShoulderDistance
+local SHOULDER_OFFSET = AimConfig.ShoulderOffset
 local firstPersonEnabled = false
 local shoulderAiming = false
 local savedMinZoom
 local savedMaxZoom
+local savedAutoRotate
 
 local function getHumanoid()
 	local character = player.Character
@@ -41,7 +44,10 @@ local function stopShoulderAim()
 	savedMinZoom = nil
 	savedMaxZoom = nil
 	local humanoid = getHumanoid()
-	if humanoid then humanoid.CameraOffset = Vector3.zero end
+	if humanoid then
+		humanoid.CameraOffset = Vector3.zero
+		if savedAutoRotate ~= nil then humanoid.AutoRotate = savedAutoRotate; savedAutoRotate = nil end
+	end
 end
 
 local function startShoulderAim()
@@ -55,6 +61,8 @@ local function startShoulderAim()
 	player.CameraMinZoomDistance = SHOULDER_DISTANCE
 	player.CameraMaxZoomDistance = SHOULDER_DISTANCE
 	humanoid.CameraOffset = SHOULDER_OFFSET
+	savedAutoRotate = humanoid.AutoRotate
+	humanoid.AutoRotate = false
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 end
 
@@ -83,6 +91,7 @@ end)
 player.CharacterAdded:Connect(function()
 	task.defer(function()
 		shoulderAiming = false
+		savedAutoRotate = nil
 		player:SetAttribute("WeaponShoulderAim", false)
 		player:SetAttribute("WeaponFirstPerson", firstPersonEnabled)
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
@@ -97,5 +106,18 @@ player:SetAttribute("WeaponFirstPerson", firstPersonEnabled)
 RunService.RenderStepped:Connect(function()
 	if shoulderAiming and not hasEquippedAimWeapon() then
 		stopShoulderAim()
+		return
+	end
+	if shoulderAiming then
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		local camera = workspace.CurrentCamera
+		if root and root:IsA("BasePart") and camera then
+			local flatDirection = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
+			if flatDirection.Magnitude > 0.01 then
+				local target = CFrame.lookAt(root.Position, root.Position + flatDirection.Unit)
+				root.CFrame = root.CFrame:Lerp(target, math.clamp(AimConfig.AimTurnSpeed / 60, 0, 1))
+			end
+		end
 	end
 end)

@@ -7,7 +7,7 @@ local Players = game:GetService("Players")
 local ServerStorage = game:GetService("ServerStorage")
 
 local templates = ServerStorage:WaitForChild("WeaponTemplates")
-local DEFAULT_LOADOUT = { "MonsterGun" }
+local DEFAULT_LOADOUT = { "LightSaber", "MonsterGun", "MonsterBlaster" }
 local OPTIONAL_LOADOUT = { "MonsterGun2", "MonsterGun3" }
 
 local LEGACY_TOOL_SCRIPTS = {

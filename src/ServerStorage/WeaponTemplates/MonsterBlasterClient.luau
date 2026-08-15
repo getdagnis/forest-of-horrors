@@ -1,4 +1,4 @@
--- MonsterBlaster LocalScript. Place inside the canonical MonsterBlaster Tool.
+-- MonsterBlasterClient. Place inside the canonical MonsterBlaster Tool.
 -- Tool.Activated/Deactivated deliberately handle mouse, touch, and gamepad.
 
 local Debris = game:GetService("Debris")
@@ -8,11 +8,11 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 local tool = script.Parent
 local shootEvent = tool:WaitForChild("ShootEvent")
 local chargeEvent = tool:WaitForChild("ChargeEvent")
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
+local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
 
 local WEAK_GUNSHOT_SOUND = "rbxassetid://126040226110628"
 local FULL_GUNSHOT_SOUND = "rbxassetid://131794614393147"
@@ -42,8 +42,8 @@ local HUD_READY_COLOR = Color3.fromRGB(89, 208, 255)
 local HUD_LABEL_STROKE_TRANSPARENCY = 0.45
 
 local AIM_CIRCLE_DIAMETER = 30
-local AIM_CIRCLE_FILL_TRANSPARENCY = 0.93 -- centre remains barely visible
-local AIM_CIRCLE_OUTLINE_TRANSPARENCY = 0.12 -- match monster contour brightness
+local AIM_CIRCLE_FILL_TRANSPARENCY = 0.25 -- centre remains barely visible
+local AIM_CIRCLE_OUTLINE_TRANSPARENCY = 0.5 -- match monster contour brightness
 local AIM_CIRCLE_OUTLINE_THICKNESS = 1.5
 local AIM_CIRCLE_Z_INDEX = 10
 local AIM_CIRCLE_CORNER_RADIUS = 1
@@ -76,7 +76,6 @@ local ambientLoop
 local activeHud
 local aimCircle
 local groundPreview
-local savedAutoRotate
 local didWarnMissingHud = false
 local didWarnMissingAmbient = false
 
@@ -270,6 +269,7 @@ local chargeGui = getOrCreateChargeHud()
 local chargeBack = chargeGui:WaitForChild("ChargeBack")
 local chargeFill = chargeBack:WaitForChild("ChargeFill")
 local chargePercent = chargeGui:WaitForChild("ChargePercent")
+chargeGui.Enabled = false
 
 local function setChargeHud(enabled, progress, text, fillColor)
 	chargeGui.Enabled = enabled
@@ -279,35 +279,14 @@ local function setChargeHud(enabled, progress, text, fillColor)
 	chargePercent.Text = text
 end
 
-local function getAimRay()
-	local camera = workspace.CurrentCamera
-	if not camera then return nil end
-	if UserInputService.MouseEnabled then
-		local target = mouse.Hit.Position
-		local offset = target - camera.CFrame.Position
-		if offset.Magnitude > AIM_DIRECTION_EPSILON then return Ray.new(camera.CFrame.Position, offset.Unit) end
-	end
-	local viewport = camera.ViewportSize
-	return camera:ViewportPointToRay(viewport.X * SCREEN_CENTER, viewport.Y * SCREEN_CENTER)
+local function getAimPayload()
+	return GunAim.getShotPayload(player, tool, nil, Config.RANGE)
 end
 
-local function getAimDirection()
-	local barrel = getBarrel()
-	local aimRay = getAimRay()
-	if not barrel or not aimRay then return nil end
-	local target = aimRay.Origin + (aimRay.Direction * Config.RANGE)
-	local direction = target - barrel.Position
-	return direction.Magnitude > AIM_DIRECTION_EPSILON and direction.Unit or nil
-end
-
-local function raycastFromBarrel(direction)
-	local barrel = getBarrel()
-	if not barrel then return nil end
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { player.Character, tool }
-	params.IgnoreWater = true
-	return workspace:Raycast(barrel.Position, direction * Config.RANGE, params)
+local function raycastFromCamera(direction)
+	local ray = GunAim.getRay(player)
+	if not ray then return nil end
+	return workspace:Raycast(ray.Origin, direction * Config.RANGE, GunAim.makeRaycastParams(player.Character, tool))
 end
 
 local function getGroundPreview()
@@ -328,9 +307,12 @@ local function getGroundPreview()
 end
 
 local function updateGroundPreview(power)
-	if not isEquipped() then return end
-	local direction = getAimDirection()
-	local result = direction and raycastFromBarrel(direction)
+	if not isEquipped() or not GunAim.shouldShowAimHelpers(player) then
+		if groundPreview then groundPreview.Transparency = 1 end
+		return
+	end
+	local _, direction = getAimPayload()
+	local result = direction and raycastFromCamera(direction)
 	if not result or result.Normal.Y < GROUND_SURFACE_NORMAL_MIN then
 		if groundPreview then groundPreview.Transparency = 1 end
 		return
@@ -349,42 +331,17 @@ end
 
 local function updateCrosshair()
 	if not aimCircle then return end
-	if UserInputService.MouseEnabled then
-		aimCircle.Position = UDim2.fromOffset(mouse.X, mouse.Y)
-	else
+	if GunAim.isCentered(player) then
 		aimCircle.Position = UDim2.fromScale(SCREEN_CENTER, SCREEN_CENTER)
-	end
-end
-
-local function setCharacterAim(active)
-	local character = player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	if not humanoid then return end
-	if active then
-		if savedAutoRotate == nil then savedAutoRotate = humanoid.AutoRotate end
-		humanoid.AutoRotate = false
-	elseif savedAutoRotate ~= nil then
-		humanoid.AutoRotate = savedAutoRotate
-		savedAutoRotate = nil
-	end
-end
-
-local function updateCharacterAim()
-	local shouldAim = isEquipped() and (charging or player:GetAttribute("WeaponShoulderAim") == true)
-	setCharacterAim(shouldAim)
-	if not shouldAim then return end
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	local camera = workspace.CurrentCamera
-	if not root or not camera then return end
-	local flatDirection = Vector3.new(camera.CFrame.LookVector.X, 0, camera.CFrame.LookVector.Z)
-	if flatDirection.Magnitude > AIM_DIRECTION_EPSILON then
-		root.CFrame = CFrame.lookAt(root.Position, root.Position + flatDirection)
+	else
+		local mouse = player:GetMouse()
+		aimCircle.Position = UDim2.fromOffset(mouse.X, mouse.Y)
 	end
 end
 
 local function muzzleFlash(power)
-	local barrel = getBarrel()
-	if not barrel then return end
+	local muzzle, muzzlePosition = GunAim.getMuzzle(tool)
+	if not muzzlePosition then return end
 	local flash = Instance.new("Part")
 	flash.Name = "BlasterMuzzleFlash"
 	flash.Shape = Enum.PartType.Ball
@@ -397,7 +354,7 @@ local function muzzleFlash(power)
 	flash.CanQuery = false
 	flash.CanTouch = false
 	flash.CastShadow = false
-	flash.CFrame = barrel.CFrame * CFrame.new(0, 0, -barrel.Size.Z / 2 - MUZZLE_FLASH_FORWARD_OFFSET)
+	flash.CFrame = CFrame.new(muzzlePosition)
 	flash.Parent = workspace
 	Debris:AddItem(flash, MUZZLE_FLASH_LIFETIME)
 end
@@ -413,8 +370,9 @@ local function showShotBeam(barrel, endPosition, power)
 	endPart.Size = Vector3.new(BEAM_END_SIZE, BEAM_END_SIZE, BEAM_END_SIZE)
 	endPart.Position = endPosition
 	endPart.Parent = workspace
-	local startAttachment = Instance.new("Attachment")
-	startAttachment.Parent = barrel
+	local muzzle = tool:FindFirstChild("Muzzle", true)
+	local startAttachment = muzzle and muzzle:IsA("Attachment") and muzzle or Instance.new("Attachment")
+	if startAttachment.Parent == nil then startAttachment.Parent = barrel end
 	local endAttachment = Instance.new("Attachment")
 	endAttachment.Parent = endPart
 	local beam = Instance.new("Beam")
@@ -429,7 +387,7 @@ local function showShotBeam(barrel, endPosition, power)
 	beam.Color = ColorSequence.new(Config.FLASH_COLOR)
 	beam.Parent = barrel
 	Debris:AddItem(beam, BEAM_LIFETIME)
-	Debris:AddItem(startAttachment, BEAM_LIFETIME)
+	if startAttachment ~= muzzle then Debris:AddItem(startAttachment, BEAM_LIFETIME) end
 	Debris:AddItem(endPart, BEAM_LIFETIME)
 end
 
@@ -437,23 +395,25 @@ local function releaseShot()
 	if not charging or not isEquipped() then return end
 	local chargeRatio = getChargeRatio()
 	local power = Config.powerForHoldRatio(chargeRatio)
-	local direction = getAimDirection()
+	local originOffset, direction, target = getAimPayload()
 	charging = false
 	chargeStartedAt = 0
 	stopChargeSound()
 	stopHandlePulse()
-	if not direction then return end
+	if not originOffset or not direction then return end
 
 	local barrel = getBarrel()
 	if barrel then
-		local result = raycastFromBarrel(direction)
-		local endPosition = result and result.Position or (barrel.Position + direction * Config.RANGE)
-		if power >= FULL_POWER_VISUAL_THRESHOLD then endPosition = barrel.Position + direction * Config.RANGE end
+		local aimRay = GunAim.getRay(player)
+		if not aimRay then return end
+		local result = raycastFromCamera(direction)
+		local endPosition = result and result.Position or (aimRay.Origin + direction * Config.RANGE)
+		if power >= FULL_POWER_VISUAL_THRESHOLD then endPosition = aimRay.Origin + direction * Config.RANGE end
 		playShotSound(power, chargeRatio)
 		muzzleFlash(power)
 		showShotBeam(barrel, endPosition, power)
 	end
-	shootEvent:FireServer(direction)
+	shootEvent:FireServer(originOffset, direction, target)
 	coolingDown = true
 	cooldownStartedAt = os.clock()
 	setChargeHud(true, 0, "READYING", HUD_BACKGROUND_COLOR)
@@ -468,7 +428,6 @@ local function resetState()
 	chargeStartedAt = 0
 	stopChargeSound()
 	stopHandlePulse()
-	setCharacterAim(false)
 	destroyGroundPreview()
 	setChargeHud(false, 0, "")
 end
@@ -497,7 +456,7 @@ tool.Equipped:Connect(function()
 		ambientLoop.Looped = true
 		ambientLoop:Play()
 	end
-	setChargeHud(true, 1, "READY")
+	setChargeHud(true, 1, "Ready to charge")
 end)
 
 tool.Unequipped:Connect(function()
@@ -525,9 +484,8 @@ RunService.RenderStepped:Connect(function()
 		local progress = math.clamp((os.clock() - cooldownStartedAt) / Config.COOLDOWN, 0, 1)
 		setChargeHud(true, progress, "READYING", HUD_BACKGROUND_COLOR:Lerp(HUD_READY_COLOR, progress))
 	else
-		setChargeHud(true, 1, "READY")
+		setChargeHud(true, 1, "Ready to charge")
 	end
 	updateCrosshair()
 	updateGroundPreview(power)
-	updateCharacterAim()
 end)

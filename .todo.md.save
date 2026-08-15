@@ -1,0 +1,59 @@
+# TODO
+
+## jāizdara uzreiz
+
+- spawneri rotē, lightsaber d0audz stiprāks, portāli tālāk, šahta atveras vēlāk, auto nogalina monstrus
+
+- ar blasteri var bliest pa kokiem un auto arī, blasterim ambient skaņa + shockwave skaņa
+
+- ieroči pavēršas tēmēšanas virzienā, labais klukšķis -- viens labais klikšķis ar ieroci - first person
+
+- zombiji arī nodara damage weird walking monsters! vēlāk arī tas ar to aizsardzību, atnāk uzlikt forcefield
+
+- multikill -- balss! iegūtie punkti + bonuss x nogalinātie monstri
+
+- 0.8 koeficients monstriem
+
+- vēl monstrus atrast. jo krīpīgāk, jo labāk. esošajiem blakus nolikt zombijus, lai spirinās
+
+
+
+## svarīgi nākotnei
+
+- HUD kārtīgu uztaisīt pēc citu parauga, illustrator skices, veikals, iespējas
+
+- HUD -- gadgets/experience, zem experiences būtu arī kontras un tā
+
+- kontra vienā telpā ar ātri skrienošiem monstriem un pilna spektra ieročiem pieejamiem - MONSTER KILLING ARENA
+
+- coini tiek iegūti pēc punktu varbūtības -- 1 punkts 10%, 5 - 50%, 15 - medium to max coin vai cits bonuss
+
+
+## random ideas
+
+- 60 damage when you hit with a car; simplified entering
+
+- can unlock shields, car, weapons, monsters give keys
+
+- shield/forcefield -- shield icon, forcfield around
+
+- portable teleporter -- visit a spot in the map and mark for teleportation
+
+- finish exploding monsters
+
+- slapja damage skaņa, kad uzbrūk creepyMonster jo sevišķi
+
+- vairāk hitpointu, kas atjaunojas vēlāk
+
+- granātas, tīkli ar, kuriem var noķert monstrus, lamatas, kuras var izlikt, lai noķertu
+
+- monster mode -- izliecies par monstru, viņi tevi uztvers par savējo un dejos pie mūzikas
+
+- mūzikas aparāts, kas liek monstriem tuvā apkārtnē dejot
+
+
+## otrs līmenis
+
+- motokrosa trasse
+
+- counter-strike istaba

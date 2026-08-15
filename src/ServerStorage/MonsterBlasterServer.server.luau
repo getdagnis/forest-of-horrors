@@ -21,6 +21,7 @@ end
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFeedback"))
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
+local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 
 local damageLabelEvent = ReplicatedStorage:FindFirstChild("MonsterDamageLabel")
 if not damageLabelEvent then
@@ -65,15 +66,30 @@ local SHOCKWAVE_SEGMENT_TWEEN_SECONDS = 0.35
 local SHOCKWAVE_SEGMENT_LIFETIME = 0.45
 local playerState = {}
 local didWarnMissingShockwave = false
+local contourTargets = {}
+local didWarnMissingMuzzle = false
 
 local function isEquippedBy(player)
 	return tool.Parent == player.Character
 end
 
-local function disableLegacyAnchorScript()
-	local legacyAnchor = tool:FindFirstChild("AnchorScript")
-	if legacyAnchor and legacyAnchor:IsA("BaseScript") then
-		legacyAnchor.Disabled = true
+local function isInPlayerInventory()
+	local parent = tool.Parent
+	return parent and (
+		(parent:IsA("Backpack") and parent.Parent and parent.Parent:IsA("Player"))
+		or (parent:IsA("Model") and Players:GetPlayerFromCharacter(parent) ~= nil)
+	)
+end
+
+local function disableLegacyToolScripts()
+	for _, item in tool:GetDescendants() do
+		if item:IsA("BaseScript") and (
+			item.Name == "AnchorScript"
+			or item.Name == "GunSpawner"
+			or item.Name == "MonsterBlasterGunSpawner"
+		) then
+			item.Disabled = true
+		end
 	end
 end
 
@@ -95,7 +111,10 @@ local function stabilizeToolAssembly()
 		return
 	end
 
-	local held = tool.Parent and tool.Parent:IsA("Model") and Players:GetPlayerFromCharacter(tool.Parent) ~= nil
+	-- Roblox moves a picked-up Tool through Backpack before Character. Both are
+	-- player inventory: anchoring during that handoff can pull the player back
+	-- to the world-spawn CFrame through the Tool welds.
+	local held = isInPlayerInventory()
 	for _, item in tool:GetDescendants() do
 		if item:IsA("BasePart") then
 			item.Massless = true
@@ -121,15 +140,6 @@ local function getMonsterModelFromHit(instance)
 	end
 end
 
-local function getShotOrigin(player)
-	local barrel = tool:FindFirstChild("Barrel", true)
-	if barrel and barrel:IsA("BasePart") then return barrel.Position end
-	local handle = tool:FindFirstChild("Handle", true)
-	if handle and handle:IsA("BasePart") then return handle.Position end
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	return root and root.Position or nil
-end
-
 local function makeRaycastParams(character)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -138,10 +148,63 @@ local function makeRaycastParams(character)
 	return params
 end
 
-local function getServerShotResult(player, direction)
-	local origin = getShotOrigin(player)
-	if not origin or not player.Character then return nil, nil end
-	return workspace:Raycast(origin, direction * Config.RANGE, makeRaycastParams(player.Character)), origin
+local function getMuzzlePosition()
+	local muzzle = tool:FindFirstChild("Muzzle", true)
+	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
+		return muzzle.WorldPosition
+	end
+	if not didWarnMissingMuzzle then
+		didWarnMissingMuzzle = true
+		warn("MonsterBlaster has no Muzzle Attachment; using Barrel temporarily:", tool:GetFullName())
+	end
+	local barrel = tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true)
+	return barrel and barrel:IsA("BasePart") and barrel.Position or nil
+end
+
+local function validateCameraOrigin(player, originOffset)
+	if typeof(originOffset) ~= "Vector3" or originOffset.Magnitude > AimConfig.MaxCameraOriginOffset then return nil end
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local head = character and character:FindFirstChild("Head")
+	if not root or not root:IsA("BasePart") then return nil end
+	local origin = root.Position + originOffset
+	if head and head:IsA("BasePart") and (origin - head.Position).Magnitude > AimConfig.MaxCameraHeadOffset then return nil end
+	return origin
+end
+
+local function isDirectTarget(model, cameraOrigin, direction, player)
+	if not model or not model:IsA("Model") or not MonsterManager.getConfig(model) then return false end
+	local humanoid = MonsterManager.getMonsterHumanoid(model)
+	if not humanoid or humanoid.Health <= 0 then return false end
+	local result = workspace:Raycast(cameraOrigin, direction * Config.RANGE, makeRaycastParams(player.Character))
+	return result and getMonsterModelFromHit(result.Instance) == model
+end
+
+local function updateContourGrace(player, target, cameraOrigin, direction)
+	if isDirectTarget(target, cameraOrigin, direction, player) then
+		contourTargets[player] = { model = target, expiresAt = os.clock() + AimConfig.ContourGraceSeconds }
+	end
+end
+
+local function getGraceTarget(player, cameraOrigin, direction)
+	local cached = contourTargets[player]
+	if not cached or cached.expiresAt < os.clock() then return nil end
+	return isDirectTarget(cached.model, cameraOrigin, direction, player) and cached.model or nil
+end
+
+local function getServerShotResult(player, cameraOrigin, direction)
+	local params = makeRaycastParams(player.Character)
+	local result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * Config.RANGE, params)
+	local endPosition = result and result.Position or (cameraOrigin + direction * Config.RANGE)
+	local muzzle = getMuzzlePosition()
+	if muzzle then
+		local clearance = endPosition - muzzle
+		if clearance.Magnitude > DIRECTION_EPSILON then
+			local blocked = workspace:Raycast(muzzle, clearance.Unit * math.min(AimConfig.MuzzleClearanceDistance, clearance.Magnitude), params)
+			if blocked then return blocked, muzzle, true end
+		end
+	end
+	return result, cameraOrigin, false
 end
 
 local function getPiercedMonsterHits(origin, direction, character)
@@ -363,7 +426,7 @@ chargeEvent.OnServerEvent:Connect(function(player, action)
 	end
 end)
 
-shootEvent.OnServerEvent:Connect(function(player, direction)
+shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outlinedTarget)
 	if typeof(direction) ~= "Vector3" or direction.Magnitude < DIRECTION_EPSILON or not isEquippedBy(player) then return end
 	local state = playerState[player] or {}
 	local now = os.clock()
@@ -376,7 +439,11 @@ shootEvent.OnServerEvent:Connect(function(player, direction)
 	local holdRatio = math.clamp((now - startedAt + Config.FULL_CHARGE_TOLERANCE) / Config.CHARGE_TIME, 0, 1)
 	local power = Config.powerForHoldRatio(holdRatio)
 	local unitDirection = direction.Unit
-	local serverResult, origin = getServerShotResult(player, unitDirection)
+	local cameraOrigin = validateCameraOrigin(player, originOffset)
+	if not cameraOrigin then return end
+	updateContourGrace(player, outlinedTarget, cameraOrigin, unitDirection)
+	local graceTarget = getGraceTarget(player, cameraOrigin, unitDirection)
+	local serverResult, origin, muzzleBlocked = getServerShotResult(player, cameraOrigin, unitDirection)
 	if not origin then return end
 	pushShooterBack(player, unitDirection)
 
@@ -388,6 +455,7 @@ shootEvent.OnServerEvent:Connect(function(player, direction)
 	end
 
 	local target = serverResult and getMonsterModelFromHit(serverResult.Instance)
+	if not target and not muzzleBlocked then target = graceTarget end
 	if not target then return end
 	local damage = Config.damageForPower(power)
 	if power >= FULL_POWER_THRESHOLD then
@@ -406,11 +474,17 @@ tool.Unequipped:Connect(function()
 end)
 Players.PlayerRemoving:Connect(function(player)
 	playerState[player] = nil
+	contourTargets[player] = nil
 end)
 
-disableLegacyAnchorScript()
+disableLegacyToolScripts()
 stabilizeToolAssembly()
+tool.Equipped:Connect(function()
+	stabilizeToolAssembly()
+	task.defer(stabilizeToolAssembly)
+end)
 tool.AncestryChanged:Connect(function()
+	disableLegacyToolScripts()
 	stabilizeToolAssembly()
 	task.defer(stabilizeToolAssembly)
 end)

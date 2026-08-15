@@ -8,6 +8,7 @@ local rs = game:GetService("ReplicatedStorage")
 local MonsterManager = require(rs:WaitForChild("MonsterManager"))
 
 local scores = {} -- Player -> current score
+local kills = {} -- Player -> monsters for which the player earned score
 local connected = {} -- humanoid -> true (in-memory, so clones re-register)
 local spawns = {} -- model -> {template, cframe} used for respawning in place
 local roundTemplates = {}
@@ -22,6 +23,11 @@ local RESPAWN_TIME = 15 -- seconds before a killed monster respawns
 local RESPAWN_CHANCE = 0.8
 local MAX_MONSTERS = 90
 local BOMB_MONSTER_NAME = "BombMonster"
+local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
+
+if ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE) == nil then
+	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, ws:GetServerTimeNow())
+end
 
 local function getOrCreateRemoteEvent(name)
 	local event = rs:FindFirstChild(name)
@@ -65,11 +71,13 @@ end)
 local function fireRecords(player)
 	local best = sessionBest[player] or {
 		score = 0,
+		kills = 0,
 		spawn = spawnCounts[player] or 0,
 	}
 
 	recordsEvent:FireClient(player, {
 		currentScore = scores[player] or 0,
+		currentKills = kills[player] or 0,
 		currentSpawn = spawnCounts[player] or 0,
 
 		personalBestScore = best.score or 0,
@@ -123,12 +131,20 @@ local function setupLeaderstats(player)
 	end
 
 	scoreValue.Value = scores[player] or 0
-	return scoreValue
+	local killsValue = leaderstats:FindFirstChild("Kills")
+	if not killsValue then
+		killsValue = Instance.new("IntValue")
+		killsValue.Name = "Kills"
+		killsValue.Parent = leaderstats
+	end
+	killsValue.Value = kills[player] or 0
+	return scoreValue, killsValue
 end
 
-local function setLeaderboardScore(player, score)
-	local scoreValue = setupLeaderstats(player)
+local function setLeaderboardStats(player, score, killCount)
+	local scoreValue, killsValue = setupLeaderstats(player)
 	scoreValue.Value = score
+	killsValue.Value = killCount
 end
 
 local function getScoreboard()
@@ -242,8 +258,9 @@ end
 
 local function awardScore(player, points)
 	scores[player] = (scores[player] or 0) + points
-	setLeaderboardScore(player, scores[player])
-	scoreEvent:FireClient(player, scores[player])
+	kills[player] = (kills[player] or 0) + 1
+	setLeaderboardStats(player, scores[player], kills[player])
+	scoreEvent:FireClient(player, scores[player], kills[player])
 
 	local currentScore = scores[player]
 	local currentSpawn = spawnCounts[player] or 1
@@ -392,8 +409,9 @@ end
 local function resetScores()
 	for _, player in Players:GetPlayers() do
 		scores[player] = 0
-		setLeaderboardScore(player, 0)
-		scoreEvent:FireClient(player, 0)
+		kills[player] = 0
+		setLeaderboardStats(player, 0, 0)
+		scoreEvent:FireClient(player, 0, 0)
 		fireRecords(player)
 	end
 end
@@ -401,6 +419,7 @@ end
 local function restartRound()
 	pendingRespawns = 0
 	roundComplete = false
+	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, ws:GetServerTimeNow())
 
 	for _, instance in ws:GetDescendants() do
 		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
@@ -454,14 +473,16 @@ end)
 -- Reset each player's score when they respawn
 local function onPlayerAdded(player)
 	scores[player] = 0
+	kills[player] = 0
 	spawnCounts[player] = 0
 	setupLeaderstats(player)
 
 	player.CharacterAdded:Connect(function()
 		spawnCounts[player] += 1
 		scores[player] = 0
-		setLeaderboardScore(player, 0)
-		scoreEvent:FireClient(player, 0)
+		kills[player] = 0
+		setLeaderboardStats(player, 0, 0)
+		scoreEvent:FireClient(player, 0, 0)
 		fireRecords(player)
 	end)
 end

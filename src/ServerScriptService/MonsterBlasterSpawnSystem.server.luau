@@ -35,10 +35,15 @@ local function hasToolJoint(tool, first, second)
 end
 
 local function prepareTool(tool, held)
-	local legacyAnchor = tool:FindFirstChild("AnchorScript")
-	if legacyAnchor and legacyAnchor:IsA("BaseScript") then legacyAnchor.Disabled = true end
-	local legacySpawner = tool:FindFirstChild("MonsterBlasterGunSpawner", true)
-	if legacySpawner and legacySpawner:IsA("BaseScript") then legacySpawner.Disabled = true end
+	for _, item in tool:GetDescendants() do
+		if item:IsA("BaseScript") and (
+			item.Name == "AnchorScript"
+			or item.Name == "GunSpawner"
+			or item.Name == "MonsterBlasterGunSpawner"
+		) then
+			item.Disabled = true
+		end
+	end
 
 	local handle = tool:FindFirstChild("Handle", true)
 	if not handle or not handle:IsA("BasePart") then

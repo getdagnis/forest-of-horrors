@@ -10,15 +10,15 @@ local SoundService = game:GetService("SoundService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
+local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
+local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 local shotVisualEvent = ReplicatedStorage:WaitForChild("GunShotVisual")
 
-local RANGE = 400
-local LOCK_ACQUIRE_DISTANCE = 7
-local LOCK_RELEASE_DISTANCE = 15
-local LOCK_CONE_DOT = 0.94
-local LOCK_REFRESH_SECONDS = 0.1
+local LOCK_ACQUIRE_DISTANCE = AimConfig.LockAcquireDistance
+local LOCK_RELEASE_DISTANCE = AimConfig.LockReleaseDistance
+local LOCK_CONE_DOT = AimConfig.LockConeDot
+local LOCK_REFRESH_SECONDS = AimConfig.LockRefreshSeconds
 local DEFAULT_COLORS = {
 	MonsterGun = Color3.fromRGB(255, 105, 180),
 	MonsterGun2 = Color3.fromRGB(255, 160, 225),
@@ -78,30 +78,19 @@ end
 workspace.DescendantAdded:Connect(trackMonster)
 workspace.DescendantRemoving:Connect(function(instance)
 	if instance:IsA("Model") then knownMonsters[instance] = nil end
-	if lockedMonster == instance then lockedMonster = nil end
+	if lockedMonster == instance then
+		lockedMonster = nil
+		GunAim.setLockedTarget(nil)
+	end
 end)
 
-local function isCenteredAim()
-	-- Phones have neither RMB nor a physical Z key.  Give them the same
-	-- camera-centred reticle/lock path that desktop receives while aiming.
-	local touchOnly = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
-	return touchOnly
-		or player:GetAttribute("WeaponShoulderAim") == true
-		or player:GetAttribute("WeaponFirstPerson") == true
-end
-
 local function hasLineOfSight(tool, model, displayPart)
-	local camera = workspace.CurrentCamera
-	local character = player.Character
-	if not camera or not character or not displayPart then return false end
-
-	local offset = displayPart.Position - camera.CFrame.Position
+	if not displayPart then return false end
+	local ray = GunAim.getRay(player)
+	if not ray then return false end
+	local offset = displayPart.Position - ray.Origin
 	if offset.Magnitude < 0.01 then return true end
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character, tool }
-	params.IgnoreWater = true
-	local result = workspace:Raycast(camera.CFrame.Position, offset, params)
+	local result = workspace:Raycast(ray.Origin, offset, GunAim.makeRaycastParams(player.Character, tool))
 	return not result or getMonsterFromHit(result.Instance) == model
 end
 
@@ -145,9 +134,10 @@ local function findLockTarget(tool)
 end
 
 local function refreshLock(deltaTime)
-	if not equippedTool or not isCenteredAim() then
+	if not equippedTool or not GunAim.isCentered(player) then
 		lockedMonster = nil
 		lockTimer = 0
+		GunAim.setLockedTarget(nil)
 		return
 	end
 	if lockedMonster and not isValidLock(equippedTool, lockedMonster, LOCK_RELEASE_DISTANCE) then
@@ -158,6 +148,7 @@ local function refreshLock(deltaTime)
 		lockTimer = 0
 		lockedMonster = findLockTarget(equippedTool)
 	end
+	GunAim.setLockedTarget(lockedMonster)
 end
 
 local function getEquippedGun()
@@ -186,6 +177,7 @@ local function setEquippedTool(tool)
 	equippedTool = tool
 	lockedMonster = nil
 	lockTimer = 0
+	GunAim.setLockedTarget(nil)
 	if not tool then
 		UserInputService.MouseIconEnabled = true
 		return
@@ -227,37 +219,14 @@ local function updateCrosshair()
 		end
 	end
 
-	if isCenteredAim() then
+	if GunAim.isCentered(player) then
 		crosshair.Position = UDim2.fromScale(0.5, 0.5)
 	else
+		local mouse = player:GetMouse()
 		crosshair.Position = UDim2.fromOffset(mouse.X, mouse.Y)
 	end
 end
 
-local function getShotDirection(tool)
-	local barrel = tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true)
-	if not barrel or not barrel:IsA("BasePart") then return nil end
-	if lockedMonster then
-		local displayPart = getDisplayPart(lockedMonster)
-		if displayPart then
-			local direction = displayPart.Position - barrel.Position
-			if direction.Magnitude > 0.01 then return direction.Unit end
-		end
-	end
-
-	if isCenteredAim() then
-		local camera = workspace.CurrentCamera
-		if camera then
-			local viewport = camera.ViewportSize
-			local centerRay = camera:ViewportPointToRay(viewport.X * 0.5, viewport.Y * 0.5)
-			local direction = (centerRay.Origin + centerRay.Direction * RANGE) - barrel.Position
-			if direction.Magnitude > 0.01 then return direction.Unit end
-		end
-	end
-
-	local direction = mouse.Hit.Position - barrel.Position
-	return direction.Magnitude > 0.01 and direction.Unit or nil
-end
 
 local function playShotSound(tool)
 	local sound = tool:FindFirstChild("ShotSound", true)
@@ -299,9 +268,15 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	hitLight.Shadows = true
 	hitLight.Parent = endPart
 
-	local startAttachment = Instance.new("Attachment")
-	startAttachment.Position = barrel.CFrame:PointToObjectSpace(origin)
-	startAttachment.Parent = barrel
+	local muzzle = tool:FindFirstChild("Muzzle", true)
+	local startAttachment
+	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
+		startAttachment = muzzle
+	else
+		startAttachment = Instance.new("Attachment")
+		startAttachment.Position = barrel.CFrame:PointToObjectSpace(origin)
+		startAttachment.Parent = barrel
+	end
 	local endAttachment = Instance.new("Attachment")
 	endAttachment.Parent = endPart
 	local beam = Instance.new("Beam")
@@ -316,7 +291,7 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	beam.Transparency = NumberSequence.new(0.08)
 	beam.Parent = barrel
 	Debris:AddItem(beam, 0.18)
-	Debris:AddItem(startAttachment, 0.18)
+	if startAttachment ~= muzzle then Debris:AddItem(startAttachment, 0.18) end
 	Debris:AddItem(endPart, 0.18)
 
 	if hitModel then
@@ -364,10 +339,10 @@ end
 
 fireGun = function(tool)
 	if not tool or tool.Parent ~= player.Character then return end
-	local direction = getShotDirection(tool)
+	local originOffset, direction, target = GunAim.getShotPayload(player, tool)
 	local shootEvent = tool:FindFirstChild("ShootEvent")
-	if direction and shootEvent and shootEvent:IsA("RemoteEvent") then
-		shootEvent:FireServer(direction)
+	if originOffset and direction and shootEvent and shootEvent:IsA("RemoteEvent") then
+		shootEvent:FireServer(originOffset, direction, target)
 	end
 end
 

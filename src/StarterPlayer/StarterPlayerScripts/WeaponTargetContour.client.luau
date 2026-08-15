@@ -1,11 +1,12 @@
+-- StarterPlayerScripts > WeaponTargetContour
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
+local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
+local MonsterBlasterConfig = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 
 local WEAPON_COLORS = {
 	MonsterGun = Color3.fromRGB(255, 105, 180),
@@ -48,28 +49,6 @@ local function getMonsterModelFromHit(instance)
 	end
 end
 
-local function getCenteredAimHit(weapon)
-	local camera = workspace.CurrentCamera
-	local character = player.Character
-	if not camera or not character then return nil end
-
-	local viewport = camera.ViewportSize
-	local ray = camera:ViewportPointToRay(viewport.X * 0.5, viewport.Y * 0.5)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character, weapon }
-	params.IgnoreWater = true
-
-	local result = workspace:Raycast(ray.Origin, ray.Direction * 350, params)
-	return result and result.Instance or nil
-end
-
-local function isCenteredAim()
-	return (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
-		or player:GetAttribute("WeaponShoulderAim") == true
-		or player:GetAttribute("WeaponFirstPerson") == true
-end
-
 RunService.RenderStepped:Connect(function()
 	local weapon = getEquippedWeapon()
 	if not weapon then
@@ -77,15 +56,14 @@ RunService.RenderStepped:Connect(function()
 		highlight.Adornee = nil
 		return
 	end
-
-	local hitInstance
-	if isCenteredAim() then
-		hitInstance = getCenteredAimHit(weapon)
-	else
-		hitInstance = mouse.Target
+	if not GunAim.shouldShowAimHelpers(player) then
+		highlight.Enabled = false
+		highlight.Adornee = nil
+		return
 	end
 
-	local monster = getMonsterModelFromHit(hitInstance)
+	local range = weapon.Name == "MonsterBlaster" and MonsterBlasterConfig.RANGE or nil
+	local monster = GunAim.getDirectTarget(player, weapon, nil, range)
 	if monster then
 		local color = WEAPON_COLORS[weapon.Name]
 		highlight.FillColor = color

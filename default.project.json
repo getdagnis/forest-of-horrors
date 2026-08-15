@@ -16,6 +16,12 @@
       },
       "MonsterBlasterConfig": {
         "$path": "src/ReplicatedStorage/MonsterBlasterConfig.luau"
+      },
+      "GunAimConfig": {
+        "$path": "src/ReplicatedStorage/GunAimConfig.luau"
+      },
+      "GunAim": {
+        "$path": "src/ReplicatedStorage/GunAim.luau"
       }
     },
 
@@ -105,6 +111,9 @@
       },
       "MonsterHudClient": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterHudClient.client.luau"
+      },
+      "MonsterRadar": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterRadar.client.luau"
       },
       "GameFlowHud": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/GameFlowHud.client.luau"
