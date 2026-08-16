@@ -1,6 +1,6 @@
--- RadarTowerSystem: activates map radar consoles marked in the live place.
--- Studio setup: set RadarTower=true on each tower Model (or its console Part)
--- and name the interactable BasePart RadarConsole.
+-- RadarTowerSystem: a seated player immediately receives the full-map radar.
+-- Studio setup: set RadarTower=true on each tower Model, or directly on its
+-- cockpit Seat/VehicleSeat. No console prompt is required.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,7 +13,8 @@ if not event then
 	event.Parent = ReplicatedStorage
 end
 
-local activeConsoles = {}
+local boundSeats = {}
+local playerSeats = {}
 
 local function isTower(instance)
 	local current = instance
@@ -24,57 +25,79 @@ local function isTower(instance)
 	return false
 end
 
-local function findConsole(instance)
-	if instance:IsA("BasePart") and instance.Name == "RadarConsole" then return instance end
-	local console = instance:FindFirstChild("RadarConsole", true)
-	return console and console:IsA("BasePart") and console or nil
+local function playerFromOccupant(occupant)
+	local character = occupant and occupant.Parent
+	return character and Players:GetPlayerFromCharacter(character) or nil
 end
 
-local function setupTower(instance)
-	if not isTower(instance) then return end
-	local console = findConsole(instance)
-	if not console or console:GetAttribute("RadarTowerBound") then return end
-	console:SetAttribute("RadarTowerBound", true)
+local function hidePlayer(player, seat)
+	if playerSeats[player] ~= seat then return end
+	playerSeats[player] = nil
+	event:FireClient(player, false)
+end
 
-	local prompt = console:FindFirstChild("RadarTowerPrompt")
-	if not prompt then
-		prompt = Instance.new("ProximityPrompt")
-		prompt.Name = "RadarTowerPrompt"
-		prompt.ActionText = "Use radar"
-		prompt.ObjectText = "Radar Tower"
-		prompt.MaxActivationDistance = 10
-		prompt.RequiresLineOfSight = false
-		prompt.HoldDuration = 0
-		prompt.Parent = console
+local function syncSeat(seat)
+	local previousPlayer = boundSeats[seat]
+	local player = playerFromOccupant(seat.Occupant)
+	if previousPlayer and previousPlayer ~= player then
+		hidePlayer(previousPlayer, seat)
 	end
 
-	prompt.Triggered:Connect(function(player)
-		activeConsoles[player] = console
+	boundSeats[seat] = player
+	if player then
+		local oldSeat = playerSeats[player]
+		if oldSeat and oldSeat ~= seat then
+			boundSeats[oldSeat] = nil
+		end
+		playerSeats[player] = seat
 		event:FireClient(player, true)
-	end)
+	end
 end
 
-for _, instance in ipairs(Workspace:GetDescendants()) do setupTower(instance) end
+local function bindSeat(seat)
+	if boundSeats[seat] ~= nil or seat:GetAttribute("RadarTowerBound") then return end
+	if not isTower(seat) then return end
+
+	seat:SetAttribute("RadarTowerBound", true)
+	boundSeats[seat] = false
+	seat:GetPropertyChangedSignal("Occupant"):Connect(function()
+		syncSeat(seat)
+	end)
+	seat.AncestryChanged:Connect(function(_, parent)
+		if parent then return end
+		local player = boundSeats[seat]
+		if player then hidePlayer(player, seat) end
+		boundSeats[seat] = nil
+	end)
+	task.defer(syncSeat, seat)
+end
+
+local function consider(instance)
+	if instance:IsA("Seat") or instance:IsA("VehicleSeat") then
+		bindSeat(instance)
+	end
+end
+
+for _, instance in ipairs(Workspace:GetDescendants()) do consider(instance) end
 Workspace.DescendantAdded:Connect(function(instance)
-	if instance:IsA("Model") or instance:IsA("BasePart") then
-		task.defer(function() setupTower(instance) end)
+	if instance:IsA("Seat") or instance:IsA("VehicleSeat") then
+		task.defer(consider, instance)
 	end
 end)
 
-task.spawn(function()
-	while true do
-		task.wait(0.5)
-		for player, console in pairs(activeConsoles) do
-			local character = player.Character
-			local root = character and character:FindFirstChild("HumanoidRootPart")
-			if not console.Parent or not root or (root.Position - console.Position).Magnitude > 12 then
-				activeConsoles[player] = nil
-				event:FireClient(player, false)
-			end
-		end
+-- Exit hides the overlay while the player remains seated. Re-seat to reopen.
+event.OnServerEvent:Connect(function(player, enabled)
+	if enabled ~= false then return end
+	local seat = playerSeats[player]
+	if seat then
+		playerSeats[player] = nil
+		boundSeats[seat] = false
 	end
+	event:FireClient(player, false)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	activeConsoles[player] = nil
+	local seat = playerSeats[player]
+	if seat then boundSeats[seat] = nil end
+	playerSeats[player] = nil
 end)

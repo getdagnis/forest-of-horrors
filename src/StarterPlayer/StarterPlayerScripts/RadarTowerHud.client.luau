@@ -1,10 +1,11 @@
--- RadarTowerHud: full-map monster positions while a RadarTower console is used.
--- Set Workspace.RadarMapMin and Workspace.RadarMapMax Vector3 attributes in
--- Studio to fit the actual map. The fallback is centered on McDonald's.
+-- RadarTowerHud: a near-full-screen diagnostic map while seated at a tower.
+-- Mark any important Part or Model with radar_detect=true to add a faint,
+-- static landmark marker. Workspace.RadarMapMin/RadarMapMax define map bounds.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
@@ -14,61 +15,123 @@ local useEvent = ReplicatedStorage:WaitForChild("RadarTowerUse")
 local gui = Instance.new("ScreenGui")
 gui.Name = "RadarTowerHud"
 gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 40
 gui.Enabled = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local shade = Instance.new("Frame")
-shade.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-shade.BackgroundTransparency = 0.3
+shade.Name = "Shade"
+shade.BackgroundColor3 = Color3.fromRGB(1, 7, 16)
+shade.BackgroundTransparency = 0.25
 shade.Size = UDim2.fromScale(1, 1)
 shade.BorderSizePixel = 0
 shade.Parent = gui
 
-local map = Instance.new("Frame")
-map.Name = "FullMap"
-map.AnchorPoint = Vector2.new(0.5, 0.5)
-map.Position = UDim2.fromScale(0.5, 0.5)
-map.Size = UDim2.fromOffset(540, 540)
-map.BackgroundColor3 = Color3.fromRGB(7, 16, 24)
-map.BackgroundTransparency = 0.08
-map.BorderSizePixel = 0
-map.ClipsDescendants = true
-map.Parent = shade
-Instance.new("UICorner", map).CornerRadius = UDim.new(0, 12)
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(83, 144, 180)
-stroke.Transparency = 0.25
-stroke.Thickness = 2
-stroke.Parent = map
+local panel = Instance.new("Frame")
+panel.Name = "MonsterRadar"
+panel.AnchorPoint = Vector2.new(0.5, 0.5)
+panel.Position = UDim2.fromScale(0.5, 0.52)
+panel.Size = UDim2.fromScale(0.92, 0.88)
+panel.BackgroundColor3 = Color3.fromRGB(3, 20, 45)
+panel.BackgroundTransparency = 0.10
+panel.BorderSizePixel = 0
+panel.Parent = shade
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+local panelStroke = Instance.new("UIStroke")
+panelStroke.Color = Color3.fromRGB(14, 63, 104)
+panelStroke.Transparency = 0.15
+panelStroke.Thickness = 1
+panelStroke.Parent = panel
 
 local title = Instance.new("TextLabel")
 title.BackgroundTransparency = 1
-title.Position = UDim2.fromOffset(18, 12)
-title.Size = UDim2.new(1, -36, 0, 30)
+title.Position = UDim2.fromOffset(34, 16)
+title.Size = UDim2.new(1, -220, 0, 72)
 title.Font = Enum.Font.GothamBold
-title.Text = "RADAR TOWER"
-title.TextColor3 = Color3.fromRGB(180, 225, 250)
-title.TextSize = 20
+title.Text = "Monster Radar"
+title.TextColor3 = Color3.fromRGB(246, 249, 255)
+title.TextSize = 52
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = map
+title.TextYAlignment = Enum.TextYAlignment.Center
+title.Parent = panel
 
 local close = Instance.new("TextButton")
+close.Name = "Exit"
 close.AnchorPoint = Vector2.new(1, 0)
-close.Position = UDim2.new(1, -12, 0, 10)
-close.Size = UDim2.fromOffset(42, 32)
-close.BackgroundColor3 = Color3.fromRGB(50, 16, 30)
-close.Text = "×"
-close.TextColor3 = Color3.fromRGB(255, 220, 230)
-close.TextSize = 24
+close.Position = UDim2.new(1, -34, 0, 16)
+close.Size = UDim2.fromOffset(145, 72)
+close.BackgroundTransparency = 1
+close.Text = "Exit"
+close.TextColor3 = Color3.fromRGB(255, 255, 255)
+close.TextSize = 52
 close.Font = Enum.Font.GothamBold
-close.Parent = map
-Instance.new("UICorner", close).CornerRadius = UDim.new(0, 7)
-close.Activated:Connect(function() gui.Enabled = false end)
+close.Parent = panel
 
-local dotFolder = Instance.new("Folder")
-dotFolder.Name = "MonsterDots"
-dotFolder.Parent = map
-local dots = {}
+local plot = Instance.new("Frame")
+plot.Name = "Map"
+plot.Position = UDim2.fromOffset(34, 104)
+plot.Size = UDim2.new(1, -68, 1, -138)
+plot.BackgroundColor3 = Color3.fromRGB(3, 15, 38)
+plot.BackgroundTransparency = 0.12
+plot.BorderSizePixel = 0
+plot.ClipsDescendants = true
+plot.Parent = panel
+local plotStroke = Instance.new("UIStroke")
+plotStroke.Color = Color3.fromRGB(243, 25, 111)
+plotStroke.Transparency = 0.35
+plotStroke.Thickness = 1
+plotStroke.Parent = plot
+
+-- The grid is intentionally geographic rather than decorative: it makes a
+-- debugging callout such as "two squares north-east of McDonald's" practical.
+local GRID_COLUMNS = 17
+local GRID_ROWS = 13
+for column = 1, GRID_COLUMNS - 1 do
+	local line = Instance.new("Frame")
+	line.Name = "GridV"
+	line.AnchorPoint = Vector2.new(0.5, 0)
+	line.Position = UDim2.fromScale(column / GRID_COLUMNS, 0)
+	line.Size = UDim2.new(0, 1, 1, 0)
+	line.BackgroundColor3 = Color3.fromRGB(208, 27, 103)
+	line.BackgroundTransparency = 0.64
+	line.BorderSizePixel = 0
+	line.Parent = plot
+end
+for row = 1, GRID_ROWS - 1 do
+	local line = Instance.new("Frame")
+	line.Name = "GridH"
+	line.AnchorPoint = Vector2.new(0, 0.5)
+	line.Position = UDim2.fromScale(0, row / GRID_ROWS)
+	line.Size = UDim2.new(1, 0, 0, 1)
+	line.BackgroundColor3 = Color3.fromRGB(208, 27, 103)
+	line.BackgroundTransparency = 0.64
+	line.BorderSizePixel = 0
+	line.Parent = plot
+end
+
+local landmarkLayer = Instance.new("Folder")
+landmarkLayer.Name = "Landmarks"
+landmarkLayer.Parent = plot
+local zombieLayer = Instance.new("Folder")
+zombieLayer.Name = "Zombies"
+zombieLayer.Parent = plot
+
+local selfMarker = Instance.new("Frame")
+selfMarker.Name = "You"
+selfMarker.AnchorPoint = Vector2.new(0.5, 0.5)
+selfMarker.Size = UDim2.fromOffset(17, 17)
+selfMarker.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+selfMarker.BorderSizePixel = 0
+selfMarker.Parent = plot
+Instance.new("UICorner", selfMarker).CornerRadius = UDim.new(1, 0)
+local selfStroke = Instance.new("UIStroke")
+selfStroke.Color = Color3.fromRGB(247, 35, 120)
+selfStroke.Thickness = 2
+selfStroke.Parent = selfMarker
+
+local zombieDots = {}
+local landmarkMarkers = {}
 
 local function mapBounds()
 	local min = Workspace:GetAttribute("RadarMapMin")
@@ -79,42 +142,105 @@ local function mapBounds()
 	return min, max
 end
 
-local function getDot(index)
-	local dot = dots[index]
+local function mapPosition(worldPosition, min, max)
+	local width = math.max(1, max.X - min.X)
+	local depth = math.max(1, max.Z - min.Z)
+	return UDim2.fromScale(
+		math.clamp((worldPosition.X - min.X) / width, 0, 1),
+		math.clamp(1 - (worldPosition.Z - min.Z) / depth, 0, 1)
+	)
+end
+
+local function getZombieDot(index)
+	local dot = zombieDots[index]
 	if dot then return dot end
 	dot = Instance.new("Frame")
+	dot.Name = "Zombie"
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(7, 7)
-	dot.BackgroundColor3 = Color3.fromRGB(235, 62, 70)
+	dot.Size = UDim2.fromOffset(11, 11)
+	dot.BackgroundColor3 = Color3.fromRGB(223, 27, 87)
+	dot.BackgroundTransparency = 0.08
 	dot.BorderSizePixel = 0
-	dot.Parent = dotFolder
+	dot.Parent = zombieLayer
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-	dots[index] = dot
+	zombieDots[index] = dot
 	return dot
 end
 
-local elapsed = 0
-RunService.RenderStepped:Connect(function(dt)
+local function getLandmark(index)
+	local marker = landmarkMarkers[index]
+	if marker then return marker end
+	marker = Instance.new("Frame")
+	marker.Name = "Landmark"
+	marker.AnchorPoint = Vector2.new(0.5, 0.5)
+	marker.Size = UDim2.fromOffset(15, 15)
+	marker.BackgroundTransparency = 1
+	marker.BorderSizePixel = 0
+	marker.Parent = landmarkLayer
+	local landmarkStroke = Instance.new("UIStroke")
+	landmarkStroke.Color = Color3.fromRGB(95, 205, 220)
+	landmarkStroke.Transparency = 0.35
+	landmarkStroke.Thickness = 1
+	landmarkStroke.Parent = marker
+	landmarkMarkers[index] = marker
+	return marker
+end
+
+local function markerPosition(instance)
+	if instance:IsA("BasePart") then return instance.Position end
+	if instance:IsA("Model") then return instance:GetPivot().Position end
+	return nil
+end
+
+local refreshElapsed = 0
+RunService.Heartbeat:Connect(function(deltaTime)
 	if not gui.Enabled then return end
-	elapsed += dt
-	if elapsed < 0.5 then return end
-	elapsed = 0
+	refreshElapsed += deltaTime
+	if refreshElapsed < 0.35 then return end
+	refreshElapsed = 0
+
 	local min, max = mapBounds()
-	local width, depth = math.max(1, max.X - min.X), math.max(1, max.Z - min.Z)
-	local shown = 0
-	for _, model in ipairs(Workspace:GetDescendants()) do
-		if model:IsA("Model") and model:GetAttribute("RoundManagedMonster") == true and MonsterManager.getConfig(model) then
-			local humanoid = MonsterManager.getMonsterHumanoid(model)
-			local root = model:FindFirstChild("HumanoidRootPart", true)
-			if humanoid and humanoid.Health > 0 and root and root:IsA("BasePart") then
-				shown += 1
-				local dot = getDot(shown)
-				dot.Position = UDim2.fromScale(math.clamp((root.Position.X - min.X) / width, 0, 1), math.clamp(1 - (root.Position.Z - min.Z) / depth, 0, 1))
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	selfMarker.Visible = root ~= nil
+	if root then selfMarker.Position = mapPosition(root.Position, min, max) end
+
+	local zombieCount = 0
+	local landmarkCount = 0
+	for _, instance in ipairs(Workspace:GetDescendants()) do
+		if instance:IsA("Model") and instance.Name == "Drooling Zombie" and MonsterManager.getConfig(instance) then
+			local humanoid = MonsterManager.getMonsterHumanoid(instance)
+			local zombieRoot = instance:FindFirstChild("HumanoidRootPart", true)
+			if humanoid and humanoid.Health > 0 and zombieRoot and zombieRoot:IsA("BasePart") then
+				zombieCount += 1
+				local dot = getZombieDot(zombieCount)
+				dot.Position = mapPosition(zombieRoot.Position, min, max)
 				dot.Visible = true
+			end
+		elseif instance:GetAttribute("radar_detect") == true then
+			local position = markerPosition(instance)
+			if position then
+				landmarkCount += 1
+				local marker = getLandmark(landmarkCount)
+				marker.Position = mapPosition(position, min, max)
+				marker.Visible = true
 			end
 		end
 	end
-	for index = shown + 1, #dots do dots[index].Visible = false end
+	for index = zombieCount + 1, #zombieDots do zombieDots[index].Visible = false end
+	for index = landmarkCount + 1, #landmarkMarkers do landmarkMarkers[index].Visible = false end
+end)
+
+local function exitRadar()
+	gui.Enabled = false
+	useEvent:FireServer(false)
+end
+
+close.Activated:Connect(exitRadar)
+UserInputService.InputBegan:Connect(function(input, processed)
+	if gui.Enabled and not processed and input.KeyCode == Enum.KeyCode.Escape then
+		exitRadar()
+	end
 end)
 
 useEvent.OnClientEvent:Connect(function(enabled)
