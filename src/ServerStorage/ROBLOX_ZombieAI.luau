@@ -1,10 +1,29 @@
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local HumanoidList = require(ServerStorage:WaitForChild("ROBLOX_HumanoidList"))
 local AIUtilities = require(ServerStorage:WaitForChild("ROBLOX_AIUtilities"))
+local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local ZombieAI = {}
+
+-- Easy global defaults for a zombie template that does not provide a matching
+-- NumberValue in its `Configurations` folder. Existing per-model values win,
+-- which lets special zombies opt out without changing the whole crowd.
+local DEFAULT_ATTACK_RANGE = 3
+local DEFAULT_FIELD_OF_VIEW = 180
+local DEFAULT_AGGRO_RANGE = 200
+local DEFAULT_BOREDOM_CHANCE = 0.5
+local DEFAULT_BOREDOM_DURATION = 10
+local DEFAULT_PLAYER_DAMAGE = 10
+local DEFAULT_PLAYER_DAMAGE_COOLDOWN = 1
+local DEFAULT_MONSTER_DAMAGE_COOLDOWN = 2
+
+-- A searching zombie asks the map director for a new idle waypoint at this
+-- interval. Lower values look busier but cost more pathfinding; 12 seconds
+-- keeps 10–30 minute map-scale travel slow and varied.
+local SEARCH_WAYPOINT_INTERVAL = 12
 
 local function updateDisplay(display, state)
 	task.spawn(function()
@@ -52,13 +71,16 @@ ZombieAI.new = function(model, navigation)
 		configs[configName] = value and value.Value or defaultValue
 	end
 
-	loadConfig("AttackRange", 3)
-	loadConfig("FieldOfView", 180)
-	loadConfig("AggroRange", 200)
-	loadConfig("ChanceOfBoredom", 0.5)
-	loadConfig("BoredomDuration", 10)
-	loadConfig("Damage", 10)
-	loadConfig("DamageCooldown", 1)
+	loadConfig("AttackRange", DEFAULT_ATTACK_RANGE)
+	loadConfig("FieldOfView", DEFAULT_FIELD_OF_VIEW)
+	loadConfig("AggroRange", DEFAULT_AGGRO_RANGE)
+	loadConfig("ChanceOfBoredom", DEFAULT_BOREDOM_CHANCE)
+	loadConfig("BoredomDuration", DEFAULT_BOREDOM_DURATION)
+	loadConfig("Damage", DEFAULT_PLAYER_DAMAGE)
+	loadConfig("DamageCooldown", DEFAULT_PLAYER_DAMAGE_COOLDOWN)
+	-- Group infighting is intentionally weak and infrequent; this value controls
+	-- only the per-zombie strike interval, not player attack damage.
+	loadConfig("MonsterDamageCooldown", DEFAULT_MONSTER_DAMAGE_COOLDOWN)
 
 	local StateMachine = require(ServerStorage:WaitForChild("ROBLOX_StateMachine")).new()
 	local PathLib = require(ServerStorage:WaitForChild("ROBLOX_PathfindingLibrary")).new()
@@ -69,6 +91,7 @@ ZombieAI.new = function(model, navigation)
 	local activeDestination = nil
 	local lastProgressPosition = nil
 	local lastProgressAt = time()
+	local lastMonsterAttack = 0
 	local stopRequested = false
 
 	local function moveTo(destination, usePathfinding)
@@ -99,10 +122,14 @@ ZombieAI.new = function(model, navigation)
 
 		local now = time()
 
-		if now - lastNavigationMove > 12 then
+		if now - lastNavigationMove > SEARCH_WAYPOINT_INTERVAL then
 			lastNavigationMove = now
-			searchTarget = navigation and navigation:GetIdleDestination(model, root.Position)
-				or AIUtilities:FindCloseEmptySpace(model)
+			-- When the central director exists, its nil answer is intentional: it
+			-- means this zombie should pause rather than invent a second local goal.
+			searchTarget = navigation and navigation:GetIdleDestination(model, root.Position) or nil
+			if not navigation then
+				searchTarget = AIUtilities:FindCloseEmptySpace(model)
+			end
 		end
 
 		if searchTarget then
@@ -143,11 +170,25 @@ ZombieAI.new = function(model, navigation)
 	end
 
 	AttackState.Action = function()
-		if not ZombieTarget or not ZombieTarget:FindFirstChild("HumanoidRootPart") then
+		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
+		local ownRoot = getRoot(model)
+		if not targetRoot or not ownRoot then
 			return
 		end
 
-		moveTo(ZombieTarget.HumanoidRootPart.Position, false)
+		moveTo(targetRoot.Position, false)
+		local targetMonster = MonsterManager.getConfig(ZombieTarget) and ZombieTarget or nil
+		if targetMonster then
+			local now = os.clock()
+			if targetRoot
+				and (targetRoot.Position - ownRoot.Position).Magnitude <= configs["AttackRange"]
+				and now - lastMonsterAttack >= configs["MonsterDamageCooldown"]
+			then
+				MonsterManager.damageMonsterTarget(targetMonster, MonsterManager.getDamageToMonsters(model))
+				lastMonsterAttack = now
+			end
+			return
+		end
 
 		local now = os.time()
 		if attackTrack and now - lastAttack > 3 then
@@ -181,6 +222,16 @@ ZombieAI.new = function(model, navigation)
 		if directedHumanoid and directedHumanoid.Health > 0 and directedRoot
 			and Players:GetPlayerFromCharacter(directedTarget) then
 			ZombieTarget = directedTarget
+			return true
+		end
+
+		-- Infighting targets are assigned only in complete local zombie groups by
+		-- ZombieAISystem. They are never WMTs, bombs, or a replacement for players.
+		local groupTarget = navigation and navigation:GetInfightTarget(model)
+		local groupHumanoid = groupTarget and MonsterManager.getMonsterHumanoid(groupTarget)
+		local groupRoot = groupTarget and getRoot(groupTarget)
+		if groupTarget and groupHumanoid and groupHumanoid.Health > 0 and groupRoot then
+			ZombieTarget = groupTarget
 			return true
 		end
 
@@ -260,6 +311,11 @@ ZombieAI.new = function(model, navigation)
 		local root = getRoot(model)
 		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
 		if not root or not targetRoot then return true end
+		if MonsterManager.getConfig(ZombieTarget)
+			and (not navigation or navigation:GetInfightTarget(model) ~= ZombieTarget)
+		then
+			return true
+		end
 
 		ZombieTargetLastLocation = targetRoot.Position
 		return (root.Position - targetRoot.Position).Magnitude > configs["AggroRange"] * 1.5
@@ -270,7 +326,7 @@ ZombieAI.new = function(model, navigation)
 	WithinRange.Name = "WithinRange"
 	WithinRange.Evaluate = function()
 		local root = getRoot(model)
-		local targetRoot = ZombieTarget and ZombieTarget:FindFirstChild("HumanoidRootPart")
+		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
 
 		if root and targetRoot then
 			return (root.Position - targetRoot.Position).Magnitude < configs["AttackRange"]
@@ -284,7 +340,7 @@ ZombieAI.new = function(model, navigation)
 	OutsideRange.Name = "OutsideRange"
 	OutsideRange.Evaluate = function()
 		local root = getRoot(model)
-		local targetRoot = ZombieTarget and ZombieTarget:FindFirstChild("HumanoidRootPart")
+		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
 
 		if root and targetRoot then
 			return (root.Position - targetRoot.Position).Magnitude > configs["AttackRange"]
@@ -342,6 +398,14 @@ ZombieAI.new = function(model, navigation)
 
 			local root = getRoot(model)
 			if not root then continue end
+
+			-- NPC physics remains server-owned. This only cancels impossible motion
+			-- from legacy movers/collisions; normal Humanoid walking is far slower.
+			root.AssemblyAngularVelocity = Vector3.zero
+			local velocity = root.AssemblyLinearVelocity
+			if velocity.Magnitude > math.max(70, model.Humanoid.WalkSpeed * 4) then
+				root.AssemblyLinearVelocity = Vector3.zero
+			end
 
 			local localZombies = navigation and navigation:GetNearbyZombiePositions(model, root.Position, 2.5) or {}
 

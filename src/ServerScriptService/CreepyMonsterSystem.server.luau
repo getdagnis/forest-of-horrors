@@ -6,12 +6,6 @@ local Workspace = game:GetService("Workspace")
 
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
-local VARIANTS = {
-	creepyMonster = { damage = 60 },
-	creepyMonsterOrange = { damage = 120 },
-	creepyMonsterWhite = { damage = 240 },
-}
-
 local PLAYER_AGGRO_RANGE = 260
 local ATTACK_RANGE = 5
 local PLAYER_HIT_COOLDOWN = 1
@@ -23,12 +17,15 @@ local HUNT_DURATION = 5
 local UPDATE_INTERVAL = 0.25
 
 local managed = {}
+local stabilizedPhysics = {}
 
--- The orange marketplace rig has been observed carrying legacy physics movers
--- that fight Humanoid:MoveTo and launch/teleport the assembly. Keep this narrow
--- to that broken variant; the other creepy rigs retain their existing setup.
-local function stabilizeOrangeCreepy(model, humanoid, root)
-	if model.Name ~= "creepyMonsterOrange" then return end
+-- These marketplace variants have been observed carrying legacy movers that
+-- fight Humanoid:MoveTo and launch/teleport the assembly. Yellow is stabilized
+-- too even though it is not a configured combat type in this source snapshot.
+local function stabilizeCreepyPhysics(model, humanoid, root)
+	if model.Name ~= "creepyMonsterOrange" and model.Name ~= "creepyMonsterYellow" then return end
+	if stabilizedPhysics[model] then return end
+	stabilizedPhysics[model] = true
 	for _, item in model:GetDescendants() do
 		if item:IsA("BodyMover")
 			or item:IsA("LinearVelocity")
@@ -47,10 +44,25 @@ local function stabilizeOrangeCreepy(model, humanoid, root)
 	pcall(function()
 		root:SetNetworkOwner(nil)
 	end)
+
+	-- A narrow server-owned guard catches an outside collision/script injecting
+	-- impossible velocity later, without micromanaging ordinary Humanoid walking.
+	task.spawn(function()
+		while model.Parent and humanoid.Parent and humanoid.Health > 0 do
+			root.AssemblyAngularVelocity = Vector3.zero
+			local velocity = root.AssemblyLinearVelocity
+			if velocity.Y > 35 or velocity.Magnitude > math.max(70, humanoid.WalkSpeed * 4) then
+				root.AssemblyLinearVelocity = Vector3.new(0, math.min(0, velocity.Y), 0)
+			end
+			task.wait(0.5)
+		end
+		stabilizedPhysics[model] = nil
+	end)
 end
 
 local function isCreepy(model)
-	return model:IsA("Model") and VARIANTS[model.Name] ~= nil
+	return model:IsA("Model") and string.sub(model.Name, 1, #"creepyMonster") == "creepyMonster"
+		and MonsterManager.getConfig(model) ~= nil
 end
 
 local function getRoot(model)
@@ -123,7 +135,7 @@ local function setupCreepy(model)
 	if not humanoid or not root or not config then return end
 
 	disableLegacyScripts(model)
-	stabilizeOrangeCreepy(model, humanoid, root)
+	stabilizeCreepyPhysics(model, humanoid, root)
 	managed[model] = true
 	model:SetAttribute("CentralCreepyAI", true)
 
@@ -133,7 +145,8 @@ local function setupCreepy(model)
 		lastPlayerHit = 0,
 		lastMonsterHit = 0,
 	}
-	local damage = VARIANTS[model.Name].damage
+	local playerDamage = MonsterManager.getDamageToPlayers(model)
+	local monsterDamage = MonsterManager.getDamageToMonsters(model)
 
 	task.spawn(function()
 		while model.Parent and humanoid.Parent and humanoid.Health > 0 do
@@ -164,16 +177,16 @@ local function setupCreepy(model)
 					local character = playerRoot.Parent
 					local targetHumanoid = character and character:FindFirstChildOfClass("Humanoid")
 					if targetHumanoid and targetHumanoid.Health > 0 then
-						targetHumanoid:TakeDamage(damage)
+						targetHumanoid:TakeDamage(playerDamage)
 						state.lastPlayerHit = now
 					end
 				end
 			elseif now < state.huntUntil then
-				local _, targetRoot, targetHumanoid = findLowerHealthMonster(model, config.hp, root.Position)
+				local targetModel, targetRoot, targetHumanoid = findLowerHealthMonster(model, config.hp, root.Position)
 				if targetRoot and targetHumanoid then
 					humanoid:MoveTo(targetRoot.Position)
 					if (targetRoot.Position - root.Position).Magnitude <= ATTACK_RANGE and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN then
-						targetHumanoid:TakeDamage(damage)
+						MonsterManager.damageMonsterTarget(targetModel, monsterDamage)
 						state.lastMonsterHit = now
 					end
 				end
@@ -187,11 +200,21 @@ local function setupCreepy(model)
 end
 
 for _, item in Workspace:GetDescendants() do
-	setupCreepy(item)
+	if item:IsA("Model") then
+		local humanoid = item:FindFirstChildOfClass("Humanoid")
+		local root = getRoot(item)
+		if humanoid and root then stabilizeCreepyPhysics(item, humanoid, root) end
+		setupCreepy(item)
+	end
 end
 
 Workspace.DescendantAdded:Connect(function(item)
 	if item:IsA("Model") then
-		task.defer(setupCreepy, item)
+		task.defer(function()
+			local humanoid = item:FindFirstChildOfClass("Humanoid")
+			local root = getRoot(item)
+			if humanoid and root then stabilizeCreepyPhysics(item, humanoid, root) end
+			setupCreepy(item)
+		end)
 	end
 end)

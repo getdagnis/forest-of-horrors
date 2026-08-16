@@ -8,7 +8,6 @@ local Workspace = game:GetService("Workspace")
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local GUARDIAN_NAME = "weird monster thing"
-local MONSTER_DAMAGE = 50
 local MONSTER_DAMAGE_COOLDOWN = 0.8
 -- Unbonded WMTs only respond after a player actually takes damage. This keeps
 -- them from turning every harmless nearby crowd into a permanent monster war.
@@ -23,7 +22,6 @@ local OFFER_TIMEOUT = 20
 local THREAT_RADIUS = 15
 local SAFE_RADIUS = 50
 local PET_ATTACK_RANGE = 20
-local PET_ATTACK_DAMAGE = 50
 local PET_ATTACK_COOLDOWN = 0.8
 local SHIELD_DURATION = 30
 local SHIELD_COOLDOWN = 45
@@ -107,7 +105,7 @@ local function damageMonster(state, targetModel, amount, cooldown)
 	if now - (state.lastMonsterHit[targetHumanoid] or 0) < cooldown then return end
 
 	state.lastMonsterHit[targetHumanoid] = now
-	targetHumanoid:TakeDamage(amount)
+	MonsterManager.damageMonsterTarget(targetModel, amount)
 end
 
 local function nearbyMonsters(position, radius, guardian)
@@ -240,7 +238,7 @@ local function connectPart(state, part)
 				and attackerRoot
 				and (attackerRoot.Position - playerRoot.Position).Magnitude <= HELP_DEFENSE_RADIUS
 			then
-				damageMonster(state, attacker, MONSTER_DAMAGE, MONSTER_DAMAGE_COOLDOWN)
+				damageMonster(state, attacker, MonsterManager.getDamageToMonsters(state.model), MONSTER_DAMAGE_COOLDOWN)
 			end
 		end
 	end)
@@ -288,7 +286,7 @@ local function updateGuardian(state)
 					if targetRoot then
 						state.humanoid:MoveTo(targetRoot.Position)
 						if (targetRoot.Position - guardianRoot.Position).Magnitude <= 5 then
-							damageMonster(state, target, PET_ATTACK_DAMAGE, PET_ATTACK_COOLDOWN)
+							damageMonster(state, target, MonsterManager.getDamageToMonsters(state.model), PET_ATTACK_COOLDOWN)
 						end
 					end
 				elseif (guardianRoot.Position - playerRoot.Position).Magnitude > FOLLOW_DISTANCE then

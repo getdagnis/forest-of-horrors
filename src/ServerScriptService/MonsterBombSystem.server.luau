@@ -174,7 +174,7 @@ local function damageMonsters(sourceModel, position)
 			local humanoid = MonsterManager.getMonsterHumanoid(model)
 			local root = getRoot(model)
 			if humanoid and root and humanoid.Health > 0 and (root.Position - position).Magnitude <= Config.BLAST_RADIUS then
-				humanoid:TakeDamage(Config.MONSTER_DAMAGE)
+				MonsterManager.damageMonsterTarget(model, Config.MONSTER_DAMAGE)
 			end
 		end
 	end

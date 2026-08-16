@@ -4,17 +4,24 @@
 
 local MonsterManager = {}
 
--- Monster type configuration: name -> {hp, points}
+-- Monster type configuration. HP is the real Humanoid pool; hpVsPlayers and
+-- hpVsMonsters express effective HP for those sources (damage is scaled into
+-- the one real pool). Keep both equal to hp unless a specific matchup needs a
+-- deliberate resistance, rather than creating misleading separate health bars.
 local MONSTER_CONFIG = {
-	["Drooling Zombie"] = { hp = 90, points = 1 },
-	["weird monster thing"] = { hp = 160, points = 3 },
-	["creepyMonster"] = { hp = 320, points = 5 },
-	["creepyMonsterOrange"] = { hp = 420, points = 10 },
-	["creepyMonsterWhite"] = { hp = 520, points = 15 },
-	["BombMonster"] = { hp = 430, points = 5 },
-	["Fouke Monster"] = { hp = 230, points = 3 },
-	["Smiler"] = { hp = 800, points = 15 },
-	["Brown Skinwalker"] = { hp = 400, points = 5 },
+	["Drooling Zombie"] = { hp = 90, hpVsPlayers = 90, hpVsMonsters = 90, points = 1, damageToPlayers = 10, damageToMonsters = 4 },
+	-- WMT player damage remains zero: GuardianMonsterSystem owns its special
+	-- rescue/pet behaviour and uses this monster-only value when appropriate.
+	["weird monster thing"] = { hp = 160, hpVsPlayers = 160, hpVsMonsters = 160, points = 3, damageToPlayers = 0, damageToMonsters = 50, zombieGroupTarget = false },
+	-- Creepy damage against monsters is intentionally much lower than its player
+	-- damage, preserving occasional conflict without NPCs clearing the map.
+	["creepyMonster"] = { hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 5, damageToPlayers = 60, damageToMonsters = 10, zombieGroupTarget = true },
+	["creepyMonsterOrange"] = { hp = 420, hpVsPlayers = 420, hpVsMonsters = 420, points = 10, damageToPlayers = 120, damageToMonsters = 20, zombieGroupTarget = true },
+	["creepyMonsterWhite"] = { hp = 520, hpVsPlayers = 520, hpVsMonsters = 520, points = 15, damageToPlayers = 240, damageToMonsters = 30, zombieGroupTarget = true },
+	["BombMonster"] = { hp = 430, hpVsPlayers = 430, hpVsMonsters = 430, points = 5, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = false },
+	["Fouke Monster"] = { hp = 230, hpVsPlayers = 230, hpVsMonsters = 230, points = 3, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true },
+	["Smiler"] = { hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true },
+	["Brown Skinwalker"] = { hp = 400, hpVsPlayers = 400, hpVsMonsters = 400, points = 5, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true },
 }
 
 -- FortressBosses have ambiguous/empty names but contain a "Zombie" Humanoid child.
@@ -30,7 +37,7 @@ function MonsterManager.getConfig(model)
 	end
 
 	if isFortressBoss(model) then
-		return { hp = 800, points = 15 }
+		return { hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true }
 	end
 
 	return nil
@@ -82,6 +89,47 @@ end
 function MonsterManager.getPoints(model)
 	local config = MonsterManager.getConfig(model)
 	return config and config.points or 0
+end
+
+function MonsterManager.getDamageToPlayers(model)
+	local config = MonsterManager.getConfig(model)
+	return config and (config.damageToPlayers or 0) or 0
+end
+
+function MonsterManager.getDamageToMonsters(model)
+	local config = MonsterManager.getConfig(model)
+	return config and (config.damageToMonsters or 0) or 0
+end
+
+function MonsterManager.isZombieGroupTarget(model)
+	local config = MonsterManager.getConfig(model)
+	return config and config.zombieGroupTarget == true or false
+end
+
+local function scaledDamageForTarget(model, requestedDamage, healthField)
+	local config = MonsterManager.getConfig(model)
+	if not config then return 0 end
+
+	local baseHealth = math.max(1, config.hp or 1)
+	local effectiveHealth = math.max(1, config[healthField] or baseHealth)
+	return math.max(0, requestedDamage * (baseHealth / effectiveHealth))
+end
+
+-- Applies monster-caused damage using the target's configured resistance.
+-- No player-credit is recorded here: NPC infighting must never award score.
+function MonsterManager.damageMonsterTarget(targetModel, requestedDamage)
+	local humanoid = MonsterManager.getMonsterHumanoid(targetModel)
+	if not humanoid or humanoid.Health <= 0 then return 0 end
+
+	local actualDamage = math.min(scaledDamageForTarget(targetModel, requestedDamage, "hpVsMonsters"), humanoid.Health)
+	if actualDamage > 0 then humanoid:TakeDamage(actualDamage) end
+	return actualDamage
+end
+
+-- Returns the player weapon damage after target-specific resistance. Callers
+-- must use this value for both score attribution and Humanoid:TakeDamage.
+function MonsterManager.getPlayerWeaponDamage(targetModel, requestedDamage)
+	return scaledDamageForTarget(targetModel, requestedDamage, "hpVsPlayers")
 end
 
 function MonsterManager.markPermanentKill(humanoid, sourceName)

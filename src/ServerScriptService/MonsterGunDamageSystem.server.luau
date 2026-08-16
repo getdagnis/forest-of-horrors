@@ -221,8 +221,10 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 	local humanoid = MonsterManager.getMonsterHumanoid(monsterModel)
 	if not humanoid or humanoid.Health <= 0 then return end
 
-	local willDie = humanoid.Health <= config.damage
-	MonsterManager.recordPlayerDamage(humanoid, player, config.damage, config.color)
+	local damage = MonsterManager.getPlayerWeaponDamage(monsterModel, config.damage)
+	if damage <= 0 then return end
+	local willDie = humanoid.Health <= damage
+	MonsterManager.recordPlayerDamage(humanoid, player, damage, config.color)
 	if willDie then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
@@ -233,7 +235,7 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 		disintegrateMonster(monsterModel, root and root.Position or monsterModel:GetPivot().Position)
 	end
 
-	humanoid:TakeDamage(config.damage)
+	humanoid:TakeDamage(damage)
 	if humanoid.Health > 0 then
 		damageLabelEvent:FireClient(player, monsterModel, humanoid.Health, humanoid.MaxHealth)
 	end
