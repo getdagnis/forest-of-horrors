@@ -57,13 +57,16 @@ local MUZZLE_FLASH_BASE_SIZE = 0.5
 local MUZZLE_FLASH_POWER_SIZE_GAIN = 2.5
 local MUZZLE_FLASH_FORWARD_OFFSET = 0.6
 local MUZZLE_FLASH_LIFETIME = 0.12
-local MUZZLE_LIGHT_BRIGHTNESS = 6
-local MUZZLE_LIGHT_RANGE = 20
-local IMPACT_LIGHT_LIFETIME = 0.22
-local IMPACT_LIGHT_BRIGHTNESS_MIN = 5
-local IMPACT_LIGHT_BRIGHTNESS_GAIN = 12
+-- Restored from the previously successful Blaster implementation (09edc2c).
+local MUZZLE_LIGHT_BRIGHTNESS_MIN = 18
+local MUZZLE_LIGHT_BRIGHTNESS_GAIN = 18
+local MUZZLE_LIGHT_RANGE_MIN = 28
+local MUZZLE_LIGHT_RANGE_GAIN = 32
+local IMPACT_LIGHT_LIFETIME = 0.24
+local IMPACT_LIGHT_BRIGHTNESS_MIN = 12
+local IMPACT_LIGHT_BRIGHTNESS_GAIN = 16
 local IMPACT_LIGHT_RANGE_MIN = 16
-local IMPACT_LIGHT_RANGE_GAIN = 32
+local IMPACT_LIGHT_RANGE_GAIN = 24
 local BEAM_END_SIZE = 0.2
 local BEAM_WIDTH0_MIN = 0.35
 local BEAM_WIDTH0_POWER_GAIN = 1.2
@@ -382,9 +385,9 @@ local function muzzleFlash(power)
 	flash.Parent = workspace
 	local light = Instance.new("PointLight")
 	light.Color = Config.FLASH_COLOR
-	light.Brightness = MUZZLE_LIGHT_BRIGHTNESS
-	light.Range = MUZZLE_LIGHT_RANGE
-	light.Shadows = false
+	light.Brightness = MUZZLE_LIGHT_BRIGHTNESS_MIN + MUZZLE_LIGHT_BRIGHTNESS_GAIN * power
+	light.Range = MUZZLE_LIGHT_RANGE_MIN + MUZZLE_LIGHT_RANGE_GAIN * power
+	light.Shadows = true
 	light.Parent = flash
 	Debris:AddItem(flash, MUZZLE_FLASH_LIFETIME)
 end
@@ -404,7 +407,7 @@ local function makeImpactLight(position, power)
 	light.Color = Config.FLASH_COLOR
 	light.Brightness = IMPACT_LIGHT_BRIGHTNESS_MIN + IMPACT_LIGHT_BRIGHTNESS_GAIN * power
 	light.Range = IMPACT_LIGHT_RANGE_MIN + IMPACT_LIGHT_RANGE_GAIN * power
-	light.Shadows = false
+	light.Shadows = true
 	light.Parent = emitter
 	Debris:AddItem(emitter, IMPACT_LIGHT_LIFETIME)
 end
@@ -459,6 +462,7 @@ local function releaseShot()
 	if not originOffset or not direction then return end
 	if not hasLaserEnergy() then
 		setChargeHud(true, 0, "NO ENERGY", HUD_BACKGROUND_COLOR)
+		playCooldownSound()
 		return
 	end
 

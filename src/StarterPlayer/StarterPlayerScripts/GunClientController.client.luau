@@ -25,6 +25,13 @@ local DEFAULT_COLORS = {
 	MonsterGun3 = Color3.fromRGB(255, 230, 255),
 }
 
+-- Cosmetic timing only. These linger long enough to colour the nearby scene,
+-- but remain well below the regular gun fire interval accumulation threshold.
+local GUN_MUZZLE_LIGHT_LIFETIME = 0.12
+local GUN_IMPACT_LIGHT_LIFETIME = 0.32
+local GUN_BEAM_LIFETIME = 0.2
+local NO_POWER_SOUND = "rbxassetid://124307033081669"
+
 local knownMonsters = {}
 local flashStates = {}
 local equippedTool
@@ -236,6 +243,16 @@ local function playShotSound(tool)
 	if sound and sound:IsA("Sound") then sound:Play() end
 end
 
+local function playNoPowerSound()
+	local source = SoundService:FindFirstChild("EnergyShutdown", true)
+	local sound = source and source:IsA("Sound") and source:Clone() or Instance.new("Sound")
+	sound.SoundId = sound.SoundId ~= "" and sound.SoundId or NO_POWER_SOUND
+	sound.Volume = sound.Volume > 0 and sound.Volume or 1
+	sound.Parent = workspace.CurrentCamera or workspace
+	sound:Play()
+	Debris:AddItem(sound, 5)
+end
+
 local function renderShot(tool, origin, endPosition, color, hitModel)
 	local barrel = tool and (tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true))
 	if not barrel or not barrel:IsA("BasePart") then return end
@@ -244,11 +261,11 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	local muzzleLight = Instance.new("PointLight")
 	muzzleLight.Name = "GunMuzzleLight"
 	muzzleLight.Color = color
-	muzzleLight.Brightness = 18
-	muzzleLight.Range = 28
+	muzzleLight.Brightness = 12
+	muzzleLight.Range = 16
 	muzzleLight.Shadows = true
 	muzzleLight.Parent = barrel
-	Debris:AddItem(muzzleLight, 0.12)
+	Debris:AddItem(muzzleLight, GUN_MUZZLE_LIGHT_LIFETIME)
 
 	local endPart = Instance.new("Part")
 	endPart.Name = "GunBeamEnd"
@@ -264,7 +281,7 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	local hitLight = Instance.new("PointLight")
 	hitLight.Color = color
 	hitLight.Brightness = 12
-	hitLight.Range = 18
+	hitLight.Range = 24
 	hitLight.Shadows = true
 	hitLight.Parent = endPart
 
@@ -290,9 +307,9 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	beam.Color = ColorSequence.new(color)
 	beam.Transparency = NumberSequence.new(0.08)
 	beam.Parent = barrel
-	Debris:AddItem(beam, 0.18)
-	if startAttachment ~= muzzle then Debris:AddItem(startAttachment, 0.18) end
-	Debris:AddItem(endPart, 0.18)
+	Debris:AddItem(beam, GUN_BEAM_LIFETIME)
+	if startAttachment ~= muzzle then Debris:AddItem(startAttachment, GUN_BEAM_LIFETIME) end
+	Debris:AddItem(endPart, GUN_IMPACT_LIGHT_LIFETIME)
 
 	if hitModel then
 		local state = flashStates[hitModel]
@@ -339,6 +356,11 @@ end
 
 fireGun = function(tool)
 	if not tool or tool.Parent ~= player.Character then return end
+	local energy = player:GetAttribute("LaserEnergy")
+	if energy ~= nil and (tonumber(energy) or 0) < 1 then
+		playNoPowerSound()
+		return
+	end
 	local originOffset, direction, target = GunAim.getShotPayload(player, tool)
 	local shootEvent = tool:FindFirstChild("ShootEvent")
 	if originOffset and direction and shootEvent and shootEvent:IsA("RemoteEvent") then

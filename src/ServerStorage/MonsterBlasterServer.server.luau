@@ -329,20 +329,22 @@ local function damageMonster(player, model, damage, blastOrigin)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
 
-	local willDie = humanoid.Health <= damage
-	MonsterManager.recordPlayerDamage(humanoid, player, damage, Config.FLASH_COLOR)
+	local effectiveDamage = MonsterManager.getPlayerWeaponDamage(model, damage)
+	if effectiveDamage <= 0 then return end
+	local willDie = humanoid.Health <= effectiveDamage
+	MonsterManager.recordPlayerDamage(humanoid, player, effectiveDamage, Config.FLASH_COLOR)
 	if model.Name == "Smiler" then
 		-- Existing marketplace regeneration must not erase a charged Blaster hit
 		-- during the weapon's own charge/cooldown window.
 		humanoid:SetAttribute("BlasterRegenLockedUntil", workspace:GetServerTimeNow() + 5)
 	end
-	markBlasterKillIfNeeded(model, humanoid, damage)
+	markBlasterKillIfNeeded(model, humanoid, effectiveDamage)
 	if willDie and (model.Name == "Drooling Zombie" or model.Name == "creepyMonster") then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
 		disintegrateMonster(model, blastOrigin)
 	end
-	humanoid:TakeDamage(damage)
+	humanoid:TakeDamage(effectiveDamage)
 
 	if humanoid.Health > 0 then
 		damageLabelEvent:FireClient(player, model, humanoid.Health, humanoid.MaxHealth)

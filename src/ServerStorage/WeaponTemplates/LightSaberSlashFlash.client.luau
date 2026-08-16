@@ -2,10 +2,14 @@
 -- Place this inside the active Light Saber Tool as a LocalScript named SlashFlash.
 
 local Players = game:GetService("Players")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local tool = script.Parent
 local FLASH_COLOR = Color3.fromRGB(120, 220, 255)
+local SLASH_LIGHT_BRIGHTNESS = 14
+local SLASH_LIGHT_RANGE = 26
+local SLASH_FLASH_LIFETIME = 0.22
 
 local function isEquipped()
 	local parent = tool.Parent
@@ -30,7 +34,7 @@ local function slashFlash()
 	flash.Shape = Enum.PartType.Ball
 	flash.Size = Vector3.new(0.5, 0.5, 0.5)
 	flash.Material = Enum.Material.Neon
-	flash.Transparency = 1
+	flash.Transparency = 0.35
 	flash.Color = FLASH_COLOR
 	flash.Anchored = true
 	flash.CanCollide = false
@@ -40,18 +44,19 @@ local function slashFlash()
 
 	local light = Instance.new("PointLight")
 	light.Color = FLASH_COLOR
-	light.Brightness = 2
-	light.Range = 12
+	light.Brightness = SLASH_LIGHT_BRIGHTNESS
+	light.Range = SLASH_LIGHT_RANGE
+	light.Shadows = true
 	light.Parent = flash
 
+	-- Put the pulse at the striking end, matching the short coloured gun pulses
+	-- without changing the SwordScript's damage/touch ownership.
 	flash.CFrame = blade.CFrame * CFrame.new(blade.Size.X / 2, 0, 0)
 	flash.Parent = workspace
-	task.delay(0.06, function()
-		flash:Destroy()
-	end)
+	Debris:AddItem(flash, SLASH_FLASH_LIFETIME)
 end
 
-player:GetMouse().Button1Down:Connect(function()
+tool.Activated:Connect(function()
 	if isEquipped() then
 		slashFlash()
 	end
