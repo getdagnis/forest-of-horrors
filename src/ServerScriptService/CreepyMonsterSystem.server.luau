@@ -1,3 +1,5 @@
+-- CreepyMonsterSystem
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
@@ -21,6 +23,31 @@ local HUNT_DURATION = 5
 local UPDATE_INTERVAL = 0.25
 
 local managed = {}
+
+-- The orange marketplace rig has been observed carrying legacy physics movers
+-- that fight Humanoid:MoveTo and launch/teleport the assembly. Keep this narrow
+-- to that broken variant; the other creepy rigs retain their existing setup.
+local function stabilizeOrangeCreepy(model, humanoid, root)
+	if model.Name ~= "creepyMonsterOrange" then return end
+	for _, item in model:GetDescendants() do
+		if item:IsA("BodyMover")
+			or item:IsA("LinearVelocity")
+			or item:IsA("VectorForce")
+			or item:IsA("Torque")
+			or item:IsA("AlignPosition")
+			or item:IsA("AlignOrientation")
+		then
+			item:Destroy()
+		end
+	end
+	humanoid.PlatformStand = false
+	humanoid.AutoRotate = true
+	root.Anchored = false
+	root.AssemblyAngularVelocity = Vector3.zero
+	pcall(function()
+		root:SetNetworkOwner(nil)
+	end)
+end
 
 local function isCreepy(model)
 	return model:IsA("Model") and VARIANTS[model.Name] ~= nil
@@ -96,6 +123,7 @@ local function setupCreepy(model)
 	if not humanoid or not root or not config then return end
 
 	disableLegacyScripts(model)
+	stabilizeOrangeCreepy(model, humanoid, root)
 	managed[model] = true
 	model:SetAttribute("CentralCreepyAI", true)
 
@@ -109,6 +137,18 @@ local function setupCreepy(model)
 
 	task.spawn(function()
 		while model.Parent and humanoid.Parent and humanoid.Health > 0 do
+			if model.Name == "creepyMonsterOrange" then
+				-- A collision should not leave the whole rig spinning or flying after
+				-- its legacy movers have been removed.
+				root.AssemblyAngularVelocity = Vector3.zero
+				if root.AssemblyLinearVelocity.Y > 35 then
+					root.AssemblyLinearVelocity = Vector3.new(
+						root.AssemblyLinearVelocity.X,
+						0,
+						root.AssemblyLinearVelocity.Z
+					)
+				end
+			end
 			local now = os.clock()
 			if now >= state.nextHuntCheck then
 				state.nextHuntCheck = now + math.random(HUNT_CHECK_MIN, HUNT_CHECK_MAX)

@@ -4,7 +4,12 @@ return {
 	Range = 400,
 	AimAssistRadius = 1.25,
 	ContourGraceSeconds = 0.20,
+	ContourUpdateInterval = 0.08,
 	MuzzleClearanceDistance = 3,
+	-- A weapon may correct a camera ray only a little sideways after it turns the
+	-- character.  This prevents beams from leaving a barrel sideways/backwards
+	-- in tight interiors while still giving a playable constrained-space fallback.
+	BarrelForwardConeDegrees = 22,
 	-- Normal third-person cameras sit well behind the character. These bounds
 	-- reject remote origins far from the shooter without rejecting normal play.
 	MaxCameraOriginOffset = 30,

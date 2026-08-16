@@ -5,28 +5,41 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
 
 local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
-local RADAR_RANGE = 50
+local CLOSE_CROWD_RANGE = 50
+local CROWD_RADAR_RANGE = 30
+local NORMAL_RADAR_RANGE = 50
+local SEARCH_RADAR_RANGES = { 60, 70, 80, 90, 100 }
+local MAX_RADAR_RANGE = SEARCH_RADAR_RANGES[#SEARCH_RADAR_RANGES]
 local UPDATE_SECONDS = 0.12
 local DOT_SIZE = 6
 local MAX_DOTS = 96
+local WARNING_REENTRY_COOLDOWN = 6
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "MonsterRadarHud"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = false
-pcall(function()
-	gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets
-end)
-gui.Parent = player:WaitForChild("PlayerGui")
+-- Deliberately use viewport coordinates: the top-right is clear of CoreGui,
+-- and a CoreUISafeInsets offset pushes the radar far too low on tablets.
+gui.IgnoreGuiInset = true
+local playerGui = player:WaitForChild("PlayerGui")
+-- Studio has previously accumulated duplicate active MonsterRadar scripts.
+-- Whichever current copy starts last becomes the sole visual owner.
+for _, existing in ipairs(playerGui:GetChildren()) do
+	if existing.Name == gui.Name then
+		existing:Destroy()
+	end
+end
+gui.Parent = playerGui
 
 local radar = Instance.new("Frame")
 radar.Name = "Radar"
 radar.AnchorPoint = Vector2.new(1, 0)
-radar.Position = UDim2.new(1, -12, 0, 88)
+radar.Position = UDim2.new(1, -12, 0, 62)
 radar.Size = UDim2.fromOffset(128, 128)
 radar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 radar.BackgroundTransparency = 0.8
@@ -74,6 +87,22 @@ local selfCorner = Instance.new("UICorner")
 selfCorner.CornerRadius = UDim.new(1, 0)
 selfCorner.Parent = selfDot
 
+-- Only appears when the adaptive search reaches 100 studs without finding a
+-- monster. It points to the nearest monster that is still beyond radar range.
+local outsideCue = Instance.new("Frame")
+outsideCue.Name = "NearestOutsideCue"
+outsideCue.AnchorPoint = Vector2.new(0.5, 0.5)
+outsideCue.Size = UDim2.fromOffset(16, 3)
+outsideCue.BackgroundColor3 = Color3.fromRGB(151, 221, 255)
+outsideCue.BackgroundTransparency = 0.08
+outsideCue.BorderSizePixel = 0
+outsideCue.Visible = false
+outsideCue.ZIndex = 3
+outsideCue.Parent = radar
+local outsideCueCorner = Instance.new("UICorner")
+outsideCueCorner.CornerRadius = UDim.new(1, 0)
+outsideCueCorner.Parent = outsideCue
+
 local dots = {}
 for index = 1, MAX_DOTS do
 	local dot = Instance.new("Frame")
@@ -92,13 +121,17 @@ for index = 1, MAX_DOTS do
 end
 
 local trackedMonsters = {}
+local radarEntries = {}
 local function track(instance)
 	if instance:IsA("Model") and MonsterManager.getConfig(instance) then trackedMonsters[instance] = true end
 end
 for _, instance in ipairs(workspace:GetDescendants()) do track(instance) end
 workspace.DescendantAdded:Connect(track)
 workspace.DescendantRemoving:Connect(function(instance)
-	if instance:IsA("Model") then trackedMonsters[instance] = nil end
+	if instance:IsA("Model") then
+		trackedMonsters[instance] = nil
+		radarEntries[instance] = nil
+	end
 end)
 
 local function getMonsterPosition(model)
@@ -109,11 +142,37 @@ local function getMonsterPosition(model)
 	return nil
 end
 
+local function isPriorityMonster(model)
+	return model.Name == "creepyMonster"
+		or model.Name == "creepyMonsterOrange"
+		or model.Name == "creepyMonsterWhite"
+		or (model:FindFirstChild("Zombie") and model:FindFirstChild("Zombie"):IsA("Humanoid"))
+end
+
+local function playPriorityWarning()
+	-- Audio is optional: accept a directly placed sound or a named warning inside
+	-- a RadarSounds folder, without creating/depending on a new shared asset.
+	local sound = SoundService:FindFirstChild("MonsterRadarWarning")
+		or SoundService:FindFirstChild("RadarWarning")
+		or (SoundService:FindFirstChild("RadarSounds") and SoundService.RadarSounds:FindFirstChild("Warning"))
+	if not (sound and sound:IsA("Sound")) then return end
+
+	local clone = sound:Clone()
+	clone.Parent = SoundService
+	clone:Play()
+	clone.Ended:Connect(function() clone:Destroy() end)
+	task.delay(math.max(2, clone.TimeLength + 1), function()
+		if clone.Parent then clone:Destroy() end
+	end)
+end
+
 local function updateLayout()
 	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.zero
 	local small = viewport.X < 800 or viewport.Y < 500
-	radar.Size = UDim2.fromOffset(small and 92 or 128, small and 92 or 128)
-	radar.Position = UDim2.new(1, -12, 0, small and 72 or 88)
+	local mobile = viewport.X < 1100 or viewport.Y < 650
+	local diameter = mobile and (small and 92 or 128) or 192
+	radar.Size = UDim2.fromOffset(diameter, diameter)
+	radar.Position = UDim2.new(1, -12, 0, mobile and 72 or 160)
 end
 
 local elapsed = UPDATE_SECONDS
@@ -130,21 +189,80 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		return
 	end
 
-	local shown = 0
+	local livingMonsters = {}
 	for model in pairs(trackedMonsters) do
 		local humanoid = model.Parent and MonsterManager.getMonsterHumanoid(model)
 		local position = humanoid and humanoid.Health > 0 and getMonsterPosition(model)
 		if position then
 			local offset = position - root.Position
 			local flatOffset = Vector3.new(offset.X, 0, offset.Z)
-			if flatOffset.Magnitude <= RADAR_RANGE and shown < MAX_DOTS then
-				shown += 1
-				local localOffset = camera.CFrame:VectorToObjectSpace(flatOffset)
-				local scale = 0.43 / RADAR_RANGE
-				dots[shown].Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
-				dots[shown].Visible = true
+			table.insert(livingMonsters, {
+				model = model,
+				offset = flatOffset,
+				distance = flatOffset.Magnitude,
+				priority = isPriorityMonster(model),
+			})
+		end
+	end
+
+	-- Adaptive range: dense close crowds collapse to 30; a normal local threat
+	-- stays at 50; otherwise expand in exact 10-stud steps until something is found.
+	local closeCount = 0
+	local normalCount = 0
+	for _, monster in ipairs(livingMonsters) do
+		if monster.distance <= CLOSE_CROWD_RANGE then
+			closeCount += 1
+			normalCount += 1
+		end
+	end
+	local radarRange = NORMAL_RADAR_RANGE
+	if closeCount >= 10 then
+		radarRange = CROWD_RADAR_RANGE
+	elseif normalCount == 0 then
+		for _, searchRange in ipairs(SEARCH_RADAR_RANGES) do
+			radarRange = searchRange
+			local found = false
+			for _, monster in ipairs(livingMonsters) do
+				if monster.distance <= searchRange then found = true break end
 			end
+			if found then break end
+		end
+	end
+
+	local shown = 0
+	local nearestOutside
+	local now = os.clock()
+	for _, monster in ipairs(livingMonsters) do
+		local entry = radarEntries[monster.model] or {}
+		local inRange = monster.distance <= radarRange
+		if monster.priority and inRange and not entry.inRange and (not entry.lastWarning or now - entry.lastWarning >= WARNING_REENTRY_COOLDOWN) then
+			playPriorityWarning()
+			entry.lastWarning = now
+		end
+		entry.inRange = inRange
+		radarEntries[monster.model] = entry
+
+		if inRange and shown < MAX_DOTS then
+			shown += 1
+			local localOffset = camera.CFrame:VectorToObjectSpace(monster.offset)
+			local scale = 0.43 / radarRange
+			local dot = dots[shown]
+			dot.Size = UDim2.fromOffset(monster.priority and DOT_SIZE * 2 or DOT_SIZE, monster.priority and DOT_SIZE * 2 or DOT_SIZE)
+			dot.Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
+			dot.Visible = true
+		elseif radarRange == MAX_RADAR_RANGE and monster.distance > MAX_RADAR_RANGE and (not nearestOutside or monster.distance < nearestOutside.distance) then
+			nearestOutside = monster
 		end
 	end
 	for index = shown + 1, MAX_DOTS do dots[index].Visible = false end
+
+	if radarRange == MAX_RADAR_RANGE and shown == 0 and nearestOutside then
+		local localOffset = camera.CFrame:VectorToObjectSpace(nearestOutside.offset)
+		local direction = Vector2.new(localOffset.X, localOffset.Z).Unit
+		outsideCue.Position = UDim2.fromScale(0.5 + direction.X * 0.45, 0.5 + direction.Y * 0.45)
+		outsideCue.Rotation = math.deg(math.atan2(direction.Y, direction.X))
+		outsideCue.Visible = true
+	else
+		outsideCue.Visible = false
+	end
 end)

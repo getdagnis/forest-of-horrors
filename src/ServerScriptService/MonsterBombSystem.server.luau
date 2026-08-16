@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBombConfig"))
@@ -28,18 +29,19 @@ local function playWarning(model)
 	local root = getRoot(model)
 	if not root or not root:IsA("BasePart") then return end
 
-	local sound = model:FindFirstChild("WarningSound", true) or model:FindFirstChild("WarningSound1", true)
-	if sound and sound:IsA("Sound") then
-		-- A Sound must be attached to a part to honour its spatial rolloff.
-		if sound.Parent ~= root then
-			sound.Parent = root
-		end
-		sound.RollOffMode = Enum.RollOffMode.InverseTapered
-		sound.RollOffMinDistance = 8
-		sound.RollOffMaxDistance = Config.WARNING_SOUND_RADIUS
-		sound.TimePosition = 0
-		sound:Play()
-	end
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://357644762"
+	sound.Volume = 10
+	sound.PlaybackSpeed = 0.9
+	sound.RollOffMode = Enum.RollOffMode.InverseTapered
+	sound.RollOffMinDistance = 8
+	sound.RollOffMaxDistance = Config.WARNING_SOUND_RADIUS
+	sound.TimePosition = 0
+	sound.Parent = root
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
 
 	local light = Instance.new("PointLight")
 	light.Name = "MonsterBombWarningLight"
@@ -78,6 +80,7 @@ local function playExplosionSound(model, position)
 	sound.RollOffMode = Enum.RollOffMode.InverseTapered
 	sound.RollOffMinDistance = 8
 	sound.RollOffMaxDistance = Config.EXPLOSION_SOUND_RADIUS
+	sound.Volume = 20
 	sound.TimePosition = 0
 	sound.Parent = emitter
 	sound.Ended:Once(function()

@@ -1,5 +1,4 @@
--- MonsterBlaster ServerScript. Place this Script inside the canonical
--- ServerStorage.WeaponTemplates.MonsterBlaster Tool.
+-- MonsterBlasterServer >> ServerStorage.WeaponTemplates.MonsterBlaster
 
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
@@ -28,6 +27,13 @@ if not damageLabelEvent then
 	damageLabelEvent = Instance.new("RemoteEvent")
 	damageLabelEvent.Name = "MonsterDamageLabel"
 	damageLabelEvent.Parent = ReplicatedStorage
+end
+
+local contourTargetEvent = ReplicatedStorage:FindFirstChild("WeaponContourTarget")
+if not contourTargetEvent then
+	contourTargetEvent = Instance.new("RemoteEvent")
+	contourTargetEvent.Name = "WeaponContourTarget"
+	contourTargetEvent.Parent = ReplicatedStorage
 end
 
 local BOMB_MONSTER_NAME = "BombMonster"
@@ -87,10 +93,20 @@ local function disableLegacyToolScripts()
 			item.Name == "AnchorScript"
 			or item.Name == "GunSpawner"
 			or item.Name == "MonsterBlasterGunSpawner"
+			or item.Name == "WeaponSpawnSystem"
+			or item.Name == "WeaponRuntimeSystem"
+			or item.Name == "MonsterGunServer"
 		) then
 			item.Disabled = true
 		end
 	end
+end
+
+local function consumeLaserEnergy(player)
+	local energy = math.clamp(tonumber(player:GetAttribute("LaserEnergy")) or 600, 0, 600)
+	if energy < 5 then return false end
+	player:SetAttribute("LaserEnergy", energy - 5)
+	return true
 end
 
 local function hasToolJoint(handle, part)
@@ -186,11 +202,32 @@ local function updateContourGrace(player, target, cameraOrigin, direction)
 	end
 end
 
+local function isVisibleMonster(model, cameraOrigin, player)
+	if not model or not MonsterManager.getConfig(model) then return false end
+	local humanoid = MonsterManager.getMonsterHumanoid(model)
+	if not humanoid or humanoid.Health <= 0 then return false end
+	local targetPart = model:FindFirstChild("HumanoidRootPart", true) or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart", true)
+	if not targetPart or not targetPart:IsA("BasePart") then return false end
+	local offset = targetPart.Position - cameraOrigin
+	if offset.Magnitude < DIRECTION_EPSILON then return false end
+	local result = workspace:Raycast(cameraOrigin, offset, makeRaycastParams(player.Character))
+	return result and getMonsterModelFromHit(result.Instance) == model
+end
+
 local function getGraceTarget(player, cameraOrigin, direction)
 	local cached = contourTargets[player]
 	if not cached or cached.expiresAt < os.clock() then return nil end
-	return isDirectTarget(cached.model, cameraOrigin, direction, player) and cached.model or nil
+	return isVisibleMonster(cached.model, cameraOrigin, player) and cached.model or nil
 end
+
+contourTargetEvent.OnServerEvent:Connect(function(player, reportedTool, originOffset, direction, target)
+	if reportedTool ~= tool or not isEquippedBy(player) then return end
+	if typeof(direction) ~= "Vector3" or direction.Magnitude < DIRECTION_EPSILON then return end
+	local cameraOrigin = validateCameraOrigin(player, originOffset)
+	if not cameraOrigin then return end
+	updateContourGrace(player, target, cameraOrigin, direction.Unit)
+end)
 
 local function getServerShotResult(player, cameraOrigin, direction)
 	local params = makeRaycastParams(player.Character)
@@ -294,6 +331,11 @@ local function damageMonster(player, model, damage, blastOrigin)
 
 	local willDie = humanoid.Health <= damage
 	MonsterManager.recordPlayerDamage(humanoid, player, damage, Config.FLASH_COLOR)
+	if model.Name == "Smiler" then
+		-- Existing marketplace regeneration must not erase a charged Blaster hit
+		-- during the weapon's own charge/cooldown window.
+		humanoid:SetAttribute("BlasterRegenLockedUntil", workspace:GetServerTimeNow() + 5)
+	end
 	markBlasterKillIfNeeded(model, humanoid, damage)
 	if willDie and (model.Name == "Drooling Zombie" or model.Name == "creepyMonster") then
 		humanoid.BreakJointsOnDeath = false
@@ -431,13 +473,20 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	local state = playerState[player] or {}
 	local now = os.clock()
 	if now - (state.lastShotAt or -math.huge) < Config.COOLDOWN then return end
-	state.lastShotAt = now
 	local startedAt = state.chargeStartedAt or now
+	local heldFor = now - startedAt
+	-- Authoritative counterpart to the client's tap cancellation. Include the
+	-- existing tolerance so a real one-second client hold survives normal lag.
+	if heldFor + Config.FULL_CHARGE_TOLERANCE < Config.MIN_CHARGE_TIME then return end
+	state.lastShotAt = now
 	state.chargeStartedAt = nil
 	playerState[player] = state
 
-	local holdRatio = math.clamp((now - startedAt + Config.FULL_CHARGE_TOLERANCE) / Config.CHARGE_TIME, 0, 1)
+	local holdRatio = math.clamp((heldFor + Config.FULL_CHARGE_TOLERANCE) / Config.CHARGE_TIME, 0, 1)
 	local power = Config.powerForHoldRatio(holdRatio)
+	-- Keep hit validation on the camera-selected ray.  Barrel direction can be
+	-- temporarily stale while a shoulder camera turns, and must not move a
+	-- shockwave or hit point away from the visible crosshair.
 	local unitDirection = direction.Unit
 	local cameraOrigin = validateCameraOrigin(player, originOffset)
 	if not cameraOrigin then return end
@@ -445,6 +494,7 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	local graceTarget = getGraceTarget(player, cameraOrigin, unitDirection)
 	local serverResult, origin, muzzleBlocked = getServerShotResult(player, cameraOrigin, unitDirection)
 	if not origin then return end
+	if not consumeLaserEnergy(player) then return end
 	pushShooterBack(player, unitDirection)
 
 	if shouldGroundShockwave(serverResult) then

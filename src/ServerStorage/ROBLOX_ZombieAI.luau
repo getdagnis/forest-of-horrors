@@ -40,7 +40,9 @@ local function getPlayerCharacterFromHit(hit)
 	return nil
 end
 
-ZombieAI.new = function(model)
+-- navigation is owned by ZombieAISystem.  Keeping the map-wide decisions there
+-- means each zombie only does its local state-machine work.
+ZombieAI.new = function(model, navigation)
 	local zombie = {}
 	local configTable = model:WaitForChild("Configurations")
 	local configs = {}
@@ -63,6 +65,22 @@ ZombieAI.new = function(model)
 	local ZombieTarget = nil
 	local ZombieTargetLastLocation = nil
 	local lastBored = os.time()
+	local lastNavigationMove = 0
+	local activeDestination = nil
+	local lastProgressPosition = nil
+	local lastProgressAt = time()
+	local stopRequested = false
+
+	local function moveTo(destination, usePathfinding)
+		if not destination then return end
+
+		activeDestination = destination
+		if usePathfinding then
+			PathLib:MoveToTarget(model, destination)
+		else
+			model.Humanoid:MoveTo(destination)
+		end
+	end
 
 	local IdleState = StateMachine.NewState()
 	IdleState.Name = "Idle"
@@ -73,22 +91,22 @@ ZombieAI.new = function(model)
 	local SearchState = StateMachine.NewState()
 	SearchState.Name = "Search"
 
-	local lastMoved = os.time()
 	local searchTarget = nil
 
 	SearchState.Action = function()
 		local root = getRoot(model)
 		if not root then return end
 
-		local now = os.time()
+		local now = time()
 
-		if now - lastMoved > 2 then
-			lastMoved = now
-			searchTarget = AIUtilities:FindCloseEmptySpace(model)
+		if now - lastNavigationMove > 12 then
+			lastNavigationMove = now
+			searchTarget = navigation and navigation:GetIdleDestination(model, root.Position)
+				or AIUtilities:FindCloseEmptySpace(model)
 		end
 
 		if searchTarget then
-			PathLib:MoveToTarget(model, searchTarget)
+			moveTo(searchTarget, true)
 		end
 	end
 
@@ -106,9 +124,9 @@ ZombieAI.new = function(model)
 			local distance = (root.Position - targetRoot.Position).Magnitude
 
 			if distance > configs["AttackRange"] + 5 then
-				PathLib:MoveToTarget(model, targetRoot.Position)
+				moveTo(targetRoot.Position, true)
 			else
-				model.Humanoid:MoveTo(targetRoot.Position)
+				moveTo(targetRoot.Position, false)
 			end
 		end
 	end
@@ -129,7 +147,7 @@ ZombieAI.new = function(model)
 			return
 		end
 
-		model.Humanoid:MoveTo(ZombieTarget.HumanoidRootPart.Position)
+		moveTo(ZombieTarget.HumanoidRootPart.Position, false)
 
 		local now = os.time()
 		if attackTrack and now - lastAttack > 3 then
@@ -142,7 +160,7 @@ ZombieAI.new = function(model)
 	HuntState.Name = "Hunt"
 	HuntState.Action = function()
 		if ZombieTargetLastLocation then
-			PathLib:MoveToTarget(model, ZombieTargetLastLocation)
+			moveTo(ZombieTargetLastLocation, true)
 		end
 	end
 	HuntState.Init = function()
@@ -154,6 +172,17 @@ ZombieAI.new = function(model)
 	CanSeeTarget.Evaluate = function()
 		local root = getRoot(model)
 		if not root then return false end
+
+		-- The director may nominate a small late-round pressure target.  It is
+		-- always a Player character and never bypasses normal target validity.
+		local directedTarget = navigation and navigation:GetPressureTarget(model)
+		local directedHumanoid = directedTarget and getHumanoid(directedTarget)
+		local directedRoot = directedTarget and getRoot(directedTarget)
+		if directedHumanoid and directedHumanoid.Health > 0 and directedRoot
+			and Players:GetPlayerFromCharacter(directedTarget) then
+			ZombieTarget = directedTarget
+			return true
+		end
 
 		local humanoids = HumanoidList:GetCurrent()
 		local ignoredCharacters = { model }
@@ -228,7 +257,12 @@ ZombieAI.new = function(model)
 	local LostTarget = StateMachine.NewCondition()
 	LostTarget.Name = "LostTarget"
 	LostTarget.Evaluate = function()
-		return false
+		local root = getRoot(model)
+		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
+		if not root or not targetRoot then return true end
+
+		ZombieTargetLastLocation = targetRoot.Position
+		return (root.Position - targetRoot.Position).Magnitude > configs["AggroRange"] * 1.5
 	end
 	LostTarget.TransitionState = HuntState
 
@@ -303,29 +337,49 @@ ZombieAI.new = function(model)
 
 	task.spawn(function()
 		while model.Parent do
-			task.wait()
+			task.wait(1)
+			if stopRequested then return end
 
 			local root = getRoot(model)
 			if not root then continue end
 
-			local humanoids = HumanoidList:GetCurrent()
-			local localZombies = {}
-
-			for _, humanoid in pairs(humanoids) do
-				local otherModel = humanoid and humanoid.Parent
-				local otherRoot = otherModel and otherModel:FindFirstChild("HumanoidRootPart")
-
-				if humanoid ~= model.Humanoid and otherRoot then
-					local distance = (root.Position - otherRoot.Position).Magnitude
-					if distance <= 2.5 then
-						table.insert(localZombies, otherRoot.Position)
-					end
-				end
-			end
+			local localZombies = navigation and navigation:GetNearbyZombiePositions(model, root.Position, 2.5) or {}
 
 			local force = root:FindFirstChild("RepulsionForce")
 			if force then
 				force.Force = AIUtilities:GetRepulsionVector(root.Position, localZombies)
+			end
+
+			-- Eight seconds without three studs of progress is a failed route.
+			-- The system gets two recovery attempts, then reports a retire request
+			-- for MonsterSystem rather than deleting a counted monster here.
+			if activeDestination then
+				if (root.Position - activeDestination).Magnitude <= 3 then
+					activeDestination = nil
+					lastProgressPosition = root.Position
+					lastProgressAt = time()
+				elseif not lastProgressPosition or (root.Position - lastProgressPosition).Magnitude >= 3 then
+					lastProgressPosition = root.Position
+					lastProgressAt = time()
+					if model:GetAttribute("ZombieStuckFailures") then
+						model:SetAttribute("ZombieStuckFailures", 0)
+					end
+				elseif time() - lastProgressAt >= 8 then
+					lastProgressPosition = root.Position
+					lastProgressAt = time()
+					searchTarget = nil
+					ZombieTarget = nil
+					activeDestination = nil
+
+					if navigation and navigation:ReportStuck(model) then
+						stopRequested = true
+						model.Humanoid:Move(Vector3.zero)
+						return
+					end
+				end
+			else
+				lastProgressPosition = root.Position
+				lastProgressAt = time()
 			end
 
 			local debugConfig = model.Configurations:FindFirstChild("Debug")
@@ -345,6 +399,7 @@ ZombieAI.new = function(model)
 	StateMachine.SwitchState(IdleState)
 
 	zombie.Stop = function()
+		stopRequested = true
 		StateMachine.SwitchState(nil)
 	end
 

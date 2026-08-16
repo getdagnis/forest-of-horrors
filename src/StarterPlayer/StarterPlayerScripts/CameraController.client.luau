@@ -1,3 +1,5 @@
+-- CameraController StarterPlayerScripts
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -19,6 +21,30 @@ local shoulderAiming = false
 local savedMinZoom
 local savedMaxZoom
 local savedAutoRotate
+local shoulderTransitionId = 0
+
+local function preserveCursorAimPoint(cursorPoint, transitionId)
+	-- Roblox's camera controller applies CameraOffset during its camera render
+	-- step. Correct after that step so the new centred ray still passes through
+	-- the same point that the free mouse cursor selected before RMB was held.
+	local framesRemaining = 2
+	RunService:UnbindFromRenderStep("PreserveShoulderAimPoint")
+	RunService:BindToRenderStep("PreserveShoulderAimPoint", Enum.RenderPriority.Camera.Value + 1, function()
+		if transitionId ~= shoulderTransitionId or not shoulderAiming or framesRemaining <= 0 then
+			RunService:UnbindFromRenderStep("PreserveShoulderAimPoint")
+			return
+		end
+		local camera = workspace.CurrentCamera
+		if camera then
+			local offset = cursorPoint - camera.CFrame.Position
+			if offset.Magnitude > 0.01 then
+				camera.CFrame = CFrame.lookAt(camera.CFrame.Position, cursorPoint)
+				camera.Focus = CFrame.new(cursorPoint)
+			end
+		end
+		framesRemaining -= 1
+	end)
+end
 
 local function getHumanoid()
 	local character = player.Character
@@ -36,6 +62,8 @@ end
 
 local function stopShoulderAim()
 	if not shoulderAiming then return end
+	shoulderTransitionId += 1
+	RunService:UnbindFromRenderStep("PreserveShoulderAimPoint")
 	shoulderAiming = false
 	player:SetAttribute("WeaponShoulderAim", false)
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
@@ -54,6 +82,12 @@ local function startShoulderAim()
 	if firstPersonEnabled or shoulderAiming or not hasEquippedAimWeapon() then return end
 	local humanoid = getHumanoid()
 	if not humanoid then return end
+	local camera = workspace.CurrentCamera
+	local mouse = player:GetMouse()
+	local cursorRay = camera and camera:ViewportPointToRay(mouse.X, mouse.Y)
+	local cursorPoint = cursorRay and (cursorRay.Origin + cursorRay.Direction * AimConfig.Range)
+	shoulderTransitionId += 1
+	local transitionId = shoulderTransitionId
 	shoulderAiming = true
 	player:SetAttribute("WeaponShoulderAim", true)
 	savedMinZoom = player.CameraMinZoomDistance
@@ -64,6 +98,9 @@ local function startShoulderAim()
 	savedAutoRotate = humanoid.AutoRotate
 	humanoid.AutoRotate = false
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+	if cursorPoint then
+		preserveCursorAimPoint(cursorPoint, transitionId)
+	end
 end
 
 local function applyFirstPersonMode()

@@ -12,6 +12,40 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local GunAim = {}
 local lockedTarget
 
+local function getBarrelForward(tool)
+	local muzzle = tool and tool:FindFirstChild("Muzzle", true)
+	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
+		return muzzle.WorldCFrame.LookVector
+	end
+	local barrel = tool and (tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true))
+	return barrel and barrel:IsA("BasePart") and barrel.CFrame.LookVector or nil
+end
+
+local function turnCharacterToward(root, direction)
+	local flatDirection = Vector3.new(direction.X, 0, direction.Z)
+	if flatDirection.Magnitude < 0.01 then return end
+	local position = root.Position
+	root.CFrame = CFrame.lookAt(position, position + flatDirection.Unit)
+end
+
+function GunAim.constrainToBarrelForward(tool, direction)
+	if typeof(direction) ~= "Vector3" or direction.Magnitude < 0.01 then return nil end
+	local requested = direction.Unit
+	local forward = getBarrelForward(tool)
+	if not forward or forward.Magnitude < 0.01 then return nil end
+	forward = forward.Unit
+	local minimumDot = math.cos(math.rad(Config.BarrelForwardConeDegrees))
+	if forward:Dot(requested) >= minimumDot then return requested end
+
+	-- Project the requested direction onto the narrow edge of the forward cone.
+	-- This deliberately clamps a backwards request to a forward ray instead of
+	-- trusting camera aim that disagrees with the visible barrel.
+	local sideways = requested - forward * forward:Dot(requested)
+	if sideways.Magnitude < 0.01 then return forward end
+	local sidewaysLimit = math.sin(math.rad(Config.BarrelForwardConeDegrees))
+	return (forward * minimumDot + sideways.Unit * sidewaysLimit).Unit
+end
+
 local function getMonsterModelFromHit(instance)
 	local current = instance
 	while current do
@@ -93,7 +127,11 @@ function GunAim.getShotPayload(player, tool, lockedTarget, range)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if not ray or not root or ray.Direction.Magnitude < 0.01 then return nil end
+	turnCharacterToward(root, ray.Direction)
 	local target = GunAim.getDirectTarget(player, tool, lockedTarget, range)
+	-- Combat aim is always the camera/crosshair ray.  A held Tool can lag behind
+	-- the character for a frame (or be mounted oddly), so its barrel must never
+	-- redirect the aim point.  Muzzle placement is used only for the beam start.
 	return ray.Origin - root.Position, ray.Direction.Unit, target
 end
 

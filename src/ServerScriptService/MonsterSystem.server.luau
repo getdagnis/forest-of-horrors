@@ -10,7 +10,8 @@ local MonsterManager = require(rs:WaitForChild("MonsterManager"))
 local scores = {} -- Player -> current score
 local kills = {} -- Player -> monsters for which the player earned score
 local connected = {} -- humanoid -> true (in-memory, so clones re-register)
-local spawns = {} -- model -> {template, cframe} used for respawning in place
+local spawns = {} -- model -> {template, cframe, livesRemaining} used for respawning in place
+local managedMonsters = {} -- model -> true; only these models are allowed into the round count
 local roundTemplates = {}
 
 local spawnCounts = {}
@@ -18,15 +19,44 @@ local sessionBest = {} -- player -> {score, spawn}
 local serverBest = { score = 0, playerName = "-", spawn = 0 }
 local pendingRespawns = 0
 local roundComplete = false
+local roundFailed = false
+local roundGeneration = 0
+local announcedMonsterMilestones = {}
+local lastBroadcastMonsterCount = nil
+local multikillStates = {}
 
-local RESPAWN_TIME = 15 -- seconds before a killed monster respawns
-local RESPAWN_CHANCE = 0.8
-local MAX_MONSTERS = 90
-local BOMB_MONSTER_NAME = "BombMonster"
+local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
+local RESPAWN_LIVES = 4 -- original life plus two server-owned resurrections
+local ROUND_DURATION_SECONDS = 30 * 60
+local DEFAULT_MONSTER_MAX_COUNT = 90
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
+local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
+local MONSTER_MAX_COUNT_ATTRIBUTE = "MonsterMaxCount"
+local MANAGED_MONSTER_ATTRIBUTE = "RoundManagedMonster"
+local LIVES_REMAINING_ATTRIBUTE = "RoundLivesRemaining"
 
-if ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE) == nil then
-	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, ws:GetServerTimeNow())
+local function getMonsterMaxCount()
+	local configured = tonumber(ws:GetAttribute(MONSTER_MAX_COUNT_ATTRIBUTE))
+	if not configured or configured < 1 then
+		configured = DEFAULT_MONSTER_MAX_COUNT
+		ws:SetAttribute(MONSTER_MAX_COUNT_ATTRIBUTE, configured)
+	end
+
+	return math.floor(configured)
+end
+
+local function resetRoundClock()
+	local now = ws:GetServerTimeNow()
+	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, now)
+	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, now + ROUND_DURATION_SECONDS)
+	ws:SetAttribute("RoundActive", true)
+end
+
+getMonsterMaxCount()
+if ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE) == nil
+	or tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) == nil
+	or tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) <= ws:GetServerTimeNow() then
+	resetRoundClock()
 end
 
 local function getOrCreateRemoteEvent(name)
@@ -46,16 +76,22 @@ local monsterCountEvent = getOrCreateRemoteEvent("MonsterCountUpdate")
 local recordsEvent = getOrCreateRemoteEvent("RecordsUpdate")
 local roundCompleteEvent = getOrCreateRemoteEvent("RoundComplete")
 local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
+local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
 local restartRoundEvent = getOrCreateRemoteEvent("RestartRound")
+local monsterMilestoneEvent = getOrCreateRemoteEvent("MonsterMilestone")
+local multikillEvent = getOrCreateRemoteEvent("MultikillAnnouncement")
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
 
 local bestEver = {
 	score = 0,
+	kills = 0,
+	elapsedSeconds = 0,
 	playerName = "-",
 	spawn = 0,
 }
+local getScoreboard
 
 task.spawn(function()
 	local ok, saved = pcall(function()
@@ -81,15 +117,21 @@ local function fireRecords(player)
 		currentSpawn = spawnCounts[player] or 0,
 
 		personalBestScore = best.score or 0,
-		personalBestSpawn = best.spawn or 0,
+		-- Kept under the legacy field name for clients already reading it. This is
+		-- the score achieved in the best spawn, never the numeric spawn count.
+		personalBestSpawn = best.score or 0,
 
 		serverBestScore = serverBest.score or 0,
 		serverBestPlayerName = serverBest.playerName or "-",
 		serverBestSpawn = serverBest.spawn or 0,
 
 		bestEverScore = bestEver.score or 0,
+		bestEverKills = bestEver.kills or 0,
+		bestEverElapsedSeconds = bestEver.elapsedSeconds or 0,
 		bestEverPlayerName = bestEver.playerName or "-",
 		bestEverSpawn = bestEver.spawn or 0,
+		bestEver = bestEver,
+		scoreboard = getScoreboard and getScoreboard() or {},
 	})
 end
 
@@ -99,11 +141,13 @@ local function broadcastRecords()
 	end
 end
 
-local function updateBestEver(player, score, spawn)
+local function updateBestEver(player, score, killCount, spawn)
 	if score <= (bestEver.score or 0) then return end
 
 	bestEver = {
 		score = score,
+		kills = killCount,
+		elapsedSeconds = math.max(0, math.floor(ws:GetServerTimeNow() - (tonumber(ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE)) or ws:GetServerTimeNow()))),
 		playerName = player.Name,
 		spawn = spawn,
 	}
@@ -147,13 +191,16 @@ local function setLeaderboardStats(player, score, killCount)
 	killsValue.Value = killCount
 end
 
-local function getScoreboard()
+getScoreboard = function()
 	local list = {}
 
 	for _, player in Players:GetPlayers() do
+		local best = sessionBest[player] or {}
 		table.insert(list, {
 			name = player.Name,
 			score = scores[player] or 0,
+			kills = kills[player] or 0,
+			bestSpawn = best.score or 0,
 		})
 	end
 
@@ -179,14 +226,34 @@ local function disableSelfRespawn(model)
 	end
 end
 
--- limit max amount of monsters to the constant above
+local function getMonsterRoot(model)
+	local root = model:FindFirstChild("HumanoidRootPart", true)
+	if root and root:IsA("BasePart") then
+		return root
+	end
+
+	-- BombMonster is an intentional non-rigged model. Its central PrimaryPart
+	-- (or first body part in legacy copies) is a valid lifecycle/count anchor;
+	-- other monsters still require HumanoidRootPart so broken NPC rigs retire.
+	if model.Name == "BombMonster" then
+		local fallback = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
+		if fallback and fallback:IsA("BasePart") then
+			return fallback
+		end
+	end
+
+	return nil
+end
+
+-- Count only living NPCs explicitly registered by this system. Marketplace
+-- debris and malformed lookalike models must never hold a round hostage.
 local function countLivingMonsters()
 	local count = 0
 
-	for _, instance in ws:GetDescendants() do
-		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
-			local humanoid = MonsterManager.getMonsterHumanoid(instance)
-			if humanoid and humanoid.Health > 0 then
+	for model in pairs(managedMonsters) do
+		if model.Parent and model:IsDescendantOf(ws) then
+			local humanoid = MonsterManager.getMonsterHumanoid(model)
+			if humanoid and humanoid.Health > 0 and getMonsterRoot(model) then
 				count += 1
 			end
 		end
@@ -196,11 +263,12 @@ local function countLivingMonsters()
 end
 
 local function checkRoundComplete(count)
-	if roundComplete then return end
+	if roundComplete or roundFailed then return end
 	if pendingRespawns > 0 then return end
 	if count ~= 0 then return end
 
 	roundComplete = true
+	ws:SetAttribute("RoundActive", false)
 	roundCompleteEvent:FireAllClients({
 		scoreboard = getScoreboard(),
 		serverBest = serverBest,
@@ -208,13 +276,34 @@ local function checkRoundComplete(count)
 	})
 end
 
+local function announceMonsterMilestone(count)
+	local maximum = getMonsterMaxCount()
+	-- The first announcement is deliberately delayed until the active count is
+	-- below 90% of the configured round capacity, avoiding an opening spam.
+	local previous = lastBroadcastMonsterCount
+	lastBroadcastMonsterCount = count
+	if not previous or count >= previous or count >= maximum * 0.9 then return end
+
+	for milestone = math.floor(maximum / 10) * 10, 10, -10 do
+		if not announcedMonsterMilestones[milestone]
+			and previous > milestone
+			and count <= milestone then
+			announcedMonsterMilestones[milestone] = true
+			monsterMilestoneEvent:FireAllClients(milestone)
+			break
+		end
+	end
+end
+
 local function broadcastMonsterCount()
 	local count = countLivingMonsters()
+	announceMonsterMilestone(count)
 	monsterCountEvent:FireAllClients(count)
 	checkRoundComplete(count)
 end
 
 local DEFAULT_SCORE_POPUP_COLOR = Color3.fromRGB(255, 238, 150)
+local MULTIKILL_WINDOW_SECONDS = 5
 
 local function showScorePopup(model, awards, color)
 	if #awards == 0 then return end
@@ -256,12 +345,7 @@ local function showScorePopup(model, awards, color)
 	end)
 end
 
-local function awardScore(player, points)
-	scores[player] = (scores[player] or 0) + points
-	kills[player] = (kills[player] or 0) + 1
-	setLeaderboardStats(player, scores[player], kills[player])
-	scoreEvent:FireClient(player, scores[player], kills[player])
-
+local function updateScoreRecords(player)
 	local currentScore = scores[player]
 	local currentSpawn = spawnCounts[player] or 1
 
@@ -280,10 +364,59 @@ local function awardScore(player, points)
 		}
 	end
 
-	updateBestEver(player, currentScore, currentSpawn)
+	updateBestEver(player, currentScore, kills[player] or 0, currentSpawn)
 end
 
--- Award points when a monster dies, then schedule its respawn in place.
+local function clearMultikill(player, state, token)
+	if multikillStates[player] ~= state or state.token ~= token then return end
+	multikillStates[player] = nil
+end
+
+local function registerMultikillKill(player, points)
+	local state = multikillStates[player]
+	if not state then
+		state = { count = 0, baseScore = 0, token = 0, awardedBonus = 0 }
+		multikillStates[player] = state
+	end
+	state.count += 1
+	state.baseScore += points
+	state.token += 1
+
+	-- A chain becomes visible and earns its current bonus immediately on its
+	-- second kill; subsequent kills update the same five-second chain.
+	if state.count >= 2 then
+		-- The chain's total bonus equals its kill count. Earlier immediate notices
+		-- may already have awarded part of that total, so later kills add only the
+		-- difference instead of double-counting a triple as +2 then +3.
+		local bonus = state.count
+		local bonusDelta = math.max(0, bonus - state.awardedBonus)
+		state.awardedBonus = bonus
+		scores[player] = (scores[player] or 0) + bonusDelta
+		setLeaderboardStats(player, scores[player], kills[player] or 0)
+		scoreEvent:FireClient(player, scores[player], kills[player] or 0)
+		updateScoreRecords(player)
+		broadcastRecords()
+		multikillEvent:FireClient(player, state.count, state.baseScore, bonus)
+	end
+
+	local token = state.token
+	task.delay(MULTIKILL_WINDOW_SECONDS, function()
+		clearMultikill(player, state, token)
+	end)
+end
+
+local function awardScore(player, points)
+	scores[player] = (scores[player] or 0) + points
+	kills[player] = (kills[player] or 0) + 1
+	setLeaderboardStats(player, scores[player], kills[player])
+	scoreEvent:FireClient(player, scores[player], kills[player])
+	updateScoreRecords(player)
+	registerMultikillKill(player, points)
+end
+
+-- Award points when a monster dies, then schedule one of its two permitted
+-- server-owned resurrections. Permanent weapon kills consume every remaining
+-- life, including for bomb monsters.
 local function onMonsterKilled(hum, model)
 	local config = MonsterManager.getConfig(model)
 
@@ -310,15 +443,13 @@ local function onMonsterKilled(hum, model)
 	local data = spawns[model]
 	if data then
 		spawns[model] = nil
-		local spawnCount = config and config.respawnCount or 1
-		local spawnSpacing = 8
-		local isBombMonster = model.Name == BOMB_MONSTER_NAME
 		local permanentWeaponKill =
 			hum:GetAttribute("PermanentMonsterKill") == true
 			or hum:GetAttribute("KilledByMonsterBlaster") == true
 			or hum:GetAttribute("KilledByMonsterGun") == true
 
-		if isBombMonster and permanentWeaponKill then
+		local livesAfterDeath = permanentWeaponKill and 0 or math.max(0, (data.livesRemaining or 1) - 1)
+		if livesAfterDeath == 0 or roundFailed or roundComplete then
 			task.delay(2, function()
 				if model.Parent then
 					model:Destroy()
@@ -332,38 +463,48 @@ local function onMonsterKilled(hum, model)
 		end
 
 		pendingRespawns += 1
+		local generation = roundGeneration
 
 		task.delay(RESPAWN_TIME, function()
 			if model.Parent then
 				model:Destroy()
 			end
 
-			if not isBombMonster and math.random() > RESPAWN_CHANCE then
+			if generation ~= roundGeneration then
+				return
+			end
+
+			if roundFailed or roundComplete then
 				pendingRespawns -= 1
 				broadcastMonsterCount()
 				broadcastRecords()
 				return
 			end
 
-			for index = 1, spawnCount do
-				if countLivingMonsters() >= MAX_MONSTERS then
-					break
-				end
-
+			if countLivingMonsters() < getMonsterMaxCount() then
 				local clone = data.template:Clone()
-				local offset = (index - (spawnCount + 1) / 2) * spawnSpacing
-
 				clone:SetAttribute("RoundRespawned", true)
-				clone:PivotTo(data.cframe * CFrame.new(offset, 0, 0))
+				clone:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
+				clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesAfterDeath)
+				clone:PivotTo(data.cframe)
 				clone.Parent = ws
-				broadcastMonsterCount()
-				broadcastRecords()
 			end
 
 			pendingRespawns -= 1
 			broadcastMonsterCount()
+			broadcastRecords()
 		end)
 	end
+end
+
+local function retireMonster(model, reason)
+	if not model or not model.Parent or not managedMonsters[model] then return end
+	local humanoid = MonsterManager.getMonsterHumanoid(model)
+	if not humanoid or humanoid.Health <= 0 then return end
+	model:SetAttribute("MonsterRetireRequested", nil)
+	model:SetAttribute("MonsterRetirementReason", reason or "InvalidMonster")
+	humanoid:SetAttribute("PermanentMonsterKill", true)
+	humanoid.Health = 0
 end
 
 -- Set up a monster: apply HP, disable self-respawn, store a template,
@@ -373,16 +514,17 @@ local function setupMonster(model)
 	if not config then return end
 	local hum = MonsterManager.getMonsterHumanoid(model)
 	if not hum then return end
-	local isBombMonster = model.Name == BOMB_MONSTER_NAME
-	-- Timed bombs must return after their own explosion even when their legacy
-	-- marketplace model carries NoAutoRespawn. Weapon kills remain permanent in
-	-- onMonsterKilled below, so this does not reintroduce killed bomb monsters.
-	local shouldAutoRespawn = isBombMonster or not model:GetAttribute("NoAutoRespawn")
 
 	MonsterManager.applyHP(model)
 	disableSelfRespawn(model)
+	managedMonsters[model] = true
+	model:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
 
-	if shouldAutoRespawn and not model:GetAttribute("RoundRespawned") then
+	local livesRemaining = tonumber(model:GetAttribute(LIVES_REMAINING_ATTRIBUTE)) or RESPAWN_LIVES
+	livesRemaining = math.clamp(math.floor(livesRemaining), 1, RESPAWN_LIVES)
+	model:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesRemaining)
+
+	if not model:GetAttribute("RoundRespawned") then
 		table.insert(roundTemplates, {
 			template = model:Clone(),
 			cframe = model:GetPivot(),
@@ -390,15 +532,32 @@ local function setupMonster(model)
 		model:SetAttribute("RoundRespawned", true)
 	end
 
-	if shouldAutoRespawn and not spawns[model] then
+	if not spawns[model] then
 		spawns[model] = {
 			template = model:Clone(),
 			cframe = model:GetPivot(),
+			livesRemaining = livesRemaining,
 		}
 	end
 
 	if not connected[hum] then
 		connected[hum] = true
+		local lastHealth = hum.Health
+		local correctingSmilerRegen = false
+		hum.HealthChanged:Connect(function(health)
+			if correctingSmilerRegen then
+				lastHealth = health
+				return
+			end
+			local lockedUntil = tonumber(hum:GetAttribute("BlasterRegenLockedUntil")) or 0
+			if model.Name == "Smiler" and health > lastHealth and ws:GetServerTimeNow() < lockedUntil then
+				correctingSmilerRegen = true
+				hum.Health = lastHealth
+				correctingSmilerRegen = false
+				return
+			end
+			lastHealth = health
+		end)
 		hum.Died:Connect(function()
 			onMonsterKilled(hum, model)
 			broadcastMonsterCount()			
@@ -410,6 +569,7 @@ local function resetScores()
 	for _, player in Players:GetPlayers() do
 		scores[player] = 0
 		kills[player] = 0
+		multikillStates[player] = nil
 		setLeaderboardStats(player, 0, 0)
 		scoreEvent:FireClient(player, 0, 0)
 		fireRecords(player)
@@ -417,9 +577,13 @@ local function resetScores()
 end
 
 local function restartRound()
+	roundGeneration += 1
 	pendingRespawns = 0
 	roundComplete = false
-	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, ws:GetServerTimeNow())
+	roundFailed = false
+	announcedMonsterMilestones = {}
+	lastBroadcastMonsterCount = nil
+	resetRoundClock()
 
 	for _, instance in ws:GetDescendants() do
 		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
@@ -429,14 +593,17 @@ local function restartRound()
 
 	spawns = {}
 	connected = {}
+	managedMonsters = {}
 
 	for _, data in ipairs(roundTemplates) do
-		if countLivingMonsters() >= MAX_MONSTERS then
+		if countLivingMonsters() >= getMonsterMaxCount() then
 			break
 		end
 
 		local clone = data.template:Clone()
 		clone:SetAttribute("RoundRespawned", true)
+		clone:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
+		clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, RESPAWN_LIVES)
 		clone:PivotTo(data.cframe)
 		clone.Parent = ws
 	end
@@ -448,7 +615,7 @@ local function restartRound()
 end
 
 restartRoundEvent.OnServerEvent:Connect(function()
-	if not roundComplete then return end
+	if not roundComplete and not roundFailed then return end
 	restartRound()
 end)
 
@@ -470,10 +637,58 @@ ws.DescendantAdded:Connect(function(desc)
 	end
 end)
 
+-- The deadline is authoritative server state. Clients render RoundEndsAt but
+-- cannot extend a round or trigger its failure.
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if not roundComplete and not roundFailed then
+			local endsAt = tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) or 0
+			if ws:GetServerTimeNow() >= endsAt then
+				roundFailed = true
+				ws:SetAttribute("RoundActive", false)
+				roundFailedEvent:FireAllClients({
+					roundEndsAt = endsAt,
+					scoreboard = getScoreboard(),
+					serverBest = serverBest,
+					bestEver = bestEver,
+				})
+				broadcastMonsterCount()
+				broadcastRecords()
+			end
+		end
+	end
+end)
+
+-- An AI may explicitly request retirement after repeated unreachable-path
+-- recovery failures. This owner consumes that signal so the model cannot keep
+-- a round alive forever. Rootless managed monsters receive the same safe exit.
+task.spawn(function()
+	while true do
+		task.wait(3)
+		if not roundComplete and not roundFailed then
+			for model in pairs(managedMonsters) do
+				if not model.Parent or not model:IsDescendantOf(ws) then
+					managedMonsters[model] = nil
+				elseif model:GetAttribute("MonsterRetireRequested") == true then
+					retireMonster(model, model:GetAttribute("MonsterRetirementReason"))
+				else
+					local humanoid = MonsterManager.getMonsterHumanoid(model)
+					if humanoid and humanoid.Health > 0 and not getMonsterRoot(model) then
+						retireMonster(model, "MissingRootPart")
+					end
+				end
+			end
+			broadcastMonsterCount()
+		end
+	end
+end)
+
 -- Reset each player's score when they respawn
 local function onPlayerAdded(player)
 	scores[player] = 0
 	kills[player] = 0
+	multikillStates[player] = nil
 	spawnCounts[player] = 0
 	setupLeaderstats(player)
 
@@ -490,3 +705,7 @@ Players.PlayerAdded:Connect(onPlayerAdded)
 for _, player in Players:GetPlayers() do
 	onPlayerAdded(player)
 end
+
+Players.PlayerRemoving:Connect(function(player)
+	multikillStates[player] = nil
+end)

@@ -40,6 +40,9 @@ local function prepareTool(tool, held)
 			item.Name == "AnchorScript"
 			or item.Name == "GunSpawner"
 			or item.Name == "MonsterBlasterGunSpawner"
+			or item.Name == "WeaponSpawnSystem"
+			or item.Name == "WeaponRuntimeSystem"
+			or item.Name == "MonsterGunServer"
 		) then
 			item.Disabled = true
 		end

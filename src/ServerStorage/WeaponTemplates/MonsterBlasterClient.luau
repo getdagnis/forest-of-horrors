@@ -5,7 +5,6 @@ local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local tool = script.Parent
@@ -41,14 +40,15 @@ local HUD_BACKGROUND_COLOR = Color3.fromRGB(17, 53, 59)
 local HUD_READY_COLOR = Color3.fromRGB(89, 208, 255)
 local HUD_LABEL_STROKE_TRANSPARENCY = 0.45
 
-local AIM_CIRCLE_DIAMETER = 30
-local AIM_CIRCLE_FILL_TRANSPARENCY = 0.25 -- centre remains barely visible
-local AIM_CIRCLE_OUTLINE_TRANSPARENCY = 0.5 -- match monster contour brightness
-local AIM_CIRCLE_OUTLINE_THICKNESS = 1.5
-local AIM_CIRCLE_Z_INDEX = 10
-local AIM_CIRCLE_CORNER_RADIUS = 1
-local AIM_DIRECTION_EPSILON = 0.01
+-- The legacy Crosshair in this marketplace HUD has an old absolute position.
+-- Use one fixed, unobtrusive four-line reticle instead of a filled blue dot.
+local CROSSHAIR_SIZE = 24
+local CROSSHAIR_LINE_LENGTH = 6
+local CROSSHAIR_LINE_THICKNESS = 2
+local CROSSHAIR_GAP = 3
+local CROSSHAIR_Z_INDEX = 10
 local GROUND_SURFACE_NORMAL_MIN = 0.45
+local GROUND_PREVIEW_DELAY = 1
 local GROUND_PREVIEW_THICKNESS = 0.08
 local GROUND_PREVIEW_LIFT = 0.06
 local GROUND_PREVIEW_TRANSPARENCY = 0.9
@@ -57,6 +57,13 @@ local MUZZLE_FLASH_BASE_SIZE = 0.5
 local MUZZLE_FLASH_POWER_SIZE_GAIN = 2.5
 local MUZZLE_FLASH_FORWARD_OFFSET = 0.6
 local MUZZLE_FLASH_LIFETIME = 0.12
+local MUZZLE_LIGHT_BRIGHTNESS = 6
+local MUZZLE_LIGHT_RANGE = 20
+local IMPACT_LIGHT_LIFETIME = 0.22
+local IMPACT_LIGHT_BRIGHTNESS_MIN = 5
+local IMPACT_LIGHT_BRIGHTNESS_GAIN = 12
+local IMPACT_LIGHT_RANGE_MIN = 16
+local IMPACT_LIGHT_RANGE_GAIN = 32
 local BEAM_END_SIZE = 0.2
 local BEAM_WIDTH0_MIN = 0.35
 local BEAM_WIDTH0_POWER_GAIN = 1.2
@@ -65,6 +72,7 @@ local BEAM_WIDTH1_POWER_GAIN = 0.65
 local BEAM_TRANSPARENCY = 0.08
 local BEAM_LIFETIME = 0.24
 local FULL_POWER_VISUAL_THRESHOLD = 0.999
+local BLASTER_ENERGY_COST = 5
 
 local charging = false
 local coolingDown = false
@@ -74,8 +82,9 @@ local chargePulseToken = 0
 local chargeSound
 local ambientLoop
 local activeHud
-local aimCircle
+local aimCrosshair
 local groundPreview
+local groundAimStartedAt
 local didWarnMissingHud = false
 local didWarnMissingAmbient = false
 
@@ -119,6 +128,10 @@ end
 
 local function getPower()
 	return Config.powerForHoldRatio(getChargeRatio())
+end
+
+local function hasLaserEnergy()
+	return (tonumber(player:GetAttribute("LaserEnergy")) or 0) >= BLASTER_ENERGY_COST
 end
 
 local function setHandleMaterial(material)
@@ -191,42 +204,42 @@ local function cloneWeaponHud()
 	activeHud.ResetOnSpawn = false
 	activeHud.Parent = playerGui
 
-	-- The old HUD may contain a green multi-part crosshair. Hide it completely
-	-- and use one self-contained circle inside the same cloned WeaponHud.
 	for _, item in activeHud:GetDescendants() do
 		if item.Name == "Crosshair" and item:IsA("GuiObject") then
 			item.Visible = false
 		end
 	end
 
-	aimCircle = Instance.new("Frame")
-	aimCircle.Name = "BlasterAimCircle"
-	aimCircle.AnchorPoint = Vector2.new(SCREEN_CENTER, SCREEN_CENTER)
-	aimCircle.Position = UDim2.fromScale(SCREEN_CENTER, SCREEN_CENTER)
-	aimCircle.Size = UDim2.fromOffset(AIM_CIRCLE_DIAMETER, AIM_CIRCLE_DIAMETER)
-	aimCircle.BackgroundColor3 = Config.FLASH_COLOR
-	aimCircle.BackgroundTransparency = AIM_CIRCLE_FILL_TRANSPARENCY
-	aimCircle.BorderSizePixel = 0
-	aimCircle.ZIndex = AIM_CIRCLE_Z_INDEX
-	aimCircle.Parent = activeHud
-	local corner = Instance.new("UICorner")
-	corner.Name = "BlasterCircleCorner"
-	corner.CornerRadius = UDim.new(AIM_CIRCLE_CORNER_RADIUS, 0)
-	corner.Parent = aimCircle
-	local stroke = Instance.new("UIStroke")
-	stroke.Name = "BlasterCircleStroke"
-	stroke.Color = Config.FLASH_COLOR
-	stroke.Transparency = AIM_CIRCLE_OUTLINE_TRANSPARENCY
-	stroke.Thickness = AIM_CIRCLE_OUTLINE_THICKNESS
-	stroke.Parent = aimCircle
-	UserInputService.MouseIconEnabled = false
+	aimCrosshair = Instance.new("Frame")
+	aimCrosshair.Name = "SimpleBlasterCrosshair"
+	aimCrosshair.AnchorPoint = Vector2.new(SCREEN_CENTER, SCREEN_CENTER)
+	aimCrosshair.Position = UDim2.fromScale(SCREEN_CENTER, SCREEN_CENTER)
+	aimCrosshair.Size = UDim2.fromOffset(CROSSHAIR_SIZE, CROSSHAIR_SIZE)
+	aimCrosshair.BackgroundTransparency = 1
+	aimCrosshair.ZIndex = CROSSHAIR_Z_INDEX
+	aimCrosshair.Parent = activeHud
+
+	local function addLine(name, position, size)
+		local line = Instance.new("Frame")
+		line.Name = name
+		line.Position = position
+		line.Size = size
+		line.BackgroundColor3 = Config.FLASH_COLOR
+		line.BorderSizePixel = 0
+		line.ZIndex = CROSSHAIR_Z_INDEX
+		line.Parent = aimCrosshair
+	end
+	addLine("Top", UDim2.new(0.5, -CROSSHAIR_LINE_THICKNESS / 2, 0.5, -CROSSHAIR_GAP - CROSSHAIR_LINE_LENGTH), UDim2.fromOffset(CROSSHAIR_LINE_THICKNESS, CROSSHAIR_LINE_LENGTH))
+	addLine("Bottom", UDim2.new(0.5, -CROSSHAIR_LINE_THICKNESS / 2, 0.5, CROSSHAIR_GAP), UDim2.fromOffset(CROSSHAIR_LINE_THICKNESS, CROSSHAIR_LINE_LENGTH))
+	addLine("Left", UDim2.new(0.5, -CROSSHAIR_GAP - CROSSHAIR_LINE_LENGTH, 0.5, -CROSSHAIR_LINE_THICKNESS / 2), UDim2.fromOffset(CROSSHAIR_LINE_LENGTH, CROSSHAIR_LINE_THICKNESS))
+	addLine("Right", UDim2.new(0.5, CROSSHAIR_GAP, 0.5, -CROSSHAIR_LINE_THICKNESS / 2), UDim2.fromOffset(CROSSHAIR_LINE_LENGTH, CROSSHAIR_LINE_THICKNESS))
+
 end
 
 local function destroyWeaponHud()
 	if activeHud then activeHud:Destroy() end
 	activeHud = nil
-	aimCircle = nil
-	UserInputService.MouseIconEnabled = true
+	aimCrosshair = nil
 end
 
 local function getOrCreateChargeHud()
@@ -286,7 +299,8 @@ end
 local function raycastFromCamera(direction)
 	local ray = GunAim.getRay(player)
 	if not ray then return nil end
-	return workspace:Raycast(ray.Origin, direction * Config.RANGE, GunAim.makeRaycastParams(player.Character, tool))
+	return workspace:Raycast(ray.Origin, (direction or ray.Direction) * Config.RANGE,
+		GunAim.makeRaycastParams(player.Character, tool))
 end
 
 local function getGroundPreview()
@@ -309,11 +323,21 @@ end
 local function updateGroundPreview(power)
 	if not isEquipped() or not GunAim.shouldShowAimHelpers(player) then
 		if groundPreview then groundPreview.Transparency = 1 end
+		groundAimStartedAt = nil
 		return
 	end
-	local _, direction = getAimPayload()
-	local result = direction and raycastFromCamera(direction)
+	-- Preview exactly the same camera ray that the focused crosshair represents.
+	-- Do not derive this from the held barrel: that can be out of sync with the
+	-- camera during shoulder aim and made the indicator stop at the wrong edge.
+	local aimRay = GunAim.getRay(player)
+	local result = aimRay and raycastFromCamera(aimRay.Direction)
 	if not result or result.Normal.Y < GROUND_SURFACE_NORMAL_MIN then
+		if groundPreview then groundPreview.Transparency = 1 end
+		groundAimStartedAt = nil
+		return
+	end
+	groundAimStartedAt = groundAimStartedAt or os.clock()
+	if os.clock() - groundAimStartedAt < GROUND_PREVIEW_DELAY then
 		if groundPreview then groundPreview.Transparency = 1 end
 		return
 	end
@@ -330,12 +354,12 @@ local function destroyGroundPreview()
 end
 
 local function updateCrosshair()
-	if not aimCircle then return end
+	if not aimCrosshair then return end
 	if GunAim.isCentered(player) then
-		aimCircle.Position = UDim2.fromScale(SCREEN_CENTER, SCREEN_CENTER)
+		aimCrosshair.Position = UDim2.fromScale(SCREEN_CENTER, SCREEN_CENTER)
 	else
 		local mouse = player:GetMouse()
-		aimCircle.Position = UDim2.fromOffset(mouse.X, mouse.Y)
+		aimCrosshair.Position = UDim2.fromOffset(mouse.X, mouse.Y)
 	end
 end
 
@@ -356,7 +380,33 @@ local function muzzleFlash(power)
 	flash.CastShadow = false
 	flash.CFrame = CFrame.new(muzzlePosition)
 	flash.Parent = workspace
+	local light = Instance.new("PointLight")
+	light.Color = Config.FLASH_COLOR
+	light.Brightness = MUZZLE_LIGHT_BRIGHTNESS
+	light.Range = MUZZLE_LIGHT_RANGE
+	light.Shadows = false
+	light.Parent = flash
 	Debris:AddItem(flash, MUZZLE_FLASH_LIFETIME)
+end
+
+local function makeImpactLight(position, power)
+	local emitter = Instance.new("Part")
+	emitter.Name = "BlasterImpactLight"
+	emitter.Anchored = true
+	emitter.CanCollide = false
+	emitter.CanQuery = false
+	emitter.CanTouch = false
+	emitter.Transparency = 1
+	emitter.Size = Vector3.new(0.1, 0.1, 0.1)
+	emitter.Position = position
+	emitter.Parent = workspace
+	local light = Instance.new("PointLight")
+	light.Color = Config.FLASH_COLOR
+	light.Brightness = IMPACT_LIGHT_BRIGHTNESS_MIN + IMPACT_LIGHT_BRIGHTNESS_GAIN * power
+	light.Range = IMPACT_LIGHT_RANGE_MIN + IMPACT_LIGHT_RANGE_GAIN * power
+	light.Shadows = false
+	light.Parent = emitter
+	Debris:AddItem(emitter, IMPACT_LIGHT_LIFETIME)
 end
 
 local function showShotBeam(barrel, endPosition, power)
@@ -395,12 +445,22 @@ local function releaseShot()
 	if not charging or not isEquipped() then return end
 	local chargeRatio = getChargeRatio()
 	local power = Config.powerForHoldRatio(chargeRatio)
-	local originOffset, direction, target = getAimPayload()
 	charging = false
 	chargeStartedAt = 0
 	stopChargeSound()
 	stopHandlePulse()
+	-- Releasing a tap never spends energy or starts cooldown. A Blaster shot
+	-- needs an intentional one-second hold.
+	if chargeRatio * Config.CHARGE_TIME < Config.MIN_CHARGE_TIME then
+		setChargeHud(true, 0, string.format("HOLD %.1fs", Config.MIN_CHARGE_TIME))
+		return
+	end
+	local originOffset, direction, target = getAimPayload()
 	if not originOffset or not direction then return end
+	if not hasLaserEnergy() then
+		setChargeHud(true, 0, "NO ENERGY", HUD_BACKGROUND_COLOR)
+		return
+	end
 
 	local barrel = getBarrel()
 	if barrel then
@@ -412,6 +472,9 @@ local function releaseShot()
 		playShotSound(power, chargeRatio)
 		muzzleFlash(power)
 		showShotBeam(barrel, endPosition, power)
+		-- Presentation only: restore the punchy local blue world-lighting without
+		-- changing the validated server damage or shockwave mechanics.
+		makeImpactLight(endPosition, power)
 	end
 	shootEvent:FireServer(originOffset, direction, target)
 	coolingDown = true
@@ -435,6 +498,11 @@ end
 tool.Activated:Connect(function()
 	if not isEquipped() or charging then return end
 	if coolingDown then playCooldownSound() return end
+	if not hasLaserEnergy() then
+		setChargeHud(true, 0, "NO ENERGY", HUD_BACKGROUND_COLOR)
+		playCooldownSound()
+		return
+	end
 	charging = true
 	chargeStartedAt = os.clock()
 	chargeEvent:FireServer("Begin")
@@ -479,7 +547,13 @@ RunService.RenderStepped:Connect(function()
 	if not isEquipped() then return end
 	local power = charging and getPower() or 0
 	if charging then
-		setChargeHud(true, power, string.format("POWER %d%%", math.floor(power * 100 + 0.5)))
+		local chargeSeconds = getChargeRatio() * Config.CHARGE_TIME
+		if chargeSeconds < Config.MIN_CHARGE_TIME then
+			setChargeHud(true, chargeSeconds / Config.MIN_CHARGE_TIME,
+				string.format("HOLD %.1fs", Config.MIN_CHARGE_TIME))
+		else
+			setChargeHud(true, power, string.format("POWER %d%%", math.floor(power * 100 + 0.5)))
+		end
 	elseif coolingDown then
 		local progress = math.clamp((os.clock() - cooldownStartedAt) / Config.COOLDOWN, 0, 1)
 		setChargeHud(true, progress, "READYING", HUD_BACKGROUND_COLOR:Lerp(HUD_READY_COLOR, progress))

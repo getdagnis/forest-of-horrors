@@ -1,4 +1,4 @@
--- GunCombatSystem
+-- MonsterGunDamageSystem
 -- The sole server-side combat owner for the MonsterGun family.  Clients submit
 -- camera aim data; the server owns validation, combat raycasts, damage, scoring,
 -- and the visual broadcast that every client renders.
@@ -34,6 +34,7 @@ end
 
 local shotVisualEvent = getOrCreateRemoteEvent("GunShotVisual")
 local damageLabelEvent = getOrCreateRemoteEvent("MonsterDamageLabel")
+local contourTargetEvent = getOrCreateRemoteEvent("WeaponContourTarget")
 
 local boundEvents = {}
 local lastShotAt = {}
@@ -92,6 +93,13 @@ local function getMuzzlePosition(tool)
 	return barrel and barrel:IsA("BasePart") and barrel.Position or nil
 end
 
+local function consumeLaserEnergy(player, amount)
+	local energy = math.clamp(tonumber(player:GetAttribute("LaserEnergy")) or 600, 0, 600)
+	if energy < amount then return false end
+	player:SetAttribute("LaserEnergy", energy - amount)
+	return true
+end
+
 local function validateCameraOrigin(player, originOffset)
 	if typeof(originOffset) ~= "Vector3" or originOffset.Magnitude > AimConfig.MaxCameraOriginOffset then return nil end
 	local character = player.Character
@@ -117,11 +125,35 @@ local function updateContourGrace(player, tool, submittedTarget, cameraOrigin, d
 	end
 end
 
+local function isVisibleMonster(model, cameraOrigin, character, tool)
+	if not model or not MonsterManager.getConfig(model) then return false end
+	local humanoid = MonsterManager.getMonsterHumanoid(model)
+	if not humanoid or humanoid.Health <= 0 then return false end
+	local targetPart = model:FindFirstChild("HumanoidRootPart", true) or model.PrimaryPart
+		or model:FindFirstChildWhichIsA("BasePart", true)
+	if not targetPart or not targetPart:IsA("BasePart") then return false end
+	local offset = targetPart.Position - cameraOrigin
+	if offset.Magnitude < 0.01 then return false end
+	local result = workspace:Raycast(cameraOrigin, offset, makeRaycastParams(character, tool))
+	return result and getMonsterModelFromHit(result.Instance) == model
+end
+
 local function getGraceTarget(player, tool, cameraOrigin, direction)
 	local cached = contourTargets[player]
 	if not cached or cached.tool ~= tool or cached.expiresAt < os.clock() then return nil end
-	return isDirectTarget(cached.model, cameraOrigin, direction, player.Character, tool) and cached.model or nil
+	-- The server previously re-tested the *new* firing ray here, which cancelled
+	-- the 0.20s grace the moment a laggy camera moved a pixel. Recheck only real
+	-- line-of-sight to the cached contour target, so walls still win.
+	return isVisibleMonster(cached.model, cameraOrigin, player.Character, tool) and cached.model or nil
 end
+
+contourTargetEvent.OnServerEvent:Connect(function(player, tool, originOffset, direction, target)
+	if not getGunConfig(tool) or not isEquippedBy(player, tool) then return end
+	if typeof(direction) ~= "Vector3" or direction.Magnitude < 0.01 then return end
+	local cameraOrigin = validateCameraOrigin(player, originOffset)
+	if not cameraOrigin then return end
+	updateContourGrace(player, tool, target, cameraOrigin, direction.Unit)
+end)
 
 local function getServerShot(tool, player, cameraOrigin, direction)
 	local params = makeRaycastParams(player.Character, tool)
@@ -233,14 +265,19 @@ local function bindTool(tool)
 		if typeof(shotDirection) ~= "Vector3" or shotDirection.Magnitude < 0.01 then return end
 		if not canFire(tool, currentConfig.interval) then return end
 
+		-- The client and server both use the validated camera ray.  The muzzle is
+		-- deliberately a visual/clearance origin, not a second aim controller.
 		local direction = shotDirection.Unit
 		local cameraOrigin = validateCameraOrigin(player, originOffset)
 		if not cameraOrigin then return end
 		updateContourGrace(player, tool, outlinedTarget, cameraOrigin, direction)
 		local graceTarget = getGraceTarget(player, tool, cameraOrigin, direction)
+		if not consumeLaserEnergy(player, 1) then return end
 		resolveShot(player, tool, currentConfig, cameraOrigin, direction, graceTarget)
 		if currentConfig.shots == 2 then
 			task.delay(currentConfig.burstDelay, function()
+				if not isEquippedBy(player, tool) then return end
+				if not consumeLaserEnergy(player, 1) then return end
 				resolveShot(player, tool, currentConfig, cameraOrigin, direction, graceTarget)
 			end)
 		end

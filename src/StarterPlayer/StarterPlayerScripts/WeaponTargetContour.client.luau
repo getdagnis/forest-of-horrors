@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
+local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 local MonsterBlasterConfig = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 
 local WEAPON_COLORS = {
@@ -22,6 +23,29 @@ highlight.OutlineTransparency = 0
 highlight.DepthMode = Enum.HighlightDepthMode.Occluded
 highlight.Enabled = false
 highlight.Parent = workspace
+
+local lastContourUpdateAt = 0
+local lastContourWeapon
+local lastContourTarget
+
+local function reportDirectContour(weapon, target)
+
+	local now = os.clock()
+	if weapon == lastContourWeapon and target == lastContourTarget
+		and now - lastContourUpdateAt < AimConfig.ContourUpdateInterval then
+		return
+	end
+	local event = ReplicatedStorage:FindFirstChild("WeaponContourTarget")
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local ray = GunAim.getRay(player)
+	if not event or not event:IsA("RemoteEvent") or not root or not ray then return end
+
+	lastContourUpdateAt = now
+	lastContourWeapon = weapon
+	lastContourTarget = target
+	event:FireServer(weapon, ray.Origin - root.Position, ray.Direction.Unit, target)
+end
 
 local function getEquippedWeapon()
 	local character = player.Character
@@ -54,11 +78,15 @@ RunService.RenderStepped:Connect(function()
 	if not weapon then
 		highlight.Enabled = false
 		highlight.Adornee = nil
+		lastContourWeapon = nil
+		lastContourTarget = nil
 		return
 	end
 	if not GunAim.shouldShowAimHelpers(player) then
 		highlight.Enabled = false
 		highlight.Adornee = nil
+		lastContourWeapon = nil
+		lastContourTarget = nil
 		return
 	end
 
@@ -70,8 +98,10 @@ RunService.RenderStepped:Connect(function()
 		highlight.OutlineColor = color
 		highlight.Adornee = monster
 		highlight.Enabled = true
+		reportDirectContour(weapon, monster)
 	else
 		highlight.Enabled = false
 		highlight.Adornee = nil
+		lastContourTarget = nil
 	end
 end)

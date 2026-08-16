@@ -82,6 +82,12 @@
       "MonsterBlasterSpawnSystem": {
         "$path": "src/ServerScriptService/MonsterBlasterSpawnSystem.server.luau"
       },
+      "LaserEnergySystem": {
+        "$path": "src/ServerScriptService/LaserEnergySystem.server.luau"
+      },
+      "RadarTowerSystem": {
+        "$path": "src/ServerScriptService/RadarTowerSystem.server.luau"
+      },
       "DarkForestMusicSystem": {
         "$path": "src/ServerScriptService/DarkForestMusicSystem.server.luau"
       },
@@ -115,8 +121,17 @@
       "MonsterRadar": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterRadar.client.luau"
       },
-      "GameFlowHud": {
-        "$path": "src/StarterPlayer/StarterPlayerScripts/GameFlowHud.client.luau"
+      "MonsterMilestoneHud": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterMilestoneHud.client.luau"
+      },
+      "MultikillHud": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/MultikillHud.client.luau"
+      },
+      "WMTRescuePrompt": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/WMTRescuePrompt.client.luau"
+      },
+      "RadarTowerHud": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/RadarTowerHud.client.luau"
       },
       "MonsterContourClient": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterContourClient.client.luau"
