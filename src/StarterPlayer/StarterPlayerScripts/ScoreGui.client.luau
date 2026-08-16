@@ -102,7 +102,7 @@ makeCard("Health", "HEALTH")
 makeCard("Rank", "", Color3.fromRGB(101, 13, 44))
 makeCard("Monsters", "MONSTERS (+0)")
 makeCard("Spawn", "BEST SPAWN")
-labels.Rank.TextColor3 = Color3.fromRGB(244, 231, 170)
+labels.Rank.TextColor3 = Color3.fromRGB(255, 240, 170)
 labels.Monsters.TextColor3 = Color3.fromRGB(255, 213, 218)
 
 -- Local-only hit feedback. The overlay does not own health or alter damage.

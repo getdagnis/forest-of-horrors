@@ -133,6 +133,9 @@
       "RadarTowerHud": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/RadarTowerHud.client.luau"
       },
+      "LaserEnergyHud": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/LaserEnergyHud.client.luau"
+      },
       "MonsterContourClient": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterContourClient.client.luau"
       },
