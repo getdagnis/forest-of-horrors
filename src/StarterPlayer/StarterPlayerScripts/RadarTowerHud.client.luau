@@ -1,4 +1,4 @@
--- RadarTowerHud: a near-full-screen diagnostic map while seated at a tower.
+-- RadarTowerHud: a near-full-screen map while using a marked radar tower.
 -- Mark any important Part or Model with radar_detect=true to add a faint,
 -- static landmark marker. Workspace.RadarMapMin/RadarMapMax define map bounds.
 
@@ -12,6 +12,13 @@ local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local useEvent = ReplicatedStorage:WaitForChild("RadarTowerUse")
 
+warn("[RadarTowerHud] client started; waiting for RadarTowerUse")
+
+-- Client-only audio preserves the imported ambience without broadcasting it
+-- globally from a Sound parented under the old tower Model.
+local AMBIENT_RANGE = 110
+local AMBIENT_UPDATE_INTERVAL = 0.4
+
 local gui = Instance.new("ScreenGui")
 gui.Name = "RadarTowerHud"
 gui.ResetOnSpawn = false
@@ -20,7 +27,7 @@ gui.DisplayOrder = 40
 gui.Enabled = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local shade = Instance.new("Frame")
+local shade = Instance.new("Frame")	
 shade.Name = "Shade"
 shade.BackgroundColor3 = Color3.fromRGB(1, 7, 16)
 shade.BackgroundTransparency = 0.25
@@ -113,9 +120,12 @@ end
 local landmarkLayer = Instance.new("Folder")
 landmarkLayer.Name = "Landmarks"
 landmarkLayer.Parent = plot
-local zombieLayer = Instance.new("Folder")
-zombieLayer.Name = "Zombies"
-zombieLayer.Parent = plot
+local monsterLayer = Instance.new("Folder")
+monsterLayer.Name = "Monsters"
+monsterLayer.Parent = plot
+local playerLayer = Instance.new("Folder")
+playerLayer.Name = "OtherPlayers"
+playerLayer.Parent = plot
 
 local selfMarker = Instance.new("Frame")
 selfMarker.Name = "You"
@@ -130,8 +140,10 @@ selfStroke.Color = Color3.fromRGB(247, 35, 120)
 selfStroke.Thickness = 2
 selfStroke.Parent = selfMarker
 
-local zombieDots = {}
+local monsterDots = {}
+local playerDots = {}
 local landmarkMarkers = {}
+local activeRadarLoop
 
 local function mapBounds()
 	local min = Workspace:GetAttribute("RadarMapMin")
@@ -151,19 +163,35 @@ local function mapPosition(worldPosition, min, max)
 	)
 end
 
-local function getZombieDot(index)
-	local dot = zombieDots[index]
+local function getMonsterDot(index)
+	local dot = monsterDots[index]
 	if dot then return dot end
 	dot = Instance.new("Frame")
-	dot.Name = "Zombie"
+	dot.Name = "Monster"
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
 	dot.Size = UDim2.fromOffset(11, 11)
 	dot.BackgroundColor3 = Color3.fromRGB(223, 27, 87)
 	dot.BackgroundTransparency = 0.08
 	dot.BorderSizePixel = 0
-	dot.Parent = zombieLayer
+	dot.Parent = monsterLayer
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-	zombieDots[index] = dot
+	monsterDots[index] = dot
+	return dot
+end
+
+local function getPlayerDot(index)
+	local dot = playerDots[index]
+	if dot then return dot end
+	dot = Instance.new("Frame")
+	dot.Name = "Player"
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(12, 12)
+	dot.BackgroundColor3 = Color3.fromRGB(154, 160, 169)
+	dot.BackgroundTransparency = 0.05
+	dot.BorderSizePixel = 0
+	dot.Parent = playerLayer
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+	playerDots[index] = dot
 	return dot
 end
 
@@ -192,6 +220,32 @@ local function markerPosition(instance)
 	return nil
 end
 
+local function getTowerScreen(tower)
+	if not (tower and tower:IsA("Model")) then return nil end
+	for _, instance in ipairs(tower:GetDescendants()) do
+		if instance:IsA("BasePart") and instance:GetAttribute("RadarTowerScreen") == true then
+			return instance
+		end
+	end
+	return nil
+end
+
+local function getTowerSound(tower, soundName)
+	local sound = tower and tower:FindFirstChild(soundName, true)
+	return sound and sound:IsA("Sound") and sound or nil
+end
+
+local function setRadarLoop(tower, enabled)
+	if activeRadarLoop then activeRadarLoop:Stop() end
+	activeRadarLoop = nil
+	if not enabled then return end
+	local radarLoop = getTowerSound(tower, "RadarLoop")
+	if radarLoop then
+		radarLoop:Play()
+		activeRadarLoop = radarLoop
+	end
+end
+
 local refreshElapsed = 0
 RunService.Heartbeat:Connect(function(deltaTime)
 	if not gui.Enabled then return end
@@ -205,16 +259,17 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	selfMarker.Visible = root ~= nil
 	if root then selfMarker.Position = mapPosition(root.Position, min, max) end
 
-	local zombieCount = 0
+	local monsterCount = 0
+	local playerCount = 0
 	local landmarkCount = 0
 	for _, instance in ipairs(Workspace:GetDescendants()) do
-		if instance:IsA("Model") and instance.Name == "Drooling Zombie" and MonsterManager.getConfig(instance) then
+		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
-			local zombieRoot = instance:FindFirstChild("HumanoidRootPart", true)
-			if humanoid and humanoid.Health > 0 and zombieRoot and zombieRoot:IsA("BasePart") then
-				zombieCount += 1
-				local dot = getZombieDot(zombieCount)
-				dot.Position = mapPosition(zombieRoot.Position, min, max)
+			local monsterRoot = instance:FindFirstChild("HumanoidRootPart", true)
+			if humanoid and humanoid.Health > 0 and monsterRoot and monsterRoot:IsA("BasePart") then
+				monsterCount += 1
+				local dot = getMonsterDot(monsterCount)
+				dot.Position = mapPosition(monsterRoot.Position, min, max)
 				dot.Visible = true
 			end
 		elseif instance:GetAttribute("radar_detect") == true then
@@ -227,12 +282,50 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			end
 		end
 	end
-	for index = zombieCount + 1, #zombieDots do zombieDots[index].Visible = false end
+	for _, otherPlayer in ipairs(Players:GetPlayers()) do
+		if otherPlayer ~= player then
+			local otherCharacter = otherPlayer.Character
+			local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
+			local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
+			if otherHumanoid and otherHumanoid.Health > 0 and otherRoot and otherRoot:IsA("BasePart") then
+				playerCount += 1
+				local dot = getPlayerDot(playerCount)
+				dot.Position = mapPosition(otherRoot.Position, min, max)
+				dot.Visible = true
+			end
+		end
+	end
+	for index = monsterCount + 1, #monsterDots do monsterDots[index].Visible = false end
+	for index = playerCount + 1, #playerDots do playerDots[index].Visible = false end
 	for index = landmarkCount + 1, #landmarkMarkers do landmarkMarkers[index].Visible = false end
+end)
+
+local ambientElapsed = 0
+RunService.Heartbeat:Connect(function(deltaTime)
+	ambientElapsed += deltaTime
+	if ambientElapsed < AMBIENT_UPDATE_INTERVAL then return end
+	ambientElapsed = 0
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	for _, tower in ipairs(Workspace:GetChildren()) do
+		if tower:IsA("Model") and tower:GetAttribute("RadarTower") == true then
+			local yacht = getTowerSound(tower, "RadarYacht")
+			local screen = getTowerScreen(tower)
+			if yacht and screen and root and root:IsA("BasePart")
+				and (root.Position - screen.Position).Magnitude <= AMBIENT_RANGE
+			then
+				if not yacht.IsPlaying then yacht:Play() end
+			elseif yacht and yacht.IsPlaying then
+				yacht:Stop()
+			end
+		end
+	end
 end)
 
 local function exitRadar()
 	gui.Enabled = false
+	setRadarLoop(nil, false)
 	useEvent:FireServer(false)
 end
 
@@ -243,6 +336,13 @@ UserInputService.InputBegan:Connect(function(input, processed)
 	end
 end)
 
-useEvent.OnClientEvent:Connect(function(enabled)
+useEvent.OnClientEvent:Connect(function(enabled, tower)
 	gui.Enabled = enabled == true
+	setRadarLoop(tower, enabled == true)
+	warn("[RadarTowerHud]", enabled == true and "opened" or "closed")
+end)
+
+player.CharacterAdded:Connect(function()
+	gui.Enabled = false
+	setRadarLoop(nil, false)
 end)

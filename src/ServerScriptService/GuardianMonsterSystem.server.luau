@@ -1,3 +1,5 @@
+-- GuardianMonsterSystem > ServerScriptService
+
 -- Server-owned Weird Monster Thing (WMT) rescue and guardian behaviour.
 -- Place as ServerScriptService.GuardianMonsterSystem.  It intentionally does
 -- not depend on MonsterSystem so rescue eligibility remains server-validated.
@@ -92,7 +94,17 @@ end
 
 local function disableLegacyGuardianScript(model)
 	for _, item in model:GetDescendants() do
-		if item:IsA("Script") and (item.Name == "GuardianLegDamage" or item.Name == "Damage Script") then
+		-- The marketplace WMT "NPC" script is a complete second AI owner.  It
+		-- runs every heartbeat, assumes every target has HumanoidRootPart, and
+		-- therefore throws continuously for BombMonster (which deliberately has
+		-- only a body/PrimaryPart).  GuardianMonsterSystem now owns movement,
+		-- player help, pet following, and monster damage, so all three legacy
+		-- behaviour scripts must remain off for a registered WMT.
+		if item:IsA("Script") and (
+			item.Name == "NPC"
+			or item.Name == "GuardianLegDamage"
+			or item.Name == "Damage Script"
+		) then
 			item.Disabled = true
 		end
 	end

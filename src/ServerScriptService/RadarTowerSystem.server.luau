@@ -1,10 +1,14 @@
--- RadarTowerSystem: a seated player immediately receives the full-map radar.
--- Studio setup: set RadarTower=true on each tower Model, or directly on its
--- cockpit Seat/VehicleSeat. No console prompt is required.
+-- RadarTowerSystem: author-owned controls for the single restored pilot tower.
+-- The old RadarSeat/RadarScreen hierarchy is visual scenery only. At runtime we
+-- create one explicit RadarTowerConsole Part at the legacy display and own its
+-- prompt, click target, HUD event, and local-audio anchor from this script.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+
+local PILOT_TOWER_NAME = "Machine Gun Tower"
+local ACTIVATION_DISTANCE = 4
 
 local event = ReplicatedStorage:FindFirstChild("RadarTowerUse")
 if not event then
@@ -13,91 +17,154 @@ if not event then
 	event.Parent = ReplicatedStorage
 end
 
-local boundSeats = {}
-local playerSeats = {}
+local activeSources = {}
+local pilotTower
+local console
 
-local function isTower(instance)
-	local current = instance
-	while current and current ~= Workspace do
-		if current:GetAttribute("RadarTower") == true then return true end
-		current = current.Parent
-	end
-	return false
-end
-
-local function playerFromOccupant(occupant)
-	local character = occupant and occupant.Parent
-	return character and Players:GetPlayerFromCharacter(character) or nil
-end
-
-local function hidePlayer(player, seat)
-	if playerSeats[player] ~= seat then return end
-	playerSeats[player] = nil
+local function hideRadar(player, source)
+	local active = activeSources[player]
+	if source and (not active or active.source ~= source) then return end
+	activeSources[player] = nil
 	event:FireClient(player, false)
+	warn("[RadarTower] closed for", player.Name)
 end
 
-local function syncSeat(seat)
-	local previousPlayer = boundSeats[seat]
-	local player = playerFromOccupant(seat.Occupant)
-	if previousPlayer and previousPlayer ~= player then
-		hidePlayer(previousPlayer, seat)
-	end
+local function showRadar(player, source, kind)
+	if not (player and source and source.Parent) then return end
+	activeSources[player] = { source = source, kind = kind }
+	event:FireClient(player, true, pilotTower)
+	warn("[RadarTower] opened for", player.Name, "via", kind)
+end
 
-	boundSeats[seat] = player
-	if player then
-		local oldSeat = playerSeats[player]
-		if oldSeat and oldSeat ~= seat then
-			boundSeats[oldSeat] = nil
+local function firstDescendant(parent, name, className)
+	for _, instance in ipairs(parent:GetDescendants()) do
+		if instance.Name == name and (not className or instance:IsA(className)) then
+			return instance
 		end
-		playerSeats[player] = seat
-		event:FireClient(player, true)
+	end
+	return nil
+end
+
+local function disableLegacyRadarScript(displayPart)
+	for _, instance in ipairs(displayPart:GetDescendants()) do
+		if instance:IsA("Script") and instance.Name == "RadarScript" then
+			instance.Disabled = true
+			warn("[RadarTower] disabled legacy RadarScript:", instance:GetFullName())
+		end
 	end
 end
 
-local function bindSeat(seat)
-	if boundSeats[seat] ~= nil or seat:GetAttribute("RadarTowerBound") then return end
-	if not isTower(seat) then return end
+local function prepareAudio()
+	for _, soundName in ipairs({ "RadarYacht", "RadarLoop" }) do
+		local sound = firstDescendant(pilotTower, soundName, "Sound")
+		if sound then
+			sound.Looped = true
+			sound.Playing = false
+			warn("[RadarTower] prepared local " .. soundName .. ":", sound:GetFullName())
+		else
+			warn("[RadarTower] missing " .. soundName)
+		end
+	end
+end
 
-	seat:SetAttribute("RadarTowerBound", true)
-	boundSeats[seat] = false
-	seat:GetPropertyChangedSignal("Occupant"):Connect(function()
-		syncSeat(seat)
+local function createConsole(displayPart)
+	console = pilotTower:FindFirstChild("RadarTowerConsole")
+	if console and not console:IsA("BasePart") then
+		warn("[RadarTower] RadarTowerConsole exists but is not a BasePart")
+		return false
+	end
+	if not console then
+		console = Instance.new("Part")
+		console.Name = "RadarTowerConsole"
+		console.Size = Vector3.new(3, 3, 0.5)
+		console.CFrame = displayPart.CFrame
+		console.Anchored = true
+		console.CanCollide = false
+		console.CanTouch = false
+		console.CanQuery = false
+		console.Transparency = 1
+		console.Parent = pilotTower
+		warn("[RadarTower] created author-owned console at:", displayPart:GetFullName())
+	end
+
+	-- These runtime attributes are only for the HUD's audio-position lookup.
+	pilotTower:SetAttribute("RadarTower", true)
+	console:SetAttribute("RadarTowerScreen", true)
+
+	local prompt = console:FindFirstChild("RadarTowerPrompt")
+	if not prompt then
+		prompt = Instance.new("ProximityPrompt")
+		prompt.Name = "RadarTowerPrompt"
+		prompt.ActionText = "Use Radar"
+		prompt.ObjectText = "Radar Console"
+		prompt.KeyboardKeyCode = Enum.KeyCode.E
+		prompt.GamepadKeyCode = Enum.KeyCode.ButtonX
+		prompt.MaxActivationDistance = ACTIVATION_DISTANCE
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = console
+	end
+	prompt.Triggered:Connect(function(player)
+		showRadar(player, console, "console prompt")
 	end)
-	seat.AncestryChanged:Connect(function(_, parent)
-		if parent then return end
-		local player = boundSeats[seat]
-		if player then hidePlayer(player, seat) end
-		boundSeats[seat] = nil
+
+	local detector = console:FindFirstChild("RadarTowerClick")
+	if not detector then
+		detector = Instance.new("ClickDetector")
+		detector.Name = "RadarTowerClick"
+		detector.MaxActivationDistance = ACTIVATION_DISTANCE
+		detector.Parent = console
+	end
+	detector.MouseClick:Connect(function(player)
+		showRadar(player, console, "console click")
 	end)
-	task.defer(syncSeat, seat)
+
+	warn("[RadarTower] console ready:", console:GetFullName())
+	return true
 end
 
-local function consider(instance)
-	if instance:IsA("Seat") or instance:IsA("VehicleSeat") then
-		bindSeat(instance)
+local function bootstrap()
+	pilotTower = Workspace:FindFirstChild(PILOT_TOWER_NAME)
+	if not pilotTower or not pilotTower:IsA("Model") then
+		warn("[RadarTower] bootstrap failed: Workspace." .. PILOT_TOWER_NAME .. " is missing")
+		return
 	end
+
+	local cockpit = firstDescendant(pilotTower, "RadarCockpit", "Model")
+	local screenModel = cockpit and firstDescendant(cockpit, "RadarScreen", "Model")
+	local displayPart = screenModel and screenModel:FindFirstChild("Drag", true)
+	if not (displayPart and displayPart:IsA("BasePart")) then
+		warn("[RadarTower] bootstrap failed: RadarCockpit.RadarSystem.RadarScreen.Drag missing")
+		return
+	end
+
+	disableLegacyRadarScript(displayPart)
+	prepareAudio()
+	createConsole(displayPart)
 end
 
-for _, instance in ipairs(Workspace:GetDescendants()) do consider(instance) end
-Workspace.DescendantAdded:Connect(function(instance)
-	if instance:IsA("Seat") or instance:IsA("VehicleSeat") then
-		task.defer(consider, instance)
-	end
+warn("[RadarTower] server started; creating the pilot console")
+bootstrap()
+
+event.OnServerEvent:Connect(function(player, enabled)
+	if enabled == false then hideRadar(player) end
 end)
 
--- Exit hides the overlay while the player remains seated. Re-seat to reopen.
-event.OnServerEvent:Connect(function(player, enabled)
-	if enabled ~= false then return end
-	local seat = playerSeats[player]
-	if seat then
-		playerSeats[player] = nil
-		boundSeats[seat] = false
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		for player, active in pairs(activeSources) do
+			local character = player.Character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			local source = active.source
+			if not source or not source.Parent or not root
+				or (root.Position - source.Position).Magnitude > ACTIVATION_DISTANCE
+			then
+				hideRadar(player, source)
+			end
+		end
 	end
-	event:FireClient(player, false)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-	local seat = playerSeats[player]
-	if seat then boundSeats[seat] = nil end
-	playerSeats[player] = nil
+	activeSources[player] = nil
 end)

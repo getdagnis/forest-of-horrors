@@ -22,6 +22,9 @@
       },
       "GunAim": {
         "$path": "src/ReplicatedStorage/GunAim.luau"
+      },
+      "TurretCombatConfig": {
+        "$path": "src/ReplicatedStorage/TurretCombatConfig.luau"
       }
     },
 
@@ -88,6 +91,9 @@
       "RadarTowerSystem": {
         "$path": "src/ServerScriptService/RadarTowerSystem.server.luau"
       },
+      "TurretCombatSystem": {
+        "$path": "src/ServerScriptService/TurretCombatSystem.server.luau"
+      },
       "DarkForestMusicSystem": {
         "$path": "src/ServerScriptService/DarkForestMusicSystem.server.luau"
       },
@@ -99,6 +105,9 @@
       },
       "MonsterDeathSafetySystem": {
         "$path": "src/ServerScriptService/MonsterDeathSafetySystem.server.luau"
+      },
+      "LegacyWorkspaceQuarantine": {
+        "$path": "src/ServerScriptService/LegacyWorkspaceQuarantine.server.luau"
       },
       "WeaponInventoryGuard": {
         "$path": "src/ServerScriptService/WeaponInventoryGuard.server.luau"
@@ -130,10 +139,13 @@
       "WMTRescuePrompt": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/WMTRescuePrompt.client.luau"
       },
-      "RadarTowerHud": {
-        "$path": "src/StarterPlayer/StarterPlayerScripts/RadarTowerHud.client.luau"
-      },
-      "LaserEnergyHud": {
+        "RadarTowerHud": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/RadarTowerHud.client.luau"
+        },
+        "TurretCombatClient": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/TurretCombatClient.client.luau"
+        },
+        "LaserEnergyHud": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/LaserEnergyHud.client.luau"
       },
       "MonsterContourClient": {

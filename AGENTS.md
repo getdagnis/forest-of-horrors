@@ -85,6 +85,15 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 - The charge HUD uses `ResetOnSpawn = false`, so the Blaster client must explicitly hide/reset it on unequip, respawn, or whenever the Tool is no longer equipped.
 - Do not make bombs damage/explode each other. Only weapon damage can permanently kill bomb monsters.
 
+### Legacy marketplace-model revival
+
+- Treat every imported model as an unknown integration, not as a conventional Roblox asset. Its visible control can be entirely client-driven while `Seat.Occupant`, `Humanoid.SeatPart`, character position, model pivot, and even the advertised hierarchy are absent, stale, or unrelated on the server.
+- Start with one narrow live-Play evidence loop: log the client action, the RemoteEvent receipt, and the server's exact terminal result (`hit`, `blocked`, `miss`, or rejected reason). Do not add seat/range/attribute ownership gates until the active model proves that data actually replicates. Keep proven useful, rate-limited diagnostics in place until the user asks to remove them.
+- When strict ownership data is unavailable and the model is a low-stakes map prop, prefer a deliberately forgiving compatibility bridge: keep the server responsible for monster lookup, damage, score, death handling, and a fire-rate limit; accept the legacy controller's aim point and use a small aim-point fallback when a cosmetic barrel ray is unreliable. State that choice explicitly rather than inventing unsupported server state.
+- Never use Plugin-only APIs (for example `Instance:GetDebugId()`) inside a live server/client Script. Use normal Instance-keyed Luau tables for per-player/per-model state.
+- For a model whose active instance/script path is unclear, use Studio AI Assistant only as a narrow, read-only audit: ask one concise question about the exact named model, active Script/LocalScript/RemoteEvent paths, and runtime instance classes. It is token-limited; do not use it for broad scene reviews, code generation, or modifications. Save its findings as comments in `ServerStorage.StudioAuditReports` and verify them in a fresh Play session.
+- The verified reference is `Workspace.Machine Gun Tower.Turret` plus `ServerScriptService.TurretCombatSystem`: its legacy controller fires `ReplicatedStorage.TurretShot`, and the compatibility bridge successfully damages and scores normal `MonsterManager` monsters. Reuse the investigation sequence, not its names or hierarchy assumptions.
+
 ### Inventory, camera, crosshair, and contours
 
 - `WeaponInventoryGuard` leaves Roblox's default Tool pickup untouched. It destroys only the newly transferred second copy of a named unique weapon, leaving the first normal Tool in the player's Backpack/Character. Do not add prompts, return-to-world behavior, pivots, or AnchorScript changes.

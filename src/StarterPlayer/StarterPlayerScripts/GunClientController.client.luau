@@ -1,4 +1,4 @@
--- GunClientController
+-- StarterPlayerScripts > GunClientController
 -- Sole local input, HUD, target-lock, and cosmetic-shot controller for the
 -- MonsterGun family.  Combat is always validated by MonsterGunDamageSystem.
 
@@ -356,6 +356,13 @@ end
 
 fireGun = function(tool)
 	if not tool or tool.Parent ~= player.Character then return end
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	local seat = humanoid and humanoid.SeatPart
+	local ancestor = seat
+	while ancestor and ancestor ~= workspace do
+		if ancestor:IsA("Model") and ancestor:GetAttribute("Turret") == true then return end
+		ancestor = ancestor.Parent
+	end
 	local energy = player:GetAttribute("LaserEnergy")
 	if energy ~= nil and (tonumber(energy) or 0) < 1 then
 		playNoPowerSound()

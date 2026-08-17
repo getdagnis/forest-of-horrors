@@ -3,7 +3,12 @@
 -- Local presentation only. The server jukebox chooses and plays songs; this
 -- script reflects its JukeboxTrack attribute on the physical button.
 
-local emitter = workspace:FindFirstChild("McDonaldsMusicEmitter") or workspace:WaitForChild("McDonaldsJukebox")
+local emitter = workspace:FindFirstChild("McDonaldsMusicEmitter") or workspace:FindFirstChild("McDonaldsJukebox")
+if not emitter then
+	-- Some maps intentionally omit the old physical jukebox. Do not keep this
+	-- client thread waiting forever and adding an Infinite yield warning.
+	return
+end
 if not emitter:IsA("BasePart") then
 	warn("McDonalds jukebox emitter must be a BasePart for the display")
 	return

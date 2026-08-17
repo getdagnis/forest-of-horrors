@@ -26,6 +26,7 @@ end
 
 local ambienceTracks = {}
 local lastIndex
+local missingTracks = {}
 
 for index = 1, 9 do
 	local track = findTrack(index)
@@ -34,13 +35,17 @@ for index = 1, 9 do
 		track:Stop()
 		table.insert(ambienceTracks, track)
 	else
-		warn("DarkForestMusicSystem missing DarkForest" .. index .. " under SoundService or SoundManager")
+		table.insert(missingTracks, "DarkForest" .. index)
 	end
 end
 
 if #ambienceTracks == 0 then
-	warn("DarkForestMusicSystem: no DarkForest tracks found. Nothing will play.")
+	warn("DarkForestMusicSystem: no DarkForest tracks found; global forest music is disabled.")
 	return
+end
+
+if #missingTracks > 0 then
+	warn("DarkForestMusicSystem: skipping missing tracks: " .. table.concat(missingTracks, ", "))
 end
 
 while true do

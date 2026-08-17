@@ -147,6 +147,13 @@ local function getGraceTarget(player, tool, cameraOrigin, direction)
 	return isVisibleMonster(cached.model, cameraOrigin, player.Character, tool) and cached.model or nil
 end
 
+-- This must be declared before the contour RemoteEvent callback below.  Local
+-- function declarations are scoped from their declaration onward in Luau; if
+-- this lives later in the file, contour updates attempt to call a nil global.
+local function isEquippedBy(player, tool)
+	return tool.Parent == player.Character
+end
+
 contourTargetEvent.OnServerEvent:Connect(function(player, tool, originOffset, direction, target)
 	if not getGunConfig(tool) or not isEquippedBy(player, tool) then return end
 	if typeof(direction) ~= "Vector3" or direction.Magnitude < 0.01 then return end
@@ -200,10 +207,6 @@ local function disintegrateMonster(model, blastOrigin)
 			part.AssemblyLinearVelocity = direction.Unit * math.random(30, 55) + Vector3.new(0, math.random(15, 35), 0)
 		end
 	end
-end
-
-local function isEquippedBy(player, tool)
-	return tool.Parent == player.Character
 end
 
 local function resolveShot(player, tool, config, cameraOrigin, direction, graceTarget)
