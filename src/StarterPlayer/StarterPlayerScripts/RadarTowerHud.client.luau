@@ -19,6 +19,8 @@ local REFRESH_INTERVAL = 0.5
 local AMBIENT_RANGE = 30
 local AMBIENT_UPDATE_INTERVAL = 0.4
 local TOP_THREAT_TYPES = 4
+local RADAR_VALUE_FONT_SIZE = 16
+local RADAR_DETAIL_FONT_SIZE = 8
 
 local COLORS = {
 	background = Color3.fromRGB(8, 3, 18),
@@ -50,7 +52,7 @@ local function makeText(name, parent, text, size, color, font)
 	label.BackgroundTransparency = 1
 	label.Text = text
 	label.TextColor3 = color or COLORS.text
-	label.Font = font or Enum.Font.RobotoMono
+	label.Font = font or Enum.Font.Montserrat
 	label.TextSize = size
 	label.TextXAlignment = Enum.TextXAlignment.Left
 	label.TextYAlignment = Enum.TextYAlignment.Center
@@ -80,11 +82,11 @@ panelStroke.Transparency = 0.45
 panelStroke.Thickness = 1
 panelStroke.Parent = panel
 
-local title = makeText("Title", panel, "NIGHTWATCH MONSTER RADAR", 28, COLORS.text, Enum.Font.GothamBold)
+local title = makeText("Title", panel, "NIGHTWATCH MONSTER RADAR", 28, COLORS.text, Enum.Font.MontserratBold)
 title.Position = UDim2.fromOffset(28, 13)
 title.Size = UDim2.new(1, -210, 0, 37)
 
-local subtitle = makeText("Subtitle", panel, "DARK FOREST DEFENSE NETWORK  /  LIVE BIOLOGICAL UPLINK", 12, COLORS.muted)
+local subtitle = makeText("Subtitle", panel, "DARK FOREST DEFENSE NETWORK  /  LIVE BIOLOGICAL UPLINK", RADAR_DETAIL_FONT_SIZE, COLORS.muted)
 subtitle.Position = UDim2.fromOffset(30, 46)
 subtitle.Size = UDim2.new(1, -240, 0, 22)
 
@@ -98,8 +100,8 @@ close.BackgroundTransparency = 0.35
 close.BorderSizePixel = 0
 close.Text = "EXIT  [ESC]"
 close.TextColor3 = COLORS.text
-close.TextSize = 13
-close.Font = Enum.Font.RobotoMono
+close.TextSize = RADAR_DETAIL_FONT_SIZE
+close.Font = Enum.Font.MontserratBold
 close.Parent = panel
 Instance.new("UICorner", close).CornerRadius = UDim.new(0, 4)
 local closeStroke = Instance.new("UIStroke")
@@ -126,17 +128,19 @@ local function addStat(index, caption, accent)
 	stroke.Color = accent
 	stroke.Transparency = 0.67
 	stroke.Parent = card
-	local captionLabel = makeText("Caption", card, caption, 10, COLORS.muted)
+	local captionLabel = makeText("Caption", card, caption, RADAR_DETAIL_FONT_SIZE, COLORS.muted)
 	captionLabel.Position = UDim2.fromOffset(11, 4)
 	captionLabel.Size = UDim2.new(1, -22, 0, 17)
 	statCaptions[index] = captionLabel
-	local value = makeText("Value", card, "--", 22, accent, Enum.Font.RobotoMono)
+	local value = makeText("Value", card, "--", RADAR_VALUE_FONT_SIZE, accent, Enum.Font.MontserratBold)
 	value.Position = UDim2.fromOffset(11, 19)
 	value.Size = UDim2.new(1, -22, 0, 27)
 	statValues[caption] = value
 end
 
-addStat(1, "HOSTILES", COLORS.threat)
+-- This is a live client contact count (the dots on this map), deliberately
+-- distinct from ScoreGui's server-authoritative round ledger.
+addStat(1, "CONTACTS", COLORS.threat)
 addStat(2, "SURVIVORS", COLORS.friendly)
 addStat(3, "BEACONS", COLORS.cyan)
 addStat(4, "SCAN RATE", COLORS.phosphor)
@@ -210,7 +214,7 @@ local selfStroke = Instance.new("UIStroke")
 selfStroke.Color = COLORS.phosphor
 selfStroke.Thickness = 2
 selfStroke.Parent = selfMarker
-local selfLabel = makeText("PlayerName", plot, "YOU", 10, COLORS.friendly, Enum.Font.RobotoMono)
+local selfLabel = makeText("PlayerName", plot, "YOU", RADAR_DETAIL_FONT_SIZE, COLORS.friendly, Enum.Font.Montserrat)
 selfLabel.AnchorPoint = Vector2.new(0, 0.5)
 selfLabel.Size = UDim2.fromOffset(90, 16)
 selfLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -223,7 +227,7 @@ local threatStroke = Instance.new("UIStroke")
 threatStroke.Color = COLORS.threat
 threatStroke.Transparency = 0.58
 threatStroke.Parent = threatReadout
-local threatTitle = makeText("Title", threatReadout, "THREAT MIX // LIVE", 11, COLORS.threat, Enum.Font.RobotoMono)
+local threatTitle = makeText("Title", threatReadout, "THREAT MIX // LIVE", RADAR_DETAIL_FONT_SIZE, COLORS.threat, Enum.Font.MontserratBold)
 threatTitle.Position = UDim2.fromOffset(9, 3)
 threatTitle.Size = UDim2.new(1, -18, 0, 19)
 local threatRows = {}
@@ -242,7 +246,7 @@ rangeReadout.TextXAlignment = Enum.TextXAlignment.Center
 
 local cornerCoordinates = {}
 local function makeCornerCoordinate(name, anchorPoint, position, alignment)
-	local label = makeText(name, plot, "", 10, COLORS.muted, Enum.Font.RobotoMono)
+	local label = makeText(name, plot, "", RADAR_DETAIL_FONT_SIZE, COLORS.muted, Enum.Font.Montserrat)
 	label.AnchorPoint = anchorPoint
 	label.Position = position
 	label.Size = UDim2.fromOffset(190, 18)
@@ -258,7 +262,7 @@ makeCornerCoordinate("CoordTopRight", Vector2.new(1, 0), UDim2.new(1, -12, 0, 10
 makeCornerCoordinate("CoordBottomLeft", Vector2.new(0, 1), UDim2.new(0, 12, 1, -9), Enum.TextXAlignment.Left)
 makeCornerCoordinate("CoordBottomRight", Vector2.new(1, 1), UDim2.new(1, -12, 1, -9), Enum.TextXAlignment.Right)
 
-local footer = makeText("Footer", panel, "LIVE UPLINK  //  HOSTILE = PINK  /  SURVIVOR = GREY  /  BEACON = LAVENDER", 12, COLORS.muted)
+local footer = makeText("Footer", panel, "LIVE UPLINK  //  CONTACTS = LIVE DOTS  /  SCOREBAR = ROUND LEDGER", RADAR_DETAIL_FONT_SIZE, COLORS.muted)
 footer.Position = UDim2.new(0, 29, 1, -38)
 footer.Size = UDim2.new(1, -58, 0, 20)
 
@@ -277,13 +281,13 @@ local function applyResponsiveLayout()
 	subtitle.Visible = not mobile
 	close.Position = mobile and UDim2.new(1, -12, 0, 10) or UDim2.new(1, -24, 0, 18)
 	close.Size = mobile and UDim2.fromOffset(92, 34) or UDim2.fromOffset(110, 42)
-	close.TextSize = mobile and 11 or 13
+	close.TextSize = RADAR_DETAIL_FONT_SIZE
 
 	stats.Position = mobile and UDim2.fromOffset(18, 52) or UDim2.fromOffset(28, 79)
 	stats.Size = mobile and UDim2.new(1, -36, 0, 86) or UDim2.new(1, -56, 0, 51)
 	for index, card in ipairs(statCards) do
 		local caption = statCaptions[index]
-		local value = statValues[( { "HOSTILES", "SURVIVORS", "BEACONS", "SCAN RATE" } )[index]]
+		local value = statValues[( { "CONTACTS", "SURVIVORS", "BEACONS", "SCAN RATE" } )[index]]
 		if mobile then
 			local column = (index - 1) % 2
 			local row = math.floor((index - 1) / 2)
@@ -291,27 +295,27 @@ local function applyResponsiveLayout()
 			card.Size = UDim2.new(0.5, column == 0 and -2 or -3, 0.5, row == 0 and -2 or -3)
 			caption.Position = UDim2.fromOffset(9, 2)
 			caption.Size = UDim2.new(1, -18, 0, 16)
-			caption.TextSize = 9
+			caption.TextSize = RADAR_DETAIL_FONT_SIZE
 			value.Position = UDim2.fromOffset(9, 15)
 			value.Size = UDim2.new(1, -18, 1, -16)
-			value.TextSize = 16
+			value.TextSize = RADAR_VALUE_FONT_SIZE
 		else
 			card.Position = UDim2.new((index - 1) * 0.25, index == 1 and 0 or 4, 0, 0)
 			card.Size = UDim2.new(0.25, index == 1 and -3 or -4, 1, 0)
 			caption.Position = UDim2.fromOffset(11, 4)
 			caption.Size = UDim2.new(1, -22, 0, 17)
-			caption.TextSize = 11
+			caption.TextSize = RADAR_DETAIL_FONT_SIZE
 			value.Position = UDim2.fromOffset(11, 18)
 			value.Size = UDim2.new(1, -22, 0, 29)
-			value.TextSize = 20
+			value.TextSize = RADAR_VALUE_FONT_SIZE
 		end
 	end
 
 	plot.Position = mobile and UDim2.fromOffset(18, 148) or UDim2.fromOffset(28, 145)
 	plot.Size = mobile and UDim2.new(1, -36, 1, -181) or UDim2.new(1, -56, 1, -190)
 	threatReadout.Size = mobile and UDim2.fromOffset(196, 26 + TOP_THREAT_TYPES * 18) or UDim2.fromOffset(230, 26 + TOP_THREAT_TYPES * 19)
-	threatTitle.TextSize = mobile and 10 or 12
-	for _, row in ipairs(threatRows) do row.TextSize = mobile and 10 or 12 end
+	threatTitle.TextSize = RADAR_DETAIL_FONT_SIZE
+	for _, row in ipairs(threatRows) do row.TextSize = RADAR_DETAIL_FONT_SIZE end
 	rangeReadout.TextSize = mobile and 9 or 12
 	rangeReadout.Size = mobile and UDim2.fromOffset(175, 18) or UDim2.fromOffset(245, 22)
 	for _, label in pairs(cornerCoordinates) do
@@ -407,7 +411,7 @@ end
 local function getPlayerLabel(index)
 	local label = playerLabels[index]
 	if label then return label end
-	label = makeText("PlayerName", playerLayer, "", 10, COLORS.friendly, Enum.Font.RobotoMono)
+	label = makeText("PlayerName", playerLayer, "", RADAR_DETAIL_FONT_SIZE, COLORS.friendly, Enum.Font.Montserrat)
 	label.AnchorPoint = Vector2.new(0, 0.5)
 	label.Size = UDim2.fromOffset(150, 16)
 	label.TextXAlignment = Enum.TextXAlignment.Left
@@ -435,7 +439,7 @@ end
 local function getLandmarkLabel(index)
 	local label = landmarkLabels[index]
 	if label then return label end
-	label = makeText("LandmarkName", landmarkLayer, "", 9, COLORS.muted, Enum.Font.RobotoMono)
+	label = makeText("LandmarkName", landmarkLayer, "", RADAR_DETAIL_FONT_SIZE, COLORS.muted, Enum.Font.Montserrat)
 	label.AnchorPoint = Vector2.new(0, 0.5)
 	label.Size = UDim2.fromOffset(180, 16)
 	label.TextXAlignment = Enum.TextXAlignment.Left
@@ -661,12 +665,12 @@ local function refreshRadarContacts()
 		warn("[RadarTowerHud] radar_detect beacons:", landmarkCount)
 	end
 
-	statValues.HOSTILES.Text = string.format("%02d", monsterCount)
+	statValues.CONTACTS.Text = string.format("%02d", monsterCount)
 	statValues.SURVIVORS.Text = string.format("%02d", playerCount)
 	statValues.BEACONS.Text = string.format("%02d", landmarkCount)
 	statValues["SCAN RATE"].Text = string.format("%.2fs", PULSE_INTERVAL)
 	footer.Text = string.format(
-		"LIVE UPLINK  //  PULSE %.2fs  //  HOSTILE = PINK  /  SURVIVOR = GREY  /  BEACON = LAVENDER",
+		"LIVE UPLINK  //  PULSE %.2fs  //  CONTACTS = LIVE DOTS  /  SCOREBAR = ROUND LEDGER  /  SURVIVOR = GREY  /  BEACON = LAVENDER",
 		PULSE_INTERVAL
 	)
 	updateThreatRows(typeCounts)
