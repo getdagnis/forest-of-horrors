@@ -9,19 +9,18 @@ local MonsterManager = {}
 -- the one real pool). Keep both equal to hp unless a specific matchup needs a
 -- deliberate resistance, rather than creating misleading separate health bars.
 local MONSTER_CONFIG = {
-	["Drooling Zombie"] = { hp = 90, hpVsPlayers = 90, hpVsMonsters = 90, points = 1, damageToPlayers = 10, damageToMonsters = 4 },
+	["Drooling Zombie"] = { shortName = "a zombie", pluralShortName = "zombies", hp = 90, hpVsPlayers = 90, hpVsMonsters = 90, points = 1, damageToPlayers = 20, damageToMonsters = 4 },
 	-- WMT player damage remains zero: GuardianMonsterSystem owns its special
 	-- rescue/pet behaviour and uses this monster-only value when appropriate.
-	["weird monster thing"] = { hp = 160, hpVsPlayers = 160, hpVsMonsters = 160, points = 3, damageToPlayers = 0, damageToMonsters = 50, zombieGroupTarget = false },
+	["weird monster thing"] = { shortName = "a weird monster thing", pluralShortName = "weird monster things", hp = 320, hpVsPlayers = 320, hpVsMonsters = 420, points = 3, damageToPlayers = 20, damageToMonsters = 50, zombieGroupTarget = false },
 	-- Creepy damage against monsters is intentionally much lower than its player
 	-- damage, preserving occasional conflict without NPCs clearing the map.
-	["creepyMonster"] = { hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 5, damageToPlayers = 60, damageToMonsters = 10, zombieGroupTarget = true },
-	["creepyMonsterOrange"] = { hp = 420, hpVsPlayers = 420, hpVsMonsters = 420, points = 10, damageToPlayers = 120, damageToMonsters = 20, zombieGroupTarget = true },
-	["creepyMonsterWhite"] = { hp = 520, hpVsPlayers = 520, hpVsMonsters = 520, points = 15, damageToPlayers = 240, damageToMonsters = 30, zombieGroupTarget = true },
-	["BombMonster"] = { hp = 430, hpVsPlayers = 430, hpVsMonsters = 430, points = 5, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = false },
-	["Fouke Monster"] = { hp = 230, hpVsPlayers = 230, hpVsMonsters = 230, points = 3, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true },
-	["Smiler"] = { hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true },
-	["Brown Skinwalker"] = { hp = 400, hpVsPlayers = 400, hpVsMonsters = 400, points = 5, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true },
+	["creepyMonster"] = { shortName = "a creepy monster", pluralShortName = "creepy monsters", hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 5, damageToPlayers = 40, damageToMonsters = 10, zombieGroupTarget = true },
+	["creepyMonsterOrange"] = { shortName = "an orange creepy monster", pluralShortName = "orange creepy monsters", hp = 420, hpVsPlayers = 420, hpVsMonsters = 420, points = 10, damageToPlayers = 60, damageToMonsters = 10, zombieGroupTarget = false },
+	["creepyMonsterWhite"] = { shortName = "a white creepy monster", pluralShortName = "white creepy monsters", hp = 520, hpVsPlayers = 520, hpVsMonsters = 520, points = 15, damageToPlayers = 100, damageToMonsters = 10, zombieGroupTarget = false },
+	["BombMonster"] = { shortName = "a monsterbomb", pluralShortName = "monsterbombs", hp = 430, hpVsPlayers = 430, hpVsMonsters = 430, points = 5, damageToPlayers = 40, damageToMonsters = 40, zombieGroupTarget = false },
+	["FortressBoss"] = { shortName = "a forest boss", pluralShortName = "forest bosses", hp = 900, hpVsPlayers = 900, hpVsMonsters = 900, points = 20, damageToPlayers = 80, damageToMonsters = 10, zombieGroupTarget = true },
+	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 20, damageToMonsters = 30, zombieGroupTarget = false },
 }
 
 -- FortressBosses have ambiguous/empty names but contain a "Zombie" Humanoid child.
@@ -37,7 +36,7 @@ function MonsterManager.getConfig(model)
 	end
 
 	if isFortressBoss(model) then
-		return { hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 0, damageToMonsters = 0, zombieGroupTarget = true }
+		return MONSTER_CONFIG.FortressBoss
 	end
 
 	return nil
@@ -91,6 +90,16 @@ function MonsterManager.getPoints(model)
 	return config and config.points or 0
 end
 
+function MonsterManager.getShortName(model)
+	local config = MonsterManager.getConfig(model)
+	return config and config.shortName or (model and model.Name) or "monster"
+end
+
+function MonsterManager.getPluralShortName(model)
+	local config = MonsterManager.getConfig(model)
+	return config and (config.pluralShortName or (config.shortName .. "s")) or "monsters"
+end
+
 function MonsterManager.getDamageToPlayers(model)
 	local config = MonsterManager.getConfig(model)
 	return config and (config.damageToPlayers or 0) or 0
@@ -117,12 +126,18 @@ end
 
 -- Applies monster-caused damage using the target's configured resistance.
 -- No player-credit is recorded here: NPC infighting must never award score.
-function MonsterManager.damageMonsterTarget(targetModel, requestedDamage)
+function MonsterManager.damageMonsterTarget(targetModel, requestedDamage, sourceModel)
 	local humanoid = MonsterManager.getMonsterHumanoid(targetModel)
 	if not humanoid or humanoid.Health <= 0 then return 0 end
 
 	local actualDamage = math.min(scaledDamageForTarget(targetModel, requestedDamage, "hpVsMonsters"), humanoid.Health)
-	if actualDamage > 0 then humanoid:TakeDamage(actualDamage) end
+	if actualDamage > 0 then
+		if sourceModel and sourceModel:IsA("Model") then
+			humanoid:SetAttribute("LastMonsterAttacker", MonsterManager.getShortName(sourceModel))
+			humanoid:SetAttribute("LastMonsterAttackCause", sourceModel.Name == "BombMonster" and "bomb" or "monster")
+		end
+		humanoid:TakeDamage(actualDamage)
+	end
 	return actualDamage
 end
 
@@ -198,6 +213,7 @@ function MonsterManager.recordPlayerDamage(humanoid, player, requestedDamage, sc
 	log.players[userId] = (log.players[userId] or 0) + actualDamage
 
 	humanoid:SetAttribute("LastAttackerId", userId)
+	humanoid:SetAttribute("LastMonsterAttacker", nil)
 
 	if typeof(scoreColor) == "Color3" then
 		humanoid:SetAttribute("LastScoreColor", scoreColor)

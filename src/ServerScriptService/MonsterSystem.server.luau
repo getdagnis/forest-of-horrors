@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local ws = game:GetService("Workspace")
 local rs = game:GetService("ReplicatedStorage")
 local MonsterManager = require(rs:WaitForChild("MonsterManager"))
+local RadarEventBus = require(rs:WaitForChild("RadarEventBus"))
 
 local scores = {} -- Player -> current score
 local kills = {} -- Player -> monsters for which the player earned score
@@ -27,7 +28,7 @@ local multikillStates = {}
 
 local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
 local RESPAWN_LIVES = 4 -- original life plus two server-owned resurrections
-local ROUND_DURATION_SECONDS = 30 * 60
+local ROUND_DURATION_SECONDS = 30 * 60 + 33
 local DEFAULT_MONSTER_MAX_COUNT = 90
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
 local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
@@ -232,17 +233,32 @@ local function getMonsterRoot(model)
 		return root
 	end
 
-	-- BombMonster is an intentional non-rigged model. Its central PrimaryPart
-	-- (or first body part in legacy copies) is a valid lifecycle/count anchor;
-	-- other monsters still require HumanoidRootPart so broken NPC rigs retire.
-	if model.Name == "BombMonster" then
-		local fallback = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
-		if fallback and fallback:IsA("BasePart") then
-			return fallback
-		end
+	-- Legacy fortress bosses and other marketplace rigs may use Torso/Head or
+	-- only a PrimaryPart. Keep lifecycle tracking alive without trusting debris.
+	local fallback = model.PrimaryPart
+		or model:FindFirstChild("Torso", true)
+		or model:FindFirstChild("UpperTorso", true)
+		or model:FindFirstChild("Head", true)
+		or model:FindFirstChildWhichIsA("BasePart", true)
+	if fallback and fallback:IsA("BasePart") then
+		return fallback
 	end
 
 	return nil
+end
+
+local function isOutsideMainGround(root)
+	if not root or not root:IsA("BasePart") then return false end
+	local ground = ws:FindFirstChild("MainGround")
+	if not (ground and ground:IsA("BasePart")) then return false end
+	local margin = 12
+	local position = root.Position
+	local halfSize = ground.Size * 0.5
+	return position.Y < ground.Position.Y - 20
+		or position.X < ground.Position.X - halfSize.X - margin
+		or position.X > ground.Position.X + halfSize.X + margin
+		or position.Z < ground.Position.Z - halfSize.Z - margin
+		or position.Z > ground.Position.Z + halfSize.Z + margin
 end
 
 -- Count only living NPCs explicitly registered by this system. Marketplace
@@ -419,11 +435,17 @@ end
 -- life, including for bomb monsters.
 local function onMonsterKilled(hum, model)
 	local config = MonsterManager.getConfig(model)
+	local shortName = MonsterManager.getShortName(model)
+	local pluralShortName = MonsterManager.getPluralShortName(model)
+	local eventReported = false
+	local fellOffMap = isOutsideMainGround(getMonsterRoot(model))
 
 	if config then
 		local awards = MonsterManager.consumeScoreAwards(hum, config.points)
 		local popupColor = MonsterManager.getLastScoreColor(hum, DEFAULT_SCORE_POPUP_COLOR)
 		local awardedAny = false
+		local monsterAttacker = hum:GetAttribute("LastMonsterAttacker")
+		local monsterAttackCause = hum:GetAttribute("LastMonsterAttackCause")
 
 		for _, award in ipairs(awards) do
 			local attacker = Players:GetPlayerByUserId(award.userId)
@@ -431,12 +453,25 @@ local function onMonsterKilled(hum, model)
 			if attacker then
 				awardScore(attacker, award.points)
 				awardedAny = true
+				RadarEventBus.publish({ kind = "kill", actor = attacker.DisplayName, actorKind = "player", target = shortName, targetPlural = pluralShortName })
+				eventReported = true
 			end
 		end
 
 		if awardedAny then
 			showScorePopup(model, awards, popupColor)
 			broadcastRecords()
+		end
+		if not eventReported then
+			if monsterAttackCause == "bomb" then
+				RadarEventBus.publish({ kind = "death", target = shortName, targetPlural = pluralShortName, cause = "bomb" })
+			elseif monsterAttacker and monsterAttacker ~= "" then
+				RadarEventBus.publish({ kind = "kill", actor = tostring(monsterAttacker), actorKind = "monster", target = shortName, targetPlural = pluralShortName })
+			elseif fellOffMap then
+				RadarEventBus.publish({ kind = "death", target = shortName, targetPlural = pluralShortName, cause = "fell" })
+			else
+				RadarEventBus.publish({ kind = "death", target = shortName, targetPlural = pluralShortName, cause = "unattributed" })
+			end
 		end
 	end
 
@@ -488,6 +523,7 @@ local function onMonsterKilled(hum, model)
 				clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesAfterDeath)
 				clone:PivotTo(data.cframe)
 				clone.Parent = ws
+				RadarEventBus.publish({ kind = "respawn", target = shortName, targetPlural = pluralShortName })
 			end
 
 			pendingRespawns -= 1
@@ -504,6 +540,7 @@ local function retireMonster(model, reason)
 	model:SetAttribute("MonsterRetireRequested", nil)
 	model:SetAttribute("MonsterRetirementReason", reason or "InvalidMonster")
 	humanoid:SetAttribute("PermanentMonsterKill", true)
+	RadarEventBus.publish({ kind = "retire", target = MonsterManager.getShortName(model), targetPlural = MonsterManager.getPluralShortName(model) })
 	humanoid.Health = 0
 end
 

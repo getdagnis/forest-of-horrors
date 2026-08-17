@@ -117,7 +117,7 @@ local function damageMonster(state, targetModel, amount, cooldown)
 	if now - (state.lastMonsterHit[targetHumanoid] or 0) < cooldown then return end
 
 	state.lastMonsterHit[targetHumanoid] = now
-	MonsterManager.damageMonsterTarget(targetModel, amount)
+	MonsterManager.damageMonsterTarget(targetModel, amount, state.model)
 end
 
 local function nearbyMonsters(position, radius, guardian)

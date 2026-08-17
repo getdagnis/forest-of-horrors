@@ -170,9 +170,11 @@ function navigation:ReportStuck(model)
 	model:SetAttribute("ZombieStuckAt", Workspace:GetServerTimeNow())
 
 	if failures >= 2 then
-		model:SetAttribute("MonsterRetireRequested", true)
-		model:SetAttribute("MonsterRetirementReason", "ZombieUnreachable")
-		return true
+		-- A blocked route is recoverable gameplay state, not a dead or stale
+		-- monster. Let the AI choose a fresh destination instead of retiring a
+		-- healthy zombie and polluting the event feed.
+		model:SetAttribute("ZombieStuckFailures", 0)
+		return false
 	end
 
 	return false

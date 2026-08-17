@@ -1,8 +1,9 @@
 -- MonsterBombSystem
 --
 -- Deliberately small state sequence:
--- idle wait -> 10 warning beeps/lights -> one damage call + bomb fade ->
--- one four-second expanding Neon sphere.  Bombs never damage other bombs.
+-- idle wait -> one warning countdown announcement/light -> one damage call
+-- + bomb fade -> one four-second expanding Neon sphere. Bombs never damage
+-- other bombs.
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -59,8 +60,18 @@ local function playWarning(model)
 end
 
 local function playExplosionSound(model, position)
-	local source = model:FindFirstChild(Config.EXPLOSION_SOUND_NAME, true)
-	if not source or not source:IsA("Sound") then return end
+	local source = SoundService:FindFirstChild(Config.EXPLOSION_SOUND_TEMPLATE)
+	if not (source and source:IsA("Sound")) then
+		source = model:FindFirstChild(Config.EXPLOSION_SOUND_NAME, true)
+	end
+	if not (source and source:IsA("Sound")) then
+		source = Instance.new("Sound")
+		source.SoundId = Config.EXPLOSION_SOUND_ID
+		warn("[MonsterBomb] no explosion sound template found; using fallback asset")
+	end
+	if source.SoundId == "" then
+		source.SoundId = Config.EXPLOSION_SOUND_ID
+	end
 
 	-- The bomb model may be removed while the sound is playing, so play a clone
 	-- from a short-lived invisible world emitter instead.
@@ -165,6 +176,7 @@ local function damagePlayers(position)
 end
 
 local function damageMonsters(sourceModel, position)
+	local killed = 0
 	for _, model in workspace:GetDescendants() do
 		if model:IsA("Model")
 			and model ~= sourceModel
@@ -174,10 +186,14 @@ local function damageMonsters(sourceModel, position)
 			local humanoid = MonsterManager.getMonsterHumanoid(model)
 			local root = getRoot(model)
 			if humanoid and root and humanoid.Health > 0 and (root.Position - position).Magnitude <= Config.BLAST_RADIUS then
-				MonsterManager.damageMonsterTarget(model, Config.MONSTER_DAMAGE)
+				MonsterManager.damageMonsterTarget(model, Config.MONSTER_DAMAGE, sourceModel)
+				if humanoid.Health <= 0 then
+					killed += 1
+				end
 			end
 		end
 	end
+	return killed
 end
 
 local function setupBomb(model)
@@ -205,6 +221,8 @@ local function setupBomb(model)
 		playExplosionSound(model, position)
 		damagePlayers(position)
 		damageMonsters(model, position)
+		-- Each killed monster publishes its own passive bomb-cause event from
+		-- MonsterSystem. Avoid a second aggregate row that obscures the victims.
 		fadeAndRemoveBomb(model)
 
 		-- Mark this as a normal bomb death. MonsterSystem may respawn it; only
@@ -220,11 +238,10 @@ local function setupBomb(model)
 		task.wait(math.random(Config.MIN_WAIT, Config.MAX_WAIT))
 		if exploded or not model.Parent or humanoid.Health <= 0 then return end
 
-		for _ = 1, Config.WARNING_TIME do
-			if exploded or not model.Parent or humanoid.Health <= 0 then return end
-			playWarning(model)
-			task.wait(Config.WARNING_BEEP_INTERVAL)
-		end
+		-- The imported warning asset is a complete spoken five-to-one countdown,
+		-- not a one-second beep. Start it once and let the announcement finish.
+		playWarning(model)
+		task.wait(Config.WARNING_TIME)
 
 		explode()
 	end)

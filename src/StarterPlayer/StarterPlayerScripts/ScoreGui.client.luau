@@ -1,4 +1,4 @@
--- ScoreGui >> StarterPlayerScripts
+-- ScoreGui > StarterPlayerScripts
 -- One compact combat HUD. Server events remain authoritative; this client only
 -- presents their latest state and safely supports older RecordsUpdate payloads.
 
@@ -7,6 +7,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
+
+-- Events are grouped inside a short burst window, then remain readable long
+-- enough for a player to expand the panel and inspect them.
+local EVENT_GROUP_WINDOW_SECONDS = 4
+local EVENT_DISPLAY_WINDOW_SECONDS = 24
+local MAX_RECENT_EVENTS = 12
 
 -- HUD layout tuning. These positions are pixel offsets from the viewport, not
 -- Roblox's top-bar safe area, so the desktop bar can use the clear top-right.
@@ -22,12 +28,13 @@ local large_font_size = 16
 local details_font_size = 8
 -- Ordinary regeneration arrives as +1 ticks. Only deliberate bonus healing
 -- should interrupt combat with a flash/message.
-local MIN_REPORTED_HEAL = 10
+local MIN_REPORTED_HEAL = 5
 
 local player = Players.LocalPlayer
 local scoreEvent = ReplicatedStorage:WaitForChild("ScoreUpdate")
 local monsterCountEvent = ReplicatedStorage:WaitForChild("MonsterCountUpdate")
 local recordsEvent = ReplicatedStorage:WaitForChild("RecordsUpdate")
+local radarEvents = ReplicatedStorage:WaitForChild("RadarEvents")
 
 local currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
 local monsterHistory, recordRows, allTimeBest = {}, {}, nil
@@ -102,7 +109,7 @@ makeCard("Health", "HEALTH")
 makeCard("Rank", "", Color3.fromRGB(101, 13, 44))
 makeCard("Monsters", "MONSTERS (+0)")
 makeCard("Spawn", "BEST SPAWN")
-labels.Rank.TextColor3 = Color3.fromRGB(255, 240, 170)
+labels.Rank.TextColor3 = Color3.fromRGB(255, 215, 241)
 labels.Monsters.TextColor3 = Color3.fromRGB(255, 213, 218)
 
 -- Local-only hit feedback. The overlay does not own health or alter damage.
@@ -122,11 +129,11 @@ healFlash.BackgroundTransparency = 1
 healFlash.BorderSizePixel = 0
 healFlash.ZIndex = 21
 healFlash.Parent = gui
-local healText = newText("HealText", gui, Color3.fromRGB(105, 255, 147), Enum.Font.GothamBlack)
+local healText = newText("HealText", gui, Color3.fromRGB(105, 255, 147), Enum.Font.GothamBold)
 healText.AnchorPoint = Vector2.new(0.5, 0.5)
 healText.Position = UDim2.fromScale(0.5, 0.6)
 healText.Size = UDim2.fromOffset(260, 46)
-healText.TextSize = 28
+healText.TextSize = large_font_size
 healText.Visible = false
 healText.ZIndex = 22
 
@@ -135,12 +142,18 @@ scorePanel.AnchorPoint = Vector2.new(0, 0)
 scorePanel.Position = UDim2.new(0, 12, 0, 106)
 scorePanel.Size = UDim2.fromOffset(250, 210)
 local scoreboardText = newText("Rows", scorePanel, Color3.fromRGB(232, 238, 246), Enum.Font.Gotham)
-scoreboardText.Position = UDim2.fromOffset(10, 8)
-scoreboardText.Size = UDim2.new(1, -20, 1, -16)
-scoreboardText.TextSize = 14
+scoreboardText.Position = UDim2.fromOffset(10, 29)
+scoreboardText.Size = UDim2.new(1, -20, 1, -37)
+scoreboardText.TextSize = details_font_size
 scoreboardText.TextXAlignment = Enum.TextXAlignment.Left
 scoreboardText.TextYAlignment = Enum.TextYAlignment.Top
 scoreboardText.RichText = true
+local scoreboardTitle = newText("Title", scorePanel, Color3.fromRGB(232, 238, 246), Enum.Font.GothamBold)
+scoreboardTitle.Position = UDim2.fromOffset(10, 8)
+scoreboardText.Size = UDim2.new(1, -20, 1, -37)
+scoreboardTitle.Text = "SCOREBOARD"
+scoreboardTitle.TextSize = details_font_size
+scoreboardTitle.TextXAlignment = Enum.TextXAlignment.Left
 
 local scoreButton = Instance.new("TextButton")
 scoreButton.Name = "ScoreButton"
@@ -148,9 +161,9 @@ scoreButton.BackgroundColor3 = Color3.fromRGB(8, 13, 20)
 scoreButton.BackgroundTransparency = 0.12
 scoreButton.BorderSizePixel = 0
 scoreButton.Font = Enum.Font.GothamBold
-scoreButton.Text = "[SCORE]"
+scoreButton.Text = "SCORE"
 scoreButton.TextColor3 = Color3.fromRGB(232, 238, 246)
-scoreButton.TextSize = 13
+scoreButton.TextSize = details_font_size
 scoreButton.Visible = false
 scoreButton.Parent = gui
 local scoreButtonCorner = Instance.new("UICorner")
@@ -161,6 +174,90 @@ scoreButtonStroke.Color = Color3.fromRGB(64, 84, 104)
 scoreButtonStroke.Transparency = 0.4
 scoreButtonStroke.Parent = scoreButton
 
+local eventsText = newText("Events", gui, Color3.fromRGB(232, 238, 246), Enum.Font.Gotham)
+eventsText.Position = UDim2.fromOffset(12, 272)
+eventsText.Size = UDim2.fromOffset(250, 220)
+eventsText.TextSize = details_font_size
+eventsText.TextXAlignment = Enum.TextXAlignment.Left
+eventsText.TextYAlignment = Enum.TextYAlignment.Top
+eventsText.TextWrapped = true
+eventsText.RichText = true
+eventsText.Visible = false
+
+local recentEvents = {}
+local function renderEvents(now)
+	while #recentEvents > 0 and recentEvents[1].time < now - EVENT_DISPLAY_WINDOW_SECONDS do
+		table.remove(recentEvents, 1)
+	end
+	if #recentEvents == 0 then
+		eventsText.Text = ""
+		return
+	end
+	local lines = {}
+	for index = #recentEvents, 1, -1 do
+		local entry = recentEvents[index]
+		local line = "" .. entry.text
+		if entry.actorKind == "player" then line = "<b>" .. line .. "</b>" end
+		table.insert(lines, line)
+	end
+	eventsText.Text = table.concat(lines, "\n")
+end
+
+radarEvents.OnClientEvent:Connect(function(message)
+	if type(message) == "string" then message = { kind = "message", text = message } end
+	if type(message) ~= "table" then return end
+	local now = workspace:GetServerTimeNow()
+	local kind = message.kind or "message"
+	local actor = message.actor
+	local actorKind = message.actorKind
+	local target = message.target
+	local targetPlural = message.targetPlural or (target and target .. "s") or "monsters"
+	local existing
+	for index = #recentEvents, 1, -1 do
+		local candidate = recentEvents[index]
+		if now - candidate.time > EVENT_GROUP_WINDOW_SECONDS then break end
+		if candidate.kind == kind and candidate.actor == actor and candidate.target == target
+			and candidate.cause == message.cause then
+			existing = candidate
+			break
+		end
+	end
+	if kind == "kill" and existing then
+		existing.count += 1
+		existing.time = now
+		existing.actorKind = actorKind or existing.actorKind
+		existing.text = string.format("%s kills %d %s", actor, existing.count, existing.targetPlural)
+	elseif (kind == "death" or kind == "respawn" or kind == "retire") and existing then
+		existing.count += 1
+		existing.time = now
+		local verb = kind == "respawn" and "respawn" or (kind == "retire" and "retire" or (existing.cause == "fell" and "stupidly fell off the map" or "die (somehow)"))
+		if existing.cause == "bomb" then verb = "died in a monsterbomb explosion" end
+		existing.text = string.format("%d %s %s", existing.count, existing.targetPlural, verb)
+	else
+		local text
+		if kind == "kill" then
+			text = string.format("%s kills %s", actor, target)
+		elseif kind == "death" then
+			if message.cause == "bomb" then
+				text = string.format("%s died in a monsterbomb explosion", target)
+			elseif message.cause == "fell" then
+				text = string.format("%s stupidly fell off the map", target)
+			else
+				text = string.format("%s died somehow", target)
+			end
+		elseif kind == "respawn" then
+			text = string.format("%s respawns", target)
+		elseif kind == "retire" then
+			text = string.format("%s retires", target)
+		else
+			text = tostring(message.text or "event")
+		end
+		table.insert(recentEvents, { kind = kind, actor = actor, actorKind = actorKind, target = target, targetPlural = targetPlural, cause = message.cause, count = 1, text = text, time = now })
+	end
+	while #recentEvents > MAX_RECENT_EVENTS do table.remove(recentEvents, 1) end
+	renderEvents(now)
+end)
+
 local compactScoreboard = false
 local scoreboardExpanded = false
 local compactHudLayout = false
@@ -168,7 +265,7 @@ scoreButton.Activated:Connect(function()
 	if not compactScoreboard then return end
 	scoreboardExpanded = not scoreboardExpanded
 	scorePanel.Visible = scoreboardExpanded
-	scoreButton.Text = scoreboardExpanded and "[HIDE]" or "[SCORE]"
+	scoreButton.Text = scoreboardExpanded and "HIDE" or "SCORE"
 end)
 
 local function cardWidth(key, scale)
@@ -224,12 +321,23 @@ local function layout()
 	local panelOffset = mobile and scorepanel_position.mobile or scorepanel_position.desktop
 	scoreButton.Position = UDim2.fromOffset(panelOffset.X, panelOffset.Y)
 	scoreButton.Size = UDim2.fromOffset(76, 32)
+	scoreButton.TextSize = details_font_size * scale
 	scoreButton.Visible = compactScoreboard
-	scoreButton.Text = scoreboardExpanded and "[HIDE]" or "[SCORE]"
+	scoreButton.Text = scoreboardExpanded and "HIDE" or "SCORE"
 	scorePanel.Visible = not compactScoreboard or scoreboardExpanded
 	scorePanel.Position = UDim2.fromOffset(panelOffset.X, panelOffset.Y + (compactScoreboard and 38 or 0))
-	scorePanel.Size = UDim2.fromOffset(mobile and 190 or 250, mobile and 110 or 150)
-	scoreboardText.TextSize = mobile and 10 or 14
+	scorePanel.Size = UDim2.fromOffset(mobile and 210 or 280, mobile and 110 or 150)
+	scoreboardTitle.TextSize = details_font_size * scale
+	scoreboardTitle.Size = UDim2.new(1, -20, 0, details_font_size * scale)
+	scoreboardText.TextSize = details_font_size * scale
+	healText.TextSize = large_font_size * scale
+	local eventX = panelOffset.X
+	local eventY = panelOffset.Y + scorePanel.Size.Y.Offset + 24
+	eventsText.Position = UDim2.fromOffset(eventX, eventY)
+	eventsText.Size = UDim2.fromOffset(mobile and 190 or 250, mobile and 150 or 220)
+	eventsText.LineHeight = 1.2
+	eventsText.Visible = not compactScoreboard
+	eventsText.TextSize = details_font_size * scale
 end
 
 local function ordinal(value)
@@ -339,7 +447,8 @@ local function renderScoreboard()
 		end
 		table.sort(rows, function(a, b) return a.score == b.score and a.name < b.name or a.score > b.score end)
 	end
-	local lines = { "<b>SCOREBOARD</b>" }
+	scoreboardTitle.Text = "SCOREBOARD"
+	local lines = {}
 	for index, row in ipairs(rows) do
 		if index > 8 then break end
 		local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. row.name .. "</font>" or row.name
@@ -394,4 +503,5 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	captions.Spawn.Text = "KILLS (SCORE)"
 	layout()
 	renderScoreboard()
+	renderEvents(now)
 end)

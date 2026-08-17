@@ -186,7 +186,7 @@ local function setupCreepy(model)
 				if targetRoot and targetHumanoid then
 					humanoid:MoveTo(targetRoot.Position)
 					if (targetRoot.Position - root.Position).Magnitude <= ATTACK_RANGE and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN then
-						MonsterManager.damageMonsterTarget(targetModel, monsterDamage)
+						MonsterManager.damageMonsterTarget(targetModel, monsterDamage, model)
 						state.lastMonsterHit = now
 					end
 				end

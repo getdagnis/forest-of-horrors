@@ -1,10 +1,11 @@
--- RadarTowerHud: a near-full-screen map while using a marked radar tower.
--- Mark any important Part or Model with radar_detect=true to add a faint,
--- static landmark marker. Workspace.RadarMapMin/RadarMapMax define map bounds.
+-- RadarTowerHud: client-only tactical display for the author-owned pilot console.
+-- It reads the same MonsterManager definitions used by gameplay; no duplicate
+-- monster lists or server bookkeeping are needed for its live contacts.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 
@@ -12,12 +13,50 @@ local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local useEvent = ReplicatedStorage:WaitForChild("RadarTowerUse")
 
+-- Tune this to the loop's real beep interval if its audio is trimmed later.
+local PULSE_INTERVAL = 2.0
+local REFRESH_INTERVAL = 0.5
+local AMBIENT_RANGE = 30
+local AMBIENT_UPDATE_INTERVAL = 0.4
+local TOP_THREAT_TYPES = 4
+
+local COLORS = {
+	background = Color3.fromRGB(8, 3, 18),
+	panel = Color3.fromRGB(25, 12, 46),
+	map = Color3.fromRGB(13, 7, 28),
+	phosphor = Color3.fromRGB(198, 117, 255),
+	cyan = Color3.fromRGB(157, 129, 255),
+	threat = Color3.fromRGB(255, 52, 117),
+	friendly = Color3.fromRGB(186, 180, 203),
+	text = Color3.fromRGB(244, 235, 255),
+	muted = Color3.fromRGB(181, 153, 213),
+}
+
 warn("[RadarTowerHud] client started; waiting for RadarTowerUse")
 
--- Client-only audio preserves the imported ambience without broadcasting it
--- globally from a Sound parented under the old tower Model.
-local AMBIENT_RANGE = 110
-local AMBIENT_UPDATE_INTERVAL = 0.4
+local function makeFrame(name, parent, color, transparency)
+	local frame = Instance.new("Frame")
+	frame.Name = name
+	frame.BackgroundColor3 = color
+	frame.BackgroundTransparency = transparency or 0
+	frame.BorderSizePixel = 0
+	frame.Parent = parent
+	return frame
+end
+
+local function makeText(name, parent, text, size, color, font)
+	local label = Instance.new("TextLabel")
+	label.Name = name
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = color or COLORS.text
+	label.Font = font or Enum.Font.RobotoMono
+	label.TextSize = size
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextYAlignment = Enum.TextYAlignment.Center
+	label.Parent = parent
+	return label
+end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "RadarTowerHud"
@@ -27,99 +66,135 @@ gui.DisplayOrder = 40
 gui.Enabled = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
-local shade = Instance.new("Frame")	
-shade.Name = "Shade"
-shade.BackgroundColor3 = Color3.fromRGB(1, 7, 16)
-shade.BackgroundTransparency = 0.25
+local shade = makeFrame("Shade", gui, COLORS.background, 0.14)
 shade.Size = UDim2.fromScale(1, 1)
-shade.BorderSizePixel = 0
-shade.Parent = gui
 
-local panel = Instance.new("Frame")
-panel.Name = "MonsterRadar"
+local panel = makeFrame("NightwatchTacticalRadar", shade, COLORS.panel, 0.08)
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.Position = UDim2.fromScale(0.5, 0.52)
 panel.Size = UDim2.fromScale(0.92, 0.88)
-panel.BackgroundColor3 = Color3.fromRGB(3, 20, 45)
-panel.BackgroundTransparency = 0.10
-panel.BorderSizePixel = 0
-panel.Parent = shade
-Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 12)
+Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
 local panelStroke = Instance.new("UIStroke")
-panelStroke.Color = Color3.fromRGB(14, 63, 104)
-panelStroke.Transparency = 0.15
+panelStroke.Color = COLORS.phosphor
+panelStroke.Transparency = 0.45
 panelStroke.Thickness = 1
 panelStroke.Parent = panel
 
-local title = Instance.new("TextLabel")
-title.BackgroundTransparency = 1
-title.Position = UDim2.fromOffset(34, 16)
-title.Size = UDim2.new(1, -220, 0, 72)
-title.Font = Enum.Font.GothamBold
-title.Text = "Monster Radar"
-title.TextColor3 = Color3.fromRGB(246, 249, 255)
-title.TextSize = 52
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.TextYAlignment = Enum.TextYAlignment.Center
-title.Parent = panel
+local title = makeText("Title", panel, "NIGHTWATCH MONSTER RADAR", 28, COLORS.text, Enum.Font.GothamBold)
+title.Position = UDim2.fromOffset(28, 13)
+title.Size = UDim2.new(1, -210, 0, 37)
+
+local subtitle = makeText("Subtitle", panel, "DARK FOREST DEFENSE NETWORK  /  LIVE BIOLOGICAL UPLINK", 12, COLORS.muted)
+subtitle.Position = UDim2.fromOffset(30, 46)
+subtitle.Size = UDim2.new(1, -240, 0, 22)
 
 local close = Instance.new("TextButton")
 close.Name = "Exit"
 close.AnchorPoint = Vector2.new(1, 0)
-close.Position = UDim2.new(1, -34, 0, 16)
-close.Size = UDim2.fromOffset(145, 72)
-close.BackgroundTransparency = 1
-close.Text = "Exit"
-close.TextColor3 = Color3.fromRGB(255, 255, 255)
-close.TextSize = 52
-close.Font = Enum.Font.GothamBold
+close.Position = UDim2.new(1, -24, 0, 18)
+close.Size = UDim2.fromOffset(110, 42)
+close.BackgroundColor3 = COLORS.background
+close.BackgroundTransparency = 0.35
+close.BorderSizePixel = 0
+close.Text = "EXIT  [ESC]"
+close.TextColor3 = COLORS.text
+close.TextSize = 13
+close.Font = Enum.Font.RobotoMono
 close.Parent = panel
+Instance.new("UICorner", close).CornerRadius = UDim.new(0, 4)
+local closeStroke = Instance.new("UIStroke")
+closeStroke.Color = COLORS.muted
+closeStroke.Transparency = 0.45
+closeStroke.Parent = close
 
-local plot = Instance.new("Frame")
-plot.Name = "Map"
-plot.Position = UDim2.fromOffset(34, 104)
-plot.Size = UDim2.new(1, -68, 1, -138)
-plot.BackgroundColor3 = Color3.fromRGB(3, 15, 38)
-plot.BackgroundTransparency = 0.12
-plot.BorderSizePixel = 0
+local stats = Instance.new("Frame")
+stats.Name = "StatusStrip"
+stats.BackgroundTransparency = 1
+stats.Position = UDim2.fromOffset(28, 79)
+stats.Size = UDim2.new(1, -56, 0, 51)
+stats.Parent = panel
+
+local statValues = {}
+local statCards = {}
+local statCaptions = {}
+local function addStat(index, caption, accent)
+	local card = makeFrame("Stat", stats, COLORS.background, 0.38)
+	card.Position = UDim2.new((index - 1) * 0.25, index == 1 and 0 or 4, 0, 0)
+	card.Size = UDim2.new(0.25, index == 1 and -3 or -4, 1, 0)
+	statCards[index] = card
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = accent
+	stroke.Transparency = 0.67
+	stroke.Parent = card
+	local captionLabel = makeText("Caption", card, caption, 10, COLORS.muted)
+	captionLabel.Position = UDim2.fromOffset(11, 4)
+	captionLabel.Size = UDim2.new(1, -22, 0, 17)
+	statCaptions[index] = captionLabel
+	local value = makeText("Value", card, "--", 22, accent, Enum.Font.RobotoMono)
+	value.Position = UDim2.fromOffset(11, 19)
+	value.Size = UDim2.new(1, -22, 0, 27)
+	statValues[caption] = value
+end
+
+addStat(1, "HOSTILES", COLORS.threat)
+addStat(2, "SURVIVORS", COLORS.friendly)
+addStat(3, "BEACONS", COLORS.cyan)
+addStat(4, "SCAN RATE", COLORS.phosphor)
+
+local plot = makeFrame("Map", panel, COLORS.map, 0.04)
+plot.Position = UDim2.fromOffset(28, 145)
+plot.Size = UDim2.new(1, -56, 1, -190)
 plot.ClipsDescendants = true
-plot.Parent = panel
 local plotStroke = Instance.new("UIStroke")
-plotStroke.Color = Color3.fromRGB(243, 25, 111)
-plotStroke.Transparency = 0.35
+plotStroke.Color = COLORS.cyan
+plotStroke.Transparency = 0.57
 plotStroke.Thickness = 1
 plotStroke.Parent = plot
 
--- The grid is intentionally geographic rather than decorative: it makes a
--- debugging callout such as "two squares north-east of McDonald's" practical.
-local GRID_COLUMNS = 17
-local GRID_ROWS = 13
-for column = 1, GRID_COLUMNS - 1 do
-	local line = Instance.new("Frame")
-	line.Name = "GridV"
+-- Fine grid gives map precision; brighter five-square divisions retain a
+-- readable military-map hierarchy at a glance.
+for column = 1, 24 - 1 do
+	local major = column % 4 == 0
+	local line = makeFrame("GridV", plot, COLORS.phosphor, major and 0.73 or 0.89)
 	line.AnchorPoint = Vector2.new(0.5, 0)
-	line.Position = UDim2.fromScale(column / GRID_COLUMNS, 0)
-	line.Size = UDim2.new(0, 1, 1, 0)
-	line.BackgroundColor3 = Color3.fromRGB(208, 27, 103)
-	line.BackgroundTransparency = 0.64
-	line.BorderSizePixel = 0
-	line.Parent = plot
+	line.Position = UDim2.fromScale(column / 24, 0)
+	line.Size = UDim2.new(0, major and 1 or 1, 1, 0)
 end
-for row = 1, GRID_ROWS - 1 do
-	local line = Instance.new("Frame")
-	line.Name = "GridH"
+for row = 1, 16 - 1 do
+	local major = row % 4 == 0
+	local line = makeFrame("GridH", plot, COLORS.phosphor, major and 0.73 or 0.89)
 	line.AnchorPoint = Vector2.new(0, 0.5)
-	line.Position = UDim2.fromScale(0, row / GRID_ROWS)
-	line.Size = UDim2.new(1, 0, 0, 1)
-	line.BackgroundColor3 = Color3.fromRGB(208, 27, 103)
-	line.BackgroundTransparency = 0.64
-	line.BorderSizePixel = 0
-	line.Parent = plot
+	line.Position = UDim2.fromScale(0, row / 16)
+	line.Size = UDim2.new(1, 0, 0, major and 1 or 1)
 end
+
+local horizontalAxis = makeFrame("AxisH", plot, COLORS.cyan, 0.60)
+horizontalAxis.AnchorPoint = Vector2.new(0, 0.5)
+horizontalAxis.Position = UDim2.fromScale(0, 0.5)
+horizontalAxis.Size = UDim2.new(1, 0, 0, 1)
+local verticalAxis = makeFrame("AxisV", plot, COLORS.cyan, 0.60)
+verticalAxis.AnchorPoint = Vector2.new(0.5, 0)
+verticalAxis.Position = UDim2.fromScale(0.5, 0)
+verticalAxis.Size = UDim2.new(0, 1, 1, 0)
+
+local sweep = makeFrame("Sweep", plot, COLORS.phosphor, 0.82)
+sweep.AnchorPoint = Vector2.new(0, 0)
+sweep.Position = UDim2.fromScale(-0.08, 0)
+sweep.Size = UDim2.fromScale(0.08, 1)
+local sweepGradient = Instance.new("UIGradient")
+sweepGradient.Transparency = NumberSequence.new({
+	NumberSequenceKeypoint.new(0, 1),
+	NumberSequenceKeypoint.new(0.74, 0.70),
+	NumberSequenceKeypoint.new(1, 0.12),
+})
+sweepGradient.Parent = sweep
 
 local landmarkLayer = Instance.new("Folder")
 landmarkLayer.Name = "Landmarks"
 landmarkLayer.Parent = plot
+local contourLayer = Instance.new("Folder")
+contourLayer.Name = "WorldLandmarks"
+contourLayer.Parent = plot
 local monsterLayer = Instance.new("Folder")
 monsterLayer.Name = "Monsters"
 monsterLayer.Parent = plot
@@ -127,29 +202,156 @@ local playerLayer = Instance.new("Folder")
 playerLayer.Name = "OtherPlayers"
 playerLayer.Parent = plot
 
-local selfMarker = Instance.new("Frame")
-selfMarker.Name = "You"
+local selfMarker = makeFrame("You", plot, COLORS.text, 0)
 selfMarker.AnchorPoint = Vector2.new(0.5, 0.5)
-selfMarker.Size = UDim2.fromOffset(17, 17)
-selfMarker.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-selfMarker.BorderSizePixel = 0
-selfMarker.Parent = plot
+selfMarker.Size = UDim2.fromOffset(14, 14)
 Instance.new("UICorner", selfMarker).CornerRadius = UDim.new(1, 0)
 local selfStroke = Instance.new("UIStroke")
-selfStroke.Color = Color3.fromRGB(247, 35, 120)
+selfStroke.Color = COLORS.phosphor
 selfStroke.Thickness = 2
 selfStroke.Parent = selfMarker
+local selfLabel = makeText("PlayerName", plot, "YOU", 10, COLORS.friendly, Enum.Font.RobotoMono)
+selfLabel.AnchorPoint = Vector2.new(0, 0.5)
+selfLabel.Size = UDim2.fromOffset(90, 16)
+selfLabel.TextXAlignment = Enum.TextXAlignment.Left
+selfLabel.ZIndex = 4
+
+local threatReadout = makeFrame("ThreatReadout", plot, COLORS.background, 0.29)
+threatReadout.Position = UDim2.fromOffset(12, 12)
+threatReadout.Size = UDim2.fromOffset(230, 26 + TOP_THREAT_TYPES * 19)
+local threatStroke = Instance.new("UIStroke")
+threatStroke.Color = COLORS.threat
+threatStroke.Transparency = 0.58
+threatStroke.Parent = threatReadout
+local threatTitle = makeText("Title", threatReadout, "THREAT MIX // LIVE", 11, COLORS.threat, Enum.Font.RobotoMono)
+threatTitle.Position = UDim2.fromOffset(9, 3)
+threatTitle.Size = UDim2.new(1, -18, 0, 19)
+local threatRows = {}
+for index = 1, TOP_THREAT_TYPES do
+	local row = makeText("Threat" .. index, threatReadout, "", 11, COLORS.text)
+	row.Position = UDim2.fromOffset(9, 21 + (index - 1) * 19)
+	row.Size = UDim2.new(1, -18, 0, 19)
+	threatRows[index] = row
+end
+
+local rangeReadout = makeText("RangeReadout", plot, "GRID 24 x 16  //  NORTH ↑", 11, COLORS.muted)
+rangeReadout.AnchorPoint = Vector2.new(1, 1)
+rangeReadout.Position = UDim2.new(0.5, 0, 1, -9)
+rangeReadout.Size = UDim2.fromOffset(245, 22)
+rangeReadout.TextXAlignment = Enum.TextXAlignment.Center
+
+local cornerCoordinates = {}
+local function makeCornerCoordinate(name, anchorPoint, position, alignment)
+	local label = makeText(name, plot, "", 10, COLORS.muted, Enum.Font.RobotoMono)
+	label.AnchorPoint = anchorPoint
+	label.Position = position
+	label.Size = UDim2.fromOffset(190, 18)
+	label.TextXAlignment = alignment
+	label.ZIndex = 3
+	cornerCoordinates[name] = label
+	return label
+end
+
+-- The threat panel owns the upper-left corner. Keep the other three corners
+-- explicit so map orientation and bounds can be checked directly in Studio.
+makeCornerCoordinate("CoordTopRight", Vector2.new(1, 0), UDim2.new(1, -12, 0, 10), Enum.TextXAlignment.Right)
+makeCornerCoordinate("CoordBottomLeft", Vector2.new(0, 1), UDim2.new(0, 12, 1, -9), Enum.TextXAlignment.Left)
+makeCornerCoordinate("CoordBottomRight", Vector2.new(1, 1), UDim2.new(1, -12, 1, -9), Enum.TextXAlignment.Right)
+
+local footer = makeText("Footer", panel, "LIVE UPLINK  //  HOSTILE = PINK  /  SURVIVOR = GREY  /  BEACON = LAVENDER", 12, COLORS.muted)
+footer.Position = UDim2.new(0, 29, 1, -38)
+footer.Size = UDim2.new(1, -58, 0, 20)
+
+-- ScoreGui uses 16px values on compact layouts. Keep the radar title larger,
+-- but let everything else collapse into the same readable scale on phones.
+local function applyResponsiveLayout()
+	local camera = Workspace.CurrentCamera
+	local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+	local mobile = viewport.X < 900 or viewport.Y < 600
+
+	panel.Size = mobile and UDim2.fromScale(0.96, 0.90) or UDim2.fromScale(0.92, 0.88)
+	title.Position = mobile and UDim2.fromOffset(18, 10) or UDim2.fromOffset(28, 13)
+	title.Size = mobile and UDim2.new(1, -130, 0, 32) or UDim2.new(1, -210, 0, 37)
+	title.TextSize = mobile and 20 or 28
+
+	subtitle.Visible = not mobile
+	close.Position = mobile and UDim2.new(1, -12, 0, 10) or UDim2.new(1, -24, 0, 18)
+	close.Size = mobile and UDim2.fromOffset(92, 34) or UDim2.fromOffset(110, 42)
+	close.TextSize = mobile and 11 or 13
+
+	stats.Position = mobile and UDim2.fromOffset(18, 52) or UDim2.fromOffset(28, 79)
+	stats.Size = mobile and UDim2.new(1, -36, 0, 86) or UDim2.new(1, -56, 0, 51)
+	for index, card in ipairs(statCards) do
+		local caption = statCaptions[index]
+		local value = statValues[( { "HOSTILES", "SURVIVORS", "BEACONS", "SCAN RATE" } )[index]]
+		if mobile then
+			local column = (index - 1) % 2
+			local row = math.floor((index - 1) / 2)
+			card.Position = UDim2.new(column * 0.5, column == 0 and 0 or 3, row * 0.5, row == 0 and 0 or 3)
+			card.Size = UDim2.new(0.5, column == 0 and -2 or -3, 0.5, row == 0 and -2 or -3)
+			caption.Position = UDim2.fromOffset(9, 2)
+			caption.Size = UDim2.new(1, -18, 0, 16)
+			caption.TextSize = 9
+			value.Position = UDim2.fromOffset(9, 15)
+			value.Size = UDim2.new(1, -18, 1, -16)
+			value.TextSize = 16
+		else
+			card.Position = UDim2.new((index - 1) * 0.25, index == 1 and 0 or 4, 0, 0)
+			card.Size = UDim2.new(0.25, index == 1 and -3 or -4, 1, 0)
+			caption.Position = UDim2.fromOffset(11, 4)
+			caption.Size = UDim2.new(1, -22, 0, 17)
+			caption.TextSize = 11
+			value.Position = UDim2.fromOffset(11, 18)
+			value.Size = UDim2.new(1, -22, 0, 29)
+			value.TextSize = 20
+		end
+	end
+
+	plot.Position = mobile and UDim2.fromOffset(18, 148) or UDim2.fromOffset(28, 145)
+	plot.Size = mobile and UDim2.new(1, -36, 1, -181) or UDim2.new(1, -56, 1, -190)
+	threatReadout.Size = mobile and UDim2.fromOffset(196, 26 + TOP_THREAT_TYPES * 18) or UDim2.fromOffset(230, 26 + TOP_THREAT_TYPES * 19)
+	threatTitle.TextSize = mobile and 10 or 12
+	for _, row in ipairs(threatRows) do row.TextSize = mobile and 10 or 12 end
+	rangeReadout.TextSize = mobile and 9 or 12
+	rangeReadout.Size = mobile and UDim2.fromOffset(175, 18) or UDim2.fromOffset(245, 22)
+	for _, label in pairs(cornerCoordinates) do
+		label.TextSize = mobile and 8 or 10
+		label.Size = mobile and UDim2.fromOffset(150, 16) or UDim2.fromOffset(190, 18)
+	end
+	footer.Position = mobile and UDim2.new(0, 19, 1, -27) or UDim2.new(0, 29, 1, -38)
+	footer.Size = mobile and UDim2.new(1, -38, 0, 16) or UDim2.new(1, -58, 0, 20)
+	footer.TextSize = mobile and 8 or 12
+end
+
+applyResponsiveLayout()
+Workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(applyResponsiveLayout)
+if Workspace.CurrentCamera then
+	Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(applyResponsiveLayout)
+end
 
 local monsterDots = {}
 local playerDots = {}
+local playerLabels = {}
 local landmarkMarkers = {}
+local landmarkLabels = {}
+local contourSegments = {}
 local activeRadarLoop
 
 local function mapBounds()
 	local min = Workspace:GetAttribute("RadarMapMin")
 	local max = Workspace:GetAttribute("RadarMapMax")
 	if typeof(min) ~= "Vector3" or typeof(max) ~= "Vector3" then
-		min, max = Vector3.new(-1725, 0, -1550), Vector3.new(275, 0, 450)
+		-- MainGround is the authoritative footprint when explicit map attributes
+		-- have not been authored yet. This keeps edge contacts from being hidden
+		-- by the old marketplace fallback bounds.
+		local ground = Workspace:FindFirstChild("MainGround")
+		if ground and ground:IsA("BasePart") then
+			local half = ground.Size * 0.5
+			min = ground.Position - half
+			max = ground.Position + half
+		else
+			min, max = Vector3.new(-1304, 0, -1651), Vector3.new(743.5, 0, 396.5)
+		end
 	end
 	return min, max
 end
@@ -157,24 +359,36 @@ end
 local function mapPosition(worldPosition, min, max)
 	local width = math.max(1, max.X - min.X)
 	local depth = math.max(1, max.Z - min.Z)
+	-- The world map is intentionally presented with south at the top, matching
+	-- the player's familiar hand-drawn/Studio orientation. Flip both axes so
+	-- every live contact and beacon rotates together by 180 degrees.
+	local x = 1 - math.clamp((worldPosition.X - min.X) / width, 0, 1)
+	local y = math.clamp((worldPosition.Z - min.Z) / depth, 0, 1)
 	return UDim2.fromScale(
-		math.clamp((worldPosition.X - min.X) / width, 0, 1),
-		math.clamp(1 - (worldPosition.Z - min.Z) / depth, 0, 1)
+		x,
+		y
 	)
+end
+
+local function updateCornerCoordinates(min, max)
+	-- mapPosition is rotated 180 degrees: visual top-right is world min X/min Z,
+	-- while visual bottom-left is max X/max Z.
+	cornerCoordinates.CoordTopRight.Text = string.format("X %.0f  /  Z %.0f", min.X, min.Z)
+	cornerCoordinates.CoordBottomLeft.Text = string.format("X %.0f  /  Z %.0f", max.X, max.Z)
+	cornerCoordinates.CoordBottomRight.Text = string.format("X %.0f  /  Z %.0f", min.X, max.Z)
 end
 
 local function getMonsterDot(index)
 	local dot = monsterDots[index]
 	if dot then return dot end
-	dot = Instance.new("Frame")
-	dot.Name = "Monster"
+	dot = makeFrame("Hostile", monsterLayer, COLORS.threat, 0.03)
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(11, 11)
-	dot.BackgroundColor3 = Color3.fromRGB(223, 27, 87)
-	dot.BackgroundTransparency = 0.08
-	dot.BorderSizePixel = 0
-	dot.Parent = monsterLayer
+	dot.Size = UDim2.fromOffset(10, 10)
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.new(1, 0.78, 0.87)
+	stroke.Transparency = 0.15
+	stroke.Parent = dot
 	monsterDots[index] = dot
 	return dot
 end
@@ -182,42 +396,138 @@ end
 local function getPlayerDot(index)
 	local dot = playerDots[index]
 	if dot then return dot end
-	dot = Instance.new("Frame")
-	dot.Name = "Player"
+	dot = makeFrame("Survivor", playerLayer, COLORS.friendly, 0.04)
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(12, 12)
-	dot.BackgroundColor3 = Color3.fromRGB(154, 160, 169)
-	dot.BackgroundTransparency = 0.05
-	dot.BorderSizePixel = 0
-	dot.Parent = playerLayer
+	dot.Size = UDim2.fromOffset(10, 10)
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 	playerDots[index] = dot
 	return dot
 end
 
+local function getPlayerLabel(index)
+	local label = playerLabels[index]
+	if label then return label end
+	label = makeText("PlayerName", playerLayer, "", 10, COLORS.friendly, Enum.Font.RobotoMono)
+	label.AnchorPoint = Vector2.new(0, 0.5)
+	label.Size = UDim2.fromOffset(150, 16)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.ZIndex = 4
+	playerLabels[index] = label
+	return label
+end
+
 local function getLandmark(index)
 	local marker = landmarkMarkers[index]
 	if marker then return marker end
-	marker = Instance.new("Frame")
-	marker.Name = "Landmark"
+	marker = makeFrame("Beacon", landmarkLayer, COLORS.cyan, 0.40)
 	marker.AnchorPoint = Vector2.new(0.5, 0.5)
-	marker.Size = UDim2.fromOffset(15, 15)
-	marker.BackgroundTransparency = 1
-	marker.BorderSizePixel = 0
-	marker.Parent = landmarkLayer
-	local landmarkStroke = Instance.new("UIStroke")
-	landmarkStroke.Color = Color3.fromRGB(95, 205, 220)
-	landmarkStroke.Transparency = 0.35
-	landmarkStroke.Thickness = 1
-	landmarkStroke.Parent = marker
+	marker.Rotation = 45
+	marker.Size = UDim2.fromOffset(10, 10)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COLORS.cyan
+	stroke.Transparency = 0.05
+	stroke.Thickness = 1
+	stroke.Parent = marker
 	landmarkMarkers[index] = marker
 	return marker
 end
 
+local function getLandmarkLabel(index)
+	local label = landmarkLabels[index]
+	if label then return label end
+	label = makeText("LandmarkName", landmarkLayer, "", 9, COLORS.muted, Enum.Font.RobotoMono)
+	label.AnchorPoint = Vector2.new(0, 0.5)
+	label.Size = UDim2.fromOffset(180, 16)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.ZIndex = 4
+	landmarkLabels[index] = label
+	return label
+end
+
+local function getContourSegment(index)
+	local segment = contourSegments[index]
+	if segment then return segment end
+	segment = makeFrame("Contour", contourLayer, COLORS.cyan, 1)
+	segment.AnchorPoint = Vector2.new(0.5, 0.5)
+	segment.BackgroundTransparency = 1
+	segment.BorderSizePixel = 0
+	segment.ZIndex = 1
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COLORS.cyan
+	stroke.Transparency = 0.16
+	stroke.Thickness = 1
+	stroke.Parent = segment
+	contourSegments[index] = segment
+	return segment
+end
+
 local function markerPosition(instance)
 	if instance:IsA("BasePart") then return instance.Position end
-	if instance:IsA("Model") then return instance:GetPivot().Position end
+	if instance:IsA("Model") then
+		-- Imported models have unreliable pivots. A real part is the only valid
+		-- landmark position for the legacy map.
+		local part = instance:FindFirstChildWhichIsA("BasePart", true)
+		return part and part.Position or nil
+	end
 	return nil
+end
+
+local function isRadarDetect(instance)
+	local value = instance:GetAttribute("RadarDetect")
+	if value == nil then value = instance:GetAttribute("radar_detect") end
+	-- Boolean is the intended Studio attribute type. The text/number forms keep
+	-- an accidental Studio attribute visible rather than silently dropping it.
+	return value == true or value == "true" or value == 1
+end
+
+local function isRadarLandmark(instance)
+	local value = instance:GetAttribute("RadarLandmark")
+	if value == true or value == "true" or value == 1 then return true end
+	-- Transitional support for the earlier contour name while Studio objects
+	-- are being migrated by the command-bar conversion.
+	local legacy = instance:GetAttribute("RadarContour")
+	return legacy == true or legacy == "true" or legacy == 1
+end
+
+local function hasLandmarkAncestor(instance)
+	local ancestor = instance.Parent
+	while ancestor and ancestor ~= Workspace do
+		if isRadarLandmark(ancestor) then return true end
+		ancestor = ancestor.Parent
+	end
+	return false
+end
+
+local function setContourSegment(segment, part, min, max)
+	local width = math.max(1, max.X - min.X)
+	local depth = math.max(1, max.Z - min.Z)
+	local position = mapPosition(part.Position, min, max)
+	local right = part.CFrame.RightVector
+	local look = part.CFrame.LookVector
+	local rightLength = math.max(0.002, math.sqrt((right.X * part.Size.X / width) ^ 2 + (right.Z * part.Size.X / depth) ^ 2))
+	local lookLength = math.max(0.002, math.sqrt((look.X * part.Size.Z / width) ^ 2 + (look.Z * part.Size.Z / depth) ^ 2))
+	local screenRightX = -right.X / width
+	local screenRightY = right.Z / depth
+	local angle = math.deg(math.atan2(screenRightY, screenRightX))
+	segment.Position = position
+	segment.Size = UDim2.fromScale(rightLength, lookLength)
+	segment.Rotation = angle
+	segment.Visible = true
+end
+
+local function displayName(instance)
+	local value = instance:GetAttribute("RadarDisplayName")
+	return typeof(value) == "string" and value ~= "" and value or nil
+end
+
+local function placeLabel(label, position, text)
+	if not text then
+		label.Visible = false
+		return
+	end
+	label.Text = text
+	label.Position = UDim2.new(position.X.Scale, 8, position.Y.Scale, 0)
+	label.Visible = true
 end
 
 local function getTowerScreen(tower)
@@ -246,58 +556,149 @@ local function setRadarLoop(tower, enabled)
 	end
 end
 
-local refreshElapsed = 0
-RunService.Heartbeat:Connect(function(deltaTime)
-	if not gui.Enabled then return end
-	refreshElapsed += deltaTime
-	if refreshElapsed < 0.35 then return end
-	refreshElapsed = 0
+local function updateThreatRows(typeCounts)
+	local ranked = {}
+	for name, count in pairs(typeCounts) do
+		table.insert(ranked, { name = name, count = count })
+	end
+	table.sort(ranked, function(a, b)
+		if a.count == b.count then return a.name < b.name end
+		return a.count > b.count
+	end)
+	for index, row in ipairs(threatRows) do
+		local entry = ranked[index]
+		row.Text = entry and string.format("%02d  %s", entry.count, string.upper(entry.name)) or "--  NO CONTACT"
+	end
+end
 
+local function pulseRadar()
+	sweep.Position = UDim2.fromScale(-0.08, 0)
+	-- One full sweep matches one audio loop, so the map centre is crossed at
+	-- exactly PULSE_INTERVAL / 2 (one second for the current two-second beep).
+	TweenService:Create(sweep, TweenInfo.new(PULSE_INTERVAL, Enum.EasingStyle.Linear), {
+		Position = UDim2.fromScale(1, 0),
+	}):Play()
+	TweenService:Create(plotStroke, TweenInfo.new(PULSE_INTERVAL * 0.34), { Transparency = 0.10 }):Play()
+	task.delay(PULSE_INTERVAL * 0.36, function()
+		if gui.Enabled then
+			TweenService:Create(plotStroke, TweenInfo.new(PULSE_INTERVAL * 0.48), { Transparency = 0.57 }):Play()
+		end
+	end)
+end
+
+local lastReportedBeaconCount
+local function refreshRadarContacts()
 	local min, max = mapBounds()
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	selfMarker.Visible = root ~= nil
-	if root then selfMarker.Position = mapPosition(root.Position, min, max) end
-
+	updateCornerCoordinates(min, max)
 	local monsterCount = 0
 	local playerCount = 0
+	local otherPlayerDotCount = 0
 	local landmarkCount = 0
+	local typeCounts = {}
+	local contourCount = 0
 	for _, instance in ipairs(Workspace:GetDescendants()) do
+		local beacon = isRadarDetect(instance)
 		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
 			local monsterRoot = instance:FindFirstChild("HumanoidRootPart", true)
 			if humanoid and humanoid.Health > 0 and monsterRoot and monsterRoot:IsA("BasePart") then
 				monsterCount += 1
+				typeCounts[instance.Name] = (typeCounts[instance.Name] or 0) + 1
 				local dot = getMonsterDot(monsterCount)
 				dot.Position = mapPosition(monsterRoot.Position, min, max)
 				dot.Visible = true
 			end
-		elseif instance:GetAttribute("radar_detect") == true then
+		end
+		if beacon then
 			local position = markerPosition(instance)
 			if position then
 				landmarkCount += 1
 				local marker = getLandmark(landmarkCount)
-				marker.Position = mapPosition(position, min, max)
+				local mapped = mapPosition(position, min, max)
+				marker.Position = mapped
 				marker.Visible = true
+				placeLabel(getLandmarkLabel(landmarkCount), mapped, displayName(instance))
+			end
+		end
+		if isRadarLandmark(instance) and not hasLandmarkAncestor(instance) then
+			if instance:IsA("BasePart") then
+				contourCount += 1
+				setContourSegment(getContourSegment(contourCount), instance, min, max)
+			elseif instance:IsA("Model") then
+				for _, part in ipairs(instance:GetDescendants()) do
+					if part:IsA("BasePart") then
+						contourCount += 1
+						setContourSegment(getContourSegment(contourCount), part, min, max)
+					end
+				end
 			end
 		end
 	end
-	for _, otherPlayer in ipairs(Players:GetPlayers()) do
-		if otherPlayer ~= player then
-			local otherCharacter = otherPlayer.Character
-			local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
-			local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
-			if otherHumanoid and otherHumanoid.Health > 0 and otherRoot and otherRoot:IsA("BasePart") then
-				playerCount += 1
-				local dot = getPlayerDot(playerCount)
-				dot.Position = mapPosition(otherRoot.Position, min, max)
+	for _, candidate in ipairs(Players:GetPlayers()) do
+		local character = candidate.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local characterRoot = character and character:FindFirstChild("HumanoidRootPart")
+		if humanoid and humanoid.Health > 0 and characterRoot and characterRoot:IsA("BasePart") then
+			playerCount += 1
+			if candidate ~= player then
+				otherPlayerDotCount += 1
+				local dot = getPlayerDot(otherPlayerDotCount)
+				local mapped = mapPosition(characterRoot.Position, min, max)
+				dot.Position = mapped
 				dot.Visible = true
+				placeLabel(getPlayerLabel(otherPlayerDotCount), mapped, candidate.DisplayName or candidate.Name)
 			end
 		end
 	end
 	for index = monsterCount + 1, #monsterDots do monsterDots[index].Visible = false end
-	for index = playerCount + 1, #playerDots do playerDots[index].Visible = false end
+	for index = otherPlayerDotCount + 1, #playerDots do playerDots[index].Visible = false end
+	for index = otherPlayerDotCount + 1, #playerLabels do playerLabels[index].Visible = false end
 	for index = landmarkCount + 1, #landmarkMarkers do landmarkMarkers[index].Visible = false end
+	for index = landmarkCount + 1, #landmarkLabels do landmarkLabels[index].Visible = false end
+	for index = contourCount + 1, #contourSegments do contourSegments[index].Visible = false end
+	if lastReportedBeaconCount ~= landmarkCount then
+		lastReportedBeaconCount = landmarkCount
+		warn("[RadarTowerHud] radar_detect beacons:", landmarkCount)
+	end
+
+	statValues.HOSTILES.Text = string.format("%02d", monsterCount)
+	statValues.SURVIVORS.Text = string.format("%02d", playerCount)
+	statValues.BEACONS.Text = string.format("%02d", landmarkCount)
+	statValues["SCAN RATE"].Text = string.format("%.2fs", PULSE_INTERVAL)
+	footer.Text = string.format(
+		"LIVE UPLINK  //  PULSE %.2fs  //  HOSTILE = PINK  /  SURVIVOR = GREY  /  BEACON = LAVENDER",
+		PULSE_INTERVAL
+	)
+	updateThreatRows(typeCounts)
+end
+
+local pulseElapsed = PULSE_INTERVAL
+local scanCaptured = false
+RunService.Heartbeat:Connect(function(deltaTime)
+	if not gui.Enabled then return end
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	selfMarker.Visible = root ~= nil
+	selfLabel.Visible = root ~= nil
+	if root then
+		local min, max = mapBounds()
+		local mapped = mapPosition(root.Position, min, max)
+		selfMarker.Position = mapped
+		placeLabel(selfLabel, mapped, "YOU")
+	end
+
+	pulseElapsed += deltaTime
+	if pulseElapsed >= PULSE_INTERVAL then
+		pulseElapsed %= PULSE_INTERVAL
+		scanCaptured = false
+		pulseRadar()
+	end
+	-- Contacts are a radar snapshot, not a real-time GPS feed. With the current
+	-- two-second loop, the scan lands as the sweep passes the map midpoint.
+	if not scanCaptured and pulseElapsed >= PULSE_INTERVAL * 0.5 then
+		scanCaptured = true
+		refreshRadarContacts()
+	end
 end)
 
 local ambientElapsed = 0
@@ -331,7 +732,7 @@ end
 
 close.Activated:Connect(exitRadar)
 UserInputService.InputBegan:Connect(function(input, processed)
-	if gui.Enabled and not processed and input.KeyCode == Enum.KeyCode.Escape then
+	if gui.Enabled and not processed and (input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.E) then
 		exitRadar()
 	end
 end)
@@ -339,6 +740,7 @@ end)
 useEvent.OnClientEvent:Connect(function(enabled, tower)
 	gui.Enabled = enabled == true
 	setRadarLoop(tower, enabled == true)
+	pulseElapsed = PULSE_INTERVAL
 	warn("[RadarTowerHud]", enabled == true and "opened" or "closed")
 end)
 

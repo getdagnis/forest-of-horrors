@@ -11,10 +11,8 @@ MonsterBombConfig.HEALTH = 430
 -- Random idle time in seconds before the warning countdown starts.
 MonsterBombConfig.MIN_WAIT = 120
 MonsterBombConfig.MAX_WAIT = 270
--- Length of the final countdown in seconds.
-MonsterBombConfig.WARNING_TIME = 10
--- Seconds between each warning beep and warning light pulse.
-MonsterBombConfig.WARNING_BEEP_INTERVAL = 1
+-- Length of the spoken five-to-one warning announcement in seconds.
+MonsterBombConfig.WARNING_TIME = 5.5
 
 -- Maximum distance in studs affected by the explosion.
 MonsterBombConfig.BLAST_RADIUS = 100
@@ -22,7 +20,12 @@ MonsterBombConfig.BLAST_RADIUS = 100
 MonsterBombConfig.WARNING_SOUND_RADIUS = 115
 -- Maximum distance in studs at which the explosion sound can be heard.
 MonsterBombConfig.EXPLOSION_SOUND_RADIUS = 120
--- Sound child name to add to the Monster model for the one-shot explosion audio.
+-- Preferred SoundService template name. A model child remains a compatibility
+-- fallback for older bomb copies.
+MonsterBombConfig.EXPLOSION_SOUND_TEMPLATE = "MonsterBombExplosion"
+-- Fallback asset used when neither sound template exists in the live place.
+MonsterBombConfig.EXPLOSION_SOUND_ID = "rbxassetid://91288569991875"
+-- Legacy sound child name on imported bomb models.
 MonsterBombConfig.EXPLOSION_SOUND_NAME = "ExplosionSound"
 -- Failsafe lifetime for the temporary world sound emitter in seconds.
 MonsterBombConfig.EXPLOSION_SOUND_LIFETIME = 10

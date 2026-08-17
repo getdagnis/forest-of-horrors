@@ -1,3 +1,5 @@
+-- ROBLOX_ZombieAI
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
@@ -184,7 +186,7 @@ ZombieAI.new = function(model, navigation)
 				and (targetRoot.Position - ownRoot.Position).Magnitude <= configs["AttackRange"]
 				and now - lastMonsterAttack >= configs["MonsterDamageCooldown"]
 			then
-				MonsterManager.damageMonsterTarget(targetMonster, MonsterManager.getDamageToMonsters(model))
+				MonsterManager.damageMonsterTarget(targetMonster, MonsterManager.getDamageToMonsters(model), model)
 				lastMonsterAttack = now
 			end
 			return

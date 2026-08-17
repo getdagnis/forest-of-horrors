@@ -10,15 +10,15 @@ local SoundService = game:GetService("SoundService")
 local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
-local CLOSE_CROWD_RANGE = 50
+local CLOSE_CROWD_RANGE = 60
 local CROWD_RADAR_RANGE = 30
-local NORMAL_RADAR_RANGE = 50
+local NORMAL_RADAR_RANGE = 60
 local SEARCH_RADAR_RANGES = { 60, 70, 80, 90, 100 }
 local MAX_RADAR_RANGE = SEARCH_RADAR_RANGES[#SEARCH_RADAR_RANGES]
 local UPDATE_SECONDS = 0.12
 local DOT_SIZE = 6
 local MAX_DOTS = 96
-local WARNING_REENTRY_COOLDOWN = 6
+local PRIORITY_WARNING_RANGE = 80
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "MonsterRadarHud"
@@ -146,6 +146,7 @@ local function isPriorityMonster(model)
 	return model.Name == "creepyMonster"
 		or model.Name == "creepyMonsterOrange"
 		or model.Name == "creepyMonsterWhite"
+		or model.Name == "Smiler"
 		or (model:FindFirstChild("Zombie") and model:FindFirstChild("Zombie"):IsA("Humanoid"))
 end
 
@@ -235,9 +236,12 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	for _, monster in ipairs(livingMonsters) do
 		local entry = radarEntries[monster.model] or {}
 		local inRange = monster.distance <= radarRange
-		if monster.priority and inRange and not entry.inRange and (not entry.lastWarning or now - entry.lastWarning >= WARNING_REENTRY_COOLDOWN) then
+		-- Priority threats are tracked early, but the audible warning is emitted
+		-- only on the same boundary that makes the contact dot visible. This keeps
+		-- the warning and radar direction synchronized.
+		entry.priorityDetected = monster.priority and monster.distance <= PRIORITY_WARNING_RANGE
+		if monster.priority and inRange and not entry.inRange then
 			playPriorityWarning()
-			entry.lastWarning = now
 		end
 		entry.inRange = inRange
 		radarEntries[monster.model] = entry

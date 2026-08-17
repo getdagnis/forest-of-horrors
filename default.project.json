@@ -25,6 +25,9 @@
       },
       "TurretCombatConfig": {
         "$path": "src/ReplicatedStorage/TurretCombatConfig.luau"
+      },
+      "RadarEventBus": {
+        "$path": "src/ReplicatedStorage/RadarEventBus.luau"
       }
     },
 
