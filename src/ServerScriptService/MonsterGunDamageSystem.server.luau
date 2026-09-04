@@ -72,10 +72,14 @@ local function getMonsterModelFromHit(instance)
 	return nil
 end
 
-local function makeRaycastParams(character, tool)
+local function makeRaycastParams(character, tool, additionalIgnored)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character, tool }
+	local ignored = { character, tool }
+	for _, instance in ipairs(additionalIgnored or {}) do
+		table.insert(ignored, instance)
+	end
+	params.FilterDescendantsInstances = ignored
 	params.IgnoreWater = true
 	return params
 end
@@ -157,7 +161,20 @@ end)
 
 local function getServerShot(tool, player, cameraOrigin, direction)
 	local params = makeRaycastParams(player.Character, tool)
-	local result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * RANGE, params)
+	-- A direct crosshair ray always wins. The forgiving Spherecast runs only
+	-- after a true miss, and skips nearby WMTs so it cannot pull a beam away
+	-- from the hostile monster the player actually aimed at.
+	local result = workspace:Raycast(cameraOrigin, direction * RANGE, params)
+	if not result then
+		local ignored = {}
+		while true do
+			result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * RANGE,
+				makeRaycastParams(player.Character, tool, ignored))
+			local candidate = result and getMonsterModelFromHit(result.Instance)
+			if not candidate or MonsterManager.isWeaponAimAssistTarget(candidate) then break end
+			table.insert(ignored, candidate)
+		end
+	end
 	local endPosition = result and result.Position or (cameraOrigin + direction * RANGE)
 	local muzzlePosition = getMuzzlePosition(tool)
 	if muzzlePosition then

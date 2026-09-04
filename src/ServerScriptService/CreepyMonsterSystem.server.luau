@@ -98,6 +98,25 @@ local function findNearestPlayerRoot(origin)
 	return nearestRoot
 end
 
+-- A guardian pet does not become a general-purpose prey target. Only the
+-- specific monster it struck gets this temporary marker, and a nearby player
+-- remains the creepy's clearly stronger priority.
+local function getGuardianPetRetaliationTarget(model)
+	local untilTime = tonumber(model:GetAttribute("WMTGuardianPetRetaliationUntil")) or 0
+	if Workspace:GetServerTimeNow() >= untilTime then return nil, nil, nil end
+
+	local marker = model:FindFirstChild("WMTGuardianPetRetaliationTarget")
+	local target = marker and marker:IsA("ObjectValue") and marker.Value or nil
+	local humanoid = target and MonsterManager.getMonsterHumanoid(target)
+	local root = target and getRoot(target)
+	if target and target.Parent and target:GetAttribute("WMTGuardianPet") == true
+		and humanoid and humanoid.Health > 0 and root
+	then
+		return target, root, humanoid
+	end
+	return nil, nil, nil
+end
+
 local function findLowerHealthMonster(model, ownHp, origin)
 	local nearestModel
 	local nearestRoot
@@ -171,7 +190,12 @@ local function setupCreepy(model)
 			end
 
 			local playerRoot = findNearestPlayerRoot(root.Position)
-			if playerRoot then
+			local retaliationModel, retaliationRoot, retaliationHumanoid = getGuardianPetRetaliationTarget(model)
+			local playerIsCloser = playerRoot and (
+				not retaliationRoot
+				or (playerRoot.Position - root.Position).Magnitude <= (retaliationRoot.Position - root.Position).Magnitude
+			)
+			if playerRoot and playerIsCloser then
 				humanoid:MoveTo(playerRoot.Position)
 				if (playerRoot.Position - root.Position).Magnitude <= ATTACK_RANGE and now - state.lastPlayerHit >= PLAYER_HIT_COOLDOWN then
 					local character = playerRoot.Parent
@@ -181,12 +205,22 @@ local function setupCreepy(model)
 						state.lastPlayerHit = now
 					end
 				end
+			elseif retaliationRoot and retaliationHumanoid then
+				humanoid:MoveTo(retaliationRoot.Position)
+				if (retaliationRoot.Position - root.Position).Magnitude <= ATTACK_RANGE
+						and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN
+				then
+					MonsterManager.damageMonsterTarget(retaliationModel, monsterDamage, model)
+					state.lastMonsterHit = now
+				end
 			elseif now < state.huntUntil then
-				local targetModel, targetRoot, targetHumanoid = findLowerHealthMonster(model, config.hp, root.Position)
-				if targetRoot and targetHumanoid then
-					humanoid:MoveTo(targetRoot.Position)
-					if (targetRoot.Position - root.Position).Magnitude <= ATTACK_RANGE and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN then
-						MonsterManager.damageMonsterTarget(targetModel, monsterDamage, model)
+				local huntModel, huntRoot, huntHumanoid = findLowerHealthMonster(model, config.hp, root.Position)
+				if huntRoot and huntHumanoid then
+					humanoid:MoveTo(huntRoot.Position)
+					if (huntRoot.Position - root.Position).Magnitude <= ATTACK_RANGE
+						and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN
+					then
+						MonsterManager.damageMonsterTarget(huntModel, monsterDamage, model)
 						state.lastMonsterHit = now
 					end
 				end

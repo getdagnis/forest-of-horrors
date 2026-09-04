@@ -122,6 +122,21 @@ function navigation:GetInfightTarget(model)
 	return nil
 end
 
+function navigation:GetGuardianPetRetaliationTarget(model)
+	local untilTime = tonumber(model:GetAttribute("WMTGuardianPetRetaliationUntil")) or 0
+	if Workspace:GetServerTimeNow() >= untilTime then return nil end
+	local marker = model:FindFirstChild("WMTGuardianPetRetaliationTarget")
+	local target = marker and marker:IsA("ObjectValue") and marker.Value or nil
+	local targetHumanoid = target and MonsterManager.getMonsterHumanoid(target)
+	local targetRoot = target and rootOf(target)
+	if target and target.Parent and target:GetAttribute("WMTGuardianPet") == true
+		and targetHumanoid and targetHumanoid.Health > 0 and targetRoot
+	then
+		return target
+	end
+	return nil
+end
+
 function navigation:ReportStuck(model)
 	local failures = (model:GetAttribute("ZombieStuckFailures") or 0) + 1
 	model:SetAttribute("ZombieStuckFailures", failures)

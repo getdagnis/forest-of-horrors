@@ -8,6 +8,7 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
 local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 local MonsterBlasterConfig = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
+local trustAimEvent = ReplicatedStorage:WaitForChild("WMTGuardianTrustAim")
 
 local WEAPON_COLORS = {
 	MonsterGun = Color3.fromRGB(255, 105, 180),
@@ -27,6 +28,9 @@ highlight.Parent = workspace
 local lastContourUpdateAt = 0
 local lastContourWeapon
 local lastContourTarget
+local lastTrustAimAt = 0
+local lastTrustAimTarget
+local TRUST_AIM_UPDATE_INTERVAL = 0.10
 
 local function reportDirectContour(weapon, target)
 
@@ -45,6 +49,23 @@ local function reportDirectContour(weapon, target)
 	lastContourWeapon = weapon
 	lastContourTarget = target
 	event:FireServer(weapon, ray.Origin - root.Position, ray.Direction.Unit, target)
+end
+
+local function reportGuardianTrustAim(weapon, target)
+	if target.Name ~= "weird monster thing" or target:GetAttribute("WMTGuardianPet") == true then return end
+	local now = os.clock()
+	if target == lastTrustAimTarget and now - lastTrustAimAt < TRUST_AIM_UPDATE_INTERVAL then return end
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local ray = GunAim.getRay(player)
+	if not root or not ray then return end
+
+	lastTrustAimAt = now
+	lastTrustAimTarget = target
+	-- The server re-casts this exact camera ray and owns every trust timer. This
+	-- pulse exists only while the same direct, visible weapon contour is shown.
+	trustAimEvent:FireServer(target, weapon, ray.Origin - root.Position, ray.Direction.Unit)
 end
 
 local function getEquippedWeapon()
@@ -80,6 +101,7 @@ RunService.RenderStepped:Connect(function()
 		highlight.Adornee = nil
 		lastContourWeapon = nil
 		lastContourTarget = nil
+		lastTrustAimTarget = nil
 		return
 	end
 	-- Weapon-ready camera mode is centered for desktop, touch, and focus aim.
@@ -93,9 +115,11 @@ RunService.RenderStepped:Connect(function()
 		highlight.Adornee = monster
 		highlight.Enabled = true
 		reportDirectContour(weapon, monster)
+		reportGuardianTrustAim(weapon, monster)
 	else
 		highlight.Enabled = false
 		highlight.Adornee = nil
 		lastContourTarget = nil
+		lastTrustAimTarget = nil
 	end
 end)

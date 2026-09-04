@@ -10,10 +10,10 @@ local SoundService = game:GetService("SoundService")
 local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
-local CLOSE_CROWD_RANGE = 60
+local CLOSE_CROWD_RANGE = 50
 local CROWD_RADAR_RANGE = 30
-local NORMAL_RADAR_RANGE = 60
-local SEARCH_RADAR_RANGES = { 60, 70, 80, 90, 100 }
+local NORMAL_RADAR_RANGE = 50
+local SEARCH_RADAR_RANGES = { 50, 70, 100, 130, 160, 200 }
 local MAX_RADAR_RANGE = SEARCH_RADAR_RANGES[#SEARCH_RADAR_RANGES]
 local UPDATE_SECONDS = 0.12
 local DOT_SIZE = 6
@@ -89,7 +89,7 @@ local selfCorner = Instance.new("UICorner")
 selfCorner.CornerRadius = UDim.new(1, 0)
 selfCorner.Parent = selfDot
 
--- Only appears when the adaptive search reaches 100 studs without finding a
+-- Only appears when the adaptive search reaches 200 studs without finding a
 -- monster. It points to the nearest monster that is still beyond radar range.
 local outsideCue = Instance.new("Frame")
 outsideCue.Name = "NearestOutsideCue"
@@ -120,7 +120,7 @@ for index = 1, MAX_DOTS do
 	corner.CornerRadius = UDim.new(1, 0)
 	corner.Parent = dot
 	local ring = Instance.new("UIStroke")
-	ring.Name = "BombRing"
+	ring.Name = "ContactRing"
 	ring.Color = BOMB_DOT_COLOR
 	ring.Thickness = 1.5
 	ring.Enabled = false
@@ -215,11 +215,14 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 
 	-- Adaptive range: dense close crowds collapse to 30; a normal local threat
-	-- stays at 50; otherwise expand in exact 10-stud steps until something is found.
+	-- stays at 50; otherwise expand through 70/100/130/160 to 200 studs.
 	local closeCount = 0
 	local normalCount = 0
 	for _, monster in ipairs(livingMonsters) do
-		if monster.distance <= CLOSE_CROWD_RANGE then
+		-- WMTs remain visible as outlined red contacts, but they are calm world
+		-- actors rather than battle contacts and must not stop the search from
+		-- expanding toward actual round monsters.
+		if MonsterManager.isRoundTracked(monster.model) and monster.distance <= CLOSE_CROWD_RANGE then
 			closeCount += 1
 			normalCount += 1
 		end
@@ -232,7 +235,10 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			radarRange = searchRange
 			local found = false
 			for _, monster in ipairs(livingMonsters) do
-				if monster.distance <= searchRange then found = true break end
+				if MonsterManager.isRoundTracked(monster.model) and monster.distance <= searchRange then
+					found = true
+					break
+				end
 			end
 			if found then break end
 		end
@@ -260,15 +266,23 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			local scale = 0.43 / radarRange
 			local dot = dots[shown]
 			local bomb = monster.model.Name == "BombMonster"
+			local guardian = monster.model.Name == "weird monster thing"
 			local dotSize = bomb and DOT_SIZE * 2 or (monster.priority and DOT_SIZE * 2 or DOT_SIZE)
 			dot.Size = UDim2.fromOffset(dotSize, dotSize)
 			dot.BackgroundColor3 = bomb and BOMB_DOT_COLOR or MONSTER_DOT_COLOR
-			dot.BackgroundTransparency = bomb and 1 or 0
-			local ring = dot:FindFirstChild("BombRing")
-			if ring and ring:IsA("UIStroke") then ring.Enabled = bomb end
+			dot.BackgroundTransparency = (bomb or guardian) and 1 or 0
+			local ring = dot:FindFirstChild("ContactRing")
+			if ring and ring:IsA("UIStroke") then
+				ring.Color = bomb and BOMB_DOT_COLOR or MONSTER_DOT_COLOR
+				ring.Enabled = bomb or guardian
+			end
 			dot.Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
 			dot.Visible = true
-		elseif radarRange == MAX_RADAR_RANGE and monster.distance > MAX_RADAR_RANGE and (not nearestOutside or monster.distance < nearestOutside.distance) then
+		elseif MonsterManager.isRoundTracked(monster.model)
+			and radarRange == MAX_RADAR_RANGE
+			and monster.distance > MAX_RADAR_RANGE
+			and (not nearestOutside or monster.distance < nearestOutside.distance)
+		then
 			nearestOutside = monster
 		end
 	end

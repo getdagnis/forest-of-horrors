@@ -19,6 +19,9 @@ local roundTemplates = {}
 
 local spawnCounts = {}
 local sessionBest = {} -- player -> {score, spawn}
+-- Completed lives only. This deliberately stays separate from sessionBest,
+-- which updates as a player earns points during their currently active life.
+local completedSpawnBest = {} -- player -> {score, kills, spawn}
 local serverBest = { score = 0, playerName = "-", spawn = 0 }
 local pendingRespawns = 0
 local roundComplete = false
@@ -44,6 +47,17 @@ local function getRespawnTime(model)
 		return MonsterBombConfig.RESPAWN_TIME
 	end
 	return RESPAWN_TIME
+end
+
+-- A kill should matter much more in a small server. Roll once, immediately
+-- after an otherwise respawn-eligible death; later joins/leaves cannot change
+-- that outcome during the respawn delay.
+local function getRespawnChance()
+	local playerCount = #Players:GetPlayers()
+	if playerCount <= 1 then return 0.25 end
+	if playerCount <= 3 then return 0.50 end
+	if playerCount >= 10 then return 0.90 end
+	return 0.75
 end
 
 local function getMonsterMaxCount()
@@ -90,6 +104,7 @@ local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
 local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
 local restartRoundEvent = getOrCreateRemoteEvent("RestartRound")
 local monsterMilestoneEvent = getOrCreateRemoteEvent("MonsterMilestone")
+local bestSpawnAnnouncementEvent = getOrCreateRemoteEvent("BestSpawnAnnouncement")
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
@@ -545,10 +560,15 @@ local function onMonsterKilled(hum, model)
 			permanentWeaponKill = false
 		end
 
-		-- Bombs use the same finite round lives as every other monster. Each
-		-- remaining life still respawns reliably, but a round can eventually clear.
+		-- Bombs are reusable counter-monsters: their reliable respawn preserves a
+		-- way to thin nearby ordinary monsters. Only ordinary round monsters use
+		-- the player-count respawn chance below.
 		local livesAfterDeath = permanentWeaponKill and 0 or math.max(0, (data.livesRemaining or 1) - 1)
-		if livesAfterDeath == 0 or roundFailed or roundComplete then
+		local willRespawn = livesAfterDeath > 0 and (
+			model.Name == MonsterBombConfig.MODEL_NAME
+			or math.random() < getRespawnChance()
+		)
+		if livesAfterDeath == 0 or not willRespawn or roundFailed or roundComplete then
 			task.delay(CORPSE_DISPLAY_TIME, function()
 				if model.Parent then
 					model:Destroy()
@@ -799,6 +819,31 @@ local function onPlayerAdded(player)
 	setupLeaderstats(player)
 
 	player.CharacterAdded:Connect(function()
+		-- A "best spawn" is judged only after a life has ended. This prevents an
+		-- in-progress run from declaring itself best just because its score rises.
+		local completedSpawn = spawnCounts[player] or 0
+		if completedSpawn > 0 then
+			local completedScore = scores[player] or 0
+			local completedKills = kills[player] or 0
+			local previousBest = completedSpawnBest[player]
+			local isNewBest = not previousBest or completedScore > previousBest.score
+
+			if isNewBest then
+				completedSpawnBest[player] = {
+					score = completedScore,
+					kills = completedKills,
+					spawn = completedSpawn,
+				}
+			end
+
+			-- The first life establishes the personal baseline silently. From the
+			-- second completed spawn onward, announce a genuine new points record
+			-- when the player begins their next life.
+			if completedSpawn >= 2 and isNewBest then
+				bestSpawnAnnouncementEvent:FireClient(player, completedScore, completedKills)
+			end
+		end
+
 		spawnCounts[player] += 1
 		scores[player] = 0
 		kills[player] = 0
@@ -814,4 +859,5 @@ end
 
 Players.PlayerRemoving:Connect(function(player)
 	multikillStates[player] = nil
+	completedSpawnBest[player] = nil
 end)

@@ -6,9 +6,8 @@ local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local monsterCountEvent = ReplicatedStorage:WaitForChild("MonsterCountUpdate")
 
-local SHOW_AT_COUNT = 20
-local MIN_DISTANCE = 50
-local MAX_DISTANCE = 250
+local SHOW_AT_COUNT = 50
+local MAX_DISTANCE = 200
 local UPDATE_EVERY = 0.35
 
 local currentMonsterCount = math.huge
@@ -37,7 +36,7 @@ end
 
 local function isAliveMonster(model)
 	if not model:IsA("Model") then return false end
-	if not MonsterManager.getConfig(model) then return false end
+	if not MonsterManager.isRoundTracked(model) then return false end
 
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	return humanoid and humanoid.Health > 0
@@ -68,31 +67,6 @@ local function getHighlight(model)
 	return highlight
 end
 
-local function isBehindObject(monsterModel, monsterPart)
-	local camera = Workspace.CurrentCamera
-	local character = getCharacter()
-
-	if not camera or not character then
-		return false
-	end
-
-	local origin = camera.CFrame.Position
-	local target = monsterPart.Position
-	local direction = target - origin
-
-	if direction.Magnitude <= 0 then
-		return false
-	end
-
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character, monsterModel }
-	params.IgnoreWater = true
-
-	local result = Workspace:Raycast(origin, direction, params)
-	return result ~= nil
-end
-
 local function updateContours()
 	local canShowAny = currentMonsterCount <= SHOW_AT_COUNT
 
@@ -118,9 +92,10 @@ local function updateContours()
 
 			if part then
 				local distance = (part.Position - playerRoot.Position).Magnitude
-				local visible = distance >= MIN_DISTANCE
-					and distance <= MAX_DISTANCE
-					and isBehindObject(item, part)
+				-- In the last fifty hostile contacts, every round monster within
+				-- 200 studs receives the locator contour, whether in sight or behind
+				-- cover. Guardians stay out because they are not round monsters.
+				local visible = distance <= MAX_DISTANCE
 
 				getHighlight(item).Enabled = visible
 			end

@@ -139,10 +139,14 @@ local function getMonsterModelFromHit(instance)
 	end
 end
 
-local function makeRaycastParams(character)
+local function makeRaycastParams(character, additionalIgnored)
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { character, tool }
+	local ignored = { character, tool }
+	for _, instance in ipairs(additionalIgnored or {}) do
+		table.insert(ignored, instance)
+	end
+	params.FilterDescendantsInstances = ignored
 	params.IgnoreWater = true
 	return params
 end
@@ -214,7 +218,20 @@ end)
 
 local function getServerShotResult(player, cameraOrigin, direction)
 	local params = makeRaycastParams(player.Character)
-	local result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * Config.RANGE, params)
+	-- Let the exact crosshair ray win. Only an actual miss receives forgiving
+	-- Spherecast assistance, which ignores WMTs so a nearby guardian cannot
+	-- bend a Blaster shot away from the intended hostile target.
+	local result = workspace:Raycast(cameraOrigin, direction * Config.RANGE, params)
+	if not result then
+		local ignored = {}
+		while true do
+			result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * Config.RANGE,
+				makeRaycastParams(player.Character, ignored))
+			local candidate = result and getMonsterModelFromHit(result.Instance)
+			if not candidate or MonsterManager.isWeaponAimAssistTarget(candidate) then break end
+			table.insert(ignored, candidate)
+		end
+	end
 	local endPosition = result and result.Position or (cameraOrigin + direction * Config.RANGE)
 	local muzzle = getMuzzlePosition()
 	if muzzle then

@@ -270,6 +270,22 @@ ZombieAI.new = function(model, navigation)
 
 		local target = AIUtilities:GetClosestVisibleTarget(model, playerCharacters, ignoredCharacters, configs["FieldOfView"])
 
+		-- A guardian pet can provoke only the monster it struck. A visible player
+		-- remains the stronger priority unless the pet has actually stepped between
+		-- them and is closer to the zombie, which is how protection earns retaliation.
+		local retaliationTarget = navigation and navigation:GetGuardianPetRetaliationTarget(model)
+		local retaliationHumanoid = retaliationTarget and getHumanoid(retaliationTarget)
+		local retaliationRoot = retaliationTarget and getRoot(retaliationTarget)
+		if retaliationTarget and retaliationHumanoid and retaliationHumanoid.Health > 0 and retaliationRoot then
+			local playerRoot = target and getRoot(target)
+			if not playerRoot
+				or (retaliationRoot.Position - root.Position).Magnitude < (playerRoot.Position - root.Position).Magnitude
+			then
+				ZombieTarget = retaliationTarget
+				return true
+			end
+		end
+
 		if target then
 			ZombieTarget = target
 			return true
@@ -324,7 +340,10 @@ ZombieAI.new = function(model, navigation)
 		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
 		if not root or not targetRoot then return true end
 		if MonsterManager.getConfig(ZombieTarget)
-			and (not navigation or navigation:GetInfightTarget(model) ~= ZombieTarget)
+			and (not navigation or (
+				navigation:GetInfightTarget(model) ~= ZombieTarget
+				and navigation:GetGuardianPetRetaliationTarget(model) ~= ZombieTarget
+			))
 		then
 			return true
 		end

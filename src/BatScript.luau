@@ -112,13 +112,14 @@ local function damageMonster(model)
 
 	hitModels[model] = true
 	tagHumanoid(targetHumanoid)
-	MonsterManager.recordPlayerDamage(targetHumanoid, player, DAMAGE_PER_HIT, SCORE_COLOR)
+	local damage = MonsterManager.getPlayerWeaponDamage(model, DAMAGE_PER_HIT)
+	MonsterManager.recordPlayerDamage(targetHumanoid, player, damage, SCORE_COLOR)
 	-- The knockback alone is cosmetic if the zombie immediately issues another
 	-- MoveTo.  Its AI honours this short-lived state and then resumes normally.
 	if model.Name == "Drooling Zombie" then
 		model:SetAttribute("BatStaggeredUntil", Workspace:GetServerTimeNow() + ZOMBIE_STAGGER_SECONDS)
 	end
-	targetHumanoid:TakeDamage(DAMAGE_PER_HIT)
+	targetHumanoid:TakeDamage(damage)
 	if not hitSoundPlayed then
 		hitSoundPlayed = true
 		Sounds.Hit:Play()

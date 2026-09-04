@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
+local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 
@@ -24,11 +25,32 @@ local leaderboard = endPanel:WaitForChild("Leaderboard")
 local restartButton = endPanel:WaitForChild("RestartButton")
 
 -- Hide the Roblox default backpack/inventory while the welcome panel is visible
-StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+end)
 
-okButton.MouseButton1Click:Connect(function()
+local function closeWelcome()
+	if not welcomeShade.Visible then return end
 	welcomeShade.Visible = false
-	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
+	end)
+end
+
+-- Activated covers mouse, touch, gamepad, and keyboard. The input fallback is
+-- deliberate: a legacy full-screen GUI above the button must not trap a new
+-- player inside the welcome screen.
+okButton.Activated:Connect(closeWelcome)
+UserInputService.InputBegan:Connect(function(input)
+	if not welcomeShade.Visible then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch
+		or input.KeyCode == Enum.KeyCode.Return
+		or input.KeyCode == Enum.KeyCode.Space
+		or input.KeyCode == Enum.KeyCode.Escape
+	then
+		closeWelcome()
+	end
 end)
 
 local function formatLeaderboard(list)

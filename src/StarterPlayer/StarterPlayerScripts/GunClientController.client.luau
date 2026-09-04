@@ -123,7 +123,7 @@ local function findLockTarget(tool)
 		else
 			local humanoid = MonsterManager.getMonsterHumanoid(model)
 			local displayPart = getDisplayPart(model)
-			if humanoid and humanoid.Health > 0 and displayPart then
+			if MonsterManager.isWeaponAimAssistTarget(model) and humanoid and humanoid.Health > 0 and displayPart then
 				local distance = (displayPart.Position - root.Position).Magnitude
 				local cameraOffset = displayPart.Position - camera.CFrame.Position
 				if distance <= LOCK_ACQUIRE_DISTANCE and cameraOffset.Magnitude > 0.01

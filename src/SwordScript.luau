@@ -172,8 +172,9 @@ function Blow(Hit)
 
 	UntagHumanoid(monsterHumanoid)
 	TagHumanoid(monsterHumanoid, Player)
-	MonsterManager.recordPlayerDamage(monsterHumanoid, Player, Damage, SCORE_COLOR)
-	monsterHumanoid:TakeDamage(Damage)
+	local effectiveDamage = MonsterManager.getPlayerWeaponDamage(monsterModel, Damage)
+	MonsterManager.recordPlayerDamage(monsterHumanoid, Player, effectiveDamage, SCORE_COLOR)
+	monsterHumanoid:TakeDamage(effectiveDamage)
 	flashMonster(monsterModel)
 	pushMonsterBack(monsterModel)
 end

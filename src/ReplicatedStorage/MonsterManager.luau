@@ -138,6 +138,15 @@ function MonsterManager.isZombieGroupTarget(model)
 	return config and config.zombieGroupTarget == true or false
 end
 
+-- WMTs remain directly damageable (and a pet ritual still needs a direct
+-- contour), but a nearby WMT must never become a forgiving weapon aim-assist
+-- target instead of the hostile monster under the player's crosshair.
+function MonsterManager.isWeaponAimAssistTarget(model)
+	return model ~= nil
+		and MonsterManager.getConfig(model) ~= nil
+		and model.Name ~= "weird monster thing"
+end
+
 local function scaledDamageForTarget(model, requestedDamage, healthField)
 	local config = MonsterManager.getConfig(model)
 	if not config then return 0 end
@@ -156,6 +165,10 @@ function MonsterManager.damageMonsterTarget(targetModel, requestedDamage, source
 	local actualDamage = math.min(scaledDamageForTarget(targetModel, requestedDamage, "hpVsMonsters"), humanoid.Health)
 	if actualDamage > 0 then
 		if sourceModel and sourceModel:IsA("Model") then
+			-- A new monster/bomb hit supersedes any old player hit. Leaving the
+			-- previous player ID here lets later systems mistake neutral damage for
+			-- a player attack.
+			humanoid:SetAttribute("LastAttackerId", nil)
 			humanoid:SetAttribute("LastMonsterAttacker", MonsterManager.getShortName(sourceModel))
 			humanoid:SetAttribute("LastMonsterAttackCause", sourceModel.Name == "BombMonster" and "bomb" or "monster")
 		end
@@ -167,6 +180,11 @@ end
 -- Returns the player weapon damage after target-specific resistance. Callers
 -- must use this value for both score attribution and Humanoid:TakeDamage.
 function MonsterManager.getPlayerWeaponDamage(targetModel, requestedDamage)
+	-- A bonded guardian remains vulnerable to its owner, but only takes half
+	-- normal player-weapon damage. Unbonded WMTs retain their existing values.
+	if targetModel and targetModel:GetAttribute("WMTGuardianPet") == true then
+		requestedDamage = (tonumber(requestedDamage) or 0) * 0.5
+	end
 	return scaledDamageForTarget(targetModel, requestedDamage, "hpVsPlayers")
 end
 

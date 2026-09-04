@@ -52,6 +52,7 @@ local scoreEvent = ReplicatedStorage:WaitForChild("ScoreUpdate")
 local monsterCountEvent = ReplicatedStorage:WaitForChild("MonsterCountUpdate")
 local recordsEvent = ReplicatedStorage:WaitForChild("RecordsUpdate")
 local radarEvents = ReplicatedStorage:WaitForChild("RadarEvents")
+local bestSpawnAnnouncementEvent = ReplicatedStorage:WaitForChild("BestSpawnAnnouncement")
 
 local currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
 local monsterHistory, recordRows, allTimeBest = {}, {}, nil
@@ -153,6 +154,19 @@ healText.Size = UDim2.fromOffset(260, 46)
 healText.TextSize = large_font_size
 healText.Visible = false
 healText.ZIndex = 22
+
+-- Uses the same bold, outlined, score-popup treatment as score awards; it is
+-- a short-lived celebration, never another persistent HUD card.
+local bestSpawnText = newText("BestSpawnAnnouncement", gui, Color3.fromRGB(255, 238, 150), Enum.Font.GothamBold)
+bestSpawnText.AnchorPoint = Vector2.new(0.5, 0.5)
+bestSpawnText.Position = UDim2.fromScale(0.5, 0.54)
+bestSpawnText.Size = UDim2.fromOffset(300, 46)
+bestSpawnText.TextScaled = true
+bestSpawnText.TextStrokeTransparency = 0
+bestSpawnText.TextTransparency = 1
+bestSpawnText.Visible = false
+bestSpawnText.ZIndex = 22
+local bestSpawnAnnouncementToken = 0
 
 local scorePanel = newFrame("Scoreboard", gui, Color3.fromRGB(8, 13, 20))
 scorePanel.AnchorPoint = Vector2.new(0, 0)
@@ -496,6 +510,30 @@ local function renderScoreboard()
 end
 
 scoreEvent.OnClientEvent:Connect(function(score, kills) currentScore, currentKills = tonumber(score) or 0, tonumber(kills) or currentKills end)
+bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount)
+	bestSpawnAnnouncementToken += 1
+	local token = bestSpawnAnnouncementToken
+	bestSpawnText.Text = string.format("best spawn! %dp/%dk", tonumber(points) or 0, tonumber(killCount) or 0)
+	bestSpawnText.TextTransparency = 1
+	bestSpawnText.Visible = true
+	TweenService:Create(bestSpawnText, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		TextTransparency = 0,
+	}):Play()
+
+	task.delay(3, function()
+		if token ~= bestSpawnAnnouncementToken or not bestSpawnText.Parent then return end
+		TweenService:Create(bestSpawnText, TweenInfo.new(0.3), {
+			TextTransparency = 1,
+			TextStrokeTransparency = 1,
+		}):Play()
+		task.delay(0.35, function()
+			if token == bestSpawnAnnouncementToken and bestSpawnText.Parent then
+				bestSpawnText.Visible = false
+				bestSpawnText.TextStrokeTransparency = 0
+			end
+		end)
+	end)
+end)
 monsterCountEvent.OnClientEvent:Connect(function(count)
 	monstersLeft = math.max(0, tonumber(count) or 0)
 	table.insert(monsterHistory, { time = workspace:GetServerTimeNow(), count = monstersLeft })
