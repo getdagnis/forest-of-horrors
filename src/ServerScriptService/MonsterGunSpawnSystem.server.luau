@@ -15,6 +15,7 @@ local WEAPONS = {
 local RESPAWN_DELAY = 12
 local RECONCILE_RADIUS = 8
 local states = {}
+local observedSpawnFolders = {}
 
 local function getWeaponName(spawnPoint)
 	local attributed = spawnPoint:GetAttribute("WeaponName")
@@ -181,6 +182,8 @@ local function setupSpawnPoint(spawnPoint)
 end
 
 local function observeSpawnFolder(folder)
+	if observedSpawnFolders[folder] then return end
+	observedSpawnFolders[folder] = true
 	for _, child in folder:GetChildren() do
 		setupSpawnPoint(child)
 	end
@@ -189,13 +192,17 @@ local function observeSpawnFolder(folder)
 	end)
 end
 
-local spawnFolder = workspace:FindFirstChild("WeaponSpawnPoints")
-if spawnFolder then
-	observeSpawnFolder(spawnFolder)
-else
-	workspace.ChildAdded:Connect(function(child)
-		if child.Name == "WeaponSpawnPoints" then
-			observeSpawnFolder(child)
-		end
-	end)
+-- Spawn folders are allowed inside map buildings as well as directly under
+-- Workspace. Search all existing descendants and watch future additions so a
+-- nested MG2/MG3 point is not silently ignored.
+for _, instance in workspace:GetDescendants() do
+	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
+		observeSpawnFolder(instance)
+	end
 end
+
+workspace.DescendantAdded:Connect(function(instance)
+	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
+		observeSpawnFolder(instance)
+	end
+end)

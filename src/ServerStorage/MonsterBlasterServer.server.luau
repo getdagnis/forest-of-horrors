@@ -343,6 +343,10 @@ end
 local function damageMonster(player, model, damage, blastOrigin)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
+	-- A bonded guardian may be fighting inside either the direct beam or ground
+	-- shockwave. MonsterGun damage remains deliberately reduced through
+	-- MonsterManager, but the high-powered Blaster must never hurt or push a pet.
+	if model:GetAttribute("WMTGuardianPet") == true then return end
 	if model.Name == "BombMonster" and model:GetAttribute("BombWarningActive") == true then return end
 
 	local effectiveDamage = MonsterManager.getPlayerWeaponDamage(model, damage)

@@ -12,6 +12,8 @@ local SoundService = game:GetService("SoundService")
 
 local scores = {} -- Player -> current score
 local kills = {} -- Player -> monsters for which the player earned score
+local spawnScores = {} -- Player -> score earned during the current life
+local spawnKills = {} -- Player -> kills earned during the current life
 local connected = {} -- humanoid -> true (in-memory, so clones re-register)
 local spawns = {} -- model -> {template, cframe, livesRemaining} used for respawning in place
 local managedMonsters = {} -- model -> true; only these models are allowed into the round count
@@ -405,12 +407,13 @@ local function showScorePopup(model, awards, color)
 end
 
 local function updateScoreRecords(player)
-	local currentScore = scores[player]
+	local currentScore = scores[player] or 0
+	local currentSpawnScore = spawnScores[player] or 0
 	local currentSpawn = spawnCounts[player] or 1
 
-	if not sessionBest[player] or currentScore > sessionBest[player].score then
+	if not sessionBest[player] or currentSpawnScore > sessionBest[player].score then
 		sessionBest[player] = {
-			score = currentScore,
+			score = currentSpawnScore,
 			spawn = currentSpawn,
 		}
 	end
@@ -443,6 +446,7 @@ local function playMonsterKillAnnouncement(player)
 
 	-- The sound and bonus are one reward: an actual announcement is always +5.
 	scores[player] = (scores[player] or 0) + MONSTER_KILL_BONUS
+	spawnScores[player] = (spawnScores[player] or 0) + MONSTER_KILL_BONUS
 	setLeaderboardStats(player, scores[player], kills[player] or 0)
 	scoreEvent:FireClient(player, scores[player], kills[player] or 0)
 	updateScoreRecords(player)
@@ -476,6 +480,8 @@ end
 local function awardScore(player, points, isMajorKill)
 	scores[player] = (scores[player] or 0) + points
 	kills[player] = (kills[player] or 0) + 1
+	spawnScores[player] = (spawnScores[player] or 0) + points
+	spawnKills[player] = (spawnKills[player] or 0) + 1
 	setLeaderboardStats(player, scores[player], kills[player])
 	scoreEvent:FireClient(player, scores[player], kills[player])
 	updateScoreRecords(player)
@@ -695,6 +701,8 @@ local function resetScores()
 	for _, player in Players:GetPlayers() do
 		scores[player] = 0
 		kills[player] = 0
+		spawnScores[player] = 0
+		spawnKills[player] = 0
 		multikillStates[player] = nil
 		setLeaderboardStats(player, 0, 0)
 		scoreEvent:FireClient(player, 0, 0)
@@ -810,10 +818,13 @@ task.spawn(function()
 	end
 end)
 
--- Reset each player's score when they respawn
+-- Initialize round totals once; a character respawn starts a new life without
+-- erasing the player's score or kill total for the current game.
 local function onPlayerAdded(player)
 	scores[player] = 0
 	kills[player] = 0
+	spawnScores[player] = 0
+	spawnKills[player] = 0
 	multikillStates[player] = nil
 	spawnCounts[player] = 0
 	setupLeaderstats(player)
@@ -823,8 +834,8 @@ local function onPlayerAdded(player)
 		-- in-progress run from declaring itself best just because its score rises.
 		local completedSpawn = spawnCounts[player] or 0
 		if completedSpawn > 0 then
-			local completedScore = scores[player] or 0
-			local completedKills = kills[player] or 0
+			local completedScore = spawnScores[player] or 0
+			local completedKills = spawnKills[player] or 0
 			local previousBest = completedSpawnBest[player]
 			local isNewBest = not previousBest or completedScore > previousBest.score
 
@@ -845,10 +856,12 @@ local function onPlayerAdded(player)
 		end
 
 		spawnCounts[player] += 1
-		scores[player] = 0
-		kills[player] = 0
-		setLeaderboardStats(player, 0, 0)
-		scoreEvent:FireClient(player, 0, 0)
+		-- Scores and kills are the player's totals for this round. Only the
+		-- per-life counters reset, so death no longer makes the main HUD read 0/0.
+		spawnScores[player] = 0
+		spawnKills[player] = 0
+		setLeaderboardStats(player, scores[player] or 0, kills[player] or 0)
+		scoreEvent:FireClient(player, scores[player] or 0, kills[player] or 0)
 		fireRecords(player)
 	end)
 end
@@ -860,4 +873,6 @@ end
 Players.PlayerRemoving:Connect(function(player)
 	multikillStates[player] = nil
 	completedSpawnBest[player] = nil
+	spawnScores[player] = nil
+	spawnKills[player] = nil
 end)

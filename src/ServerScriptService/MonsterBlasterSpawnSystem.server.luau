@@ -10,6 +10,13 @@ local WEAPON_NAME = "MonsterBlaster"
 local RESPAWN_DELAY = 12
 local RECONCILE_RADIUS = 2
 local states = {}
+local observedSpawnFolders = {}
+
+local LEGACY_BLASTER_SPAWNER_NAMES = {
+	BlasterSpawner = true,
+	MonsterBlasterSpawner = true,
+	MonsterBlasterGunSpawner = true,
+}
 
 local function isHeldByPlayer(tool)
 	local parent = tool.Parent
@@ -151,17 +158,33 @@ local function setupSpawnPoint(spawnPoint)
 end
 
 local function observeSpawnFolder(folder)
+	if observedSpawnFolders[folder] then return end
+	observedSpawnFolders[folder] = true
 	for _, child in folder:GetChildren() do setupSpawnPoint(child) end
 	folder.ChildAdded:Connect(function(child)
 		task.defer(setupSpawnPoint, child)
 	end)
 end
 
-local spawnFolder = workspace:FindFirstChild("WeaponSpawnPoints")
-if spawnFolder then
-	observeSpawnFolder(spawnFolder)
-else
-	workspace.ChildAdded:Connect(function(child)
-		if child.Name == "WeaponSpawnPoints" then observeSpawnFolder(child) end
-	end)
+local function disableLegacySpawner(instance)
+	if instance:IsA("BaseScript") and LEGACY_BLASTER_SPAWNER_NAMES[instance.Name] then
+		instance.Disabled = true
+	end
 end
+
+-- WeaponSpawnPoints is sometimes nested inside a map building (for example
+-- TreeHouse). The old root-only lookup silently ignored those points, so the
+-- first pickup worked only when a separate legacy spawner happened to create it.
+for _, instance in workspace:GetDescendants() do
+	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
+		observeSpawnFolder(instance)
+	end
+	disableLegacySpawner(instance)
+end
+
+workspace.DescendantAdded:Connect(function(instance)
+	disableLegacySpawner(instance)
+	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
+		observeSpawnFolder(instance)
+	end
+end)
