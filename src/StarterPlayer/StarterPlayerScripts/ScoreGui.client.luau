@@ -4,6 +4,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local TextService = game:GetService("TextService")
@@ -31,6 +32,18 @@ local details_font_size = 8
 local MIN_REPORTED_HEAL = 5
 
 local player = Players.LocalPlayer
+
+-- ScoreGui is the game's health HUD. Hide Roblox's separate CoreGui health
+-- meter so it does not appear over the scoreboard after taking damage.
+pcall(function()
+	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+end)
+task.defer(function()
+	pcall(function()
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+	end)
+end)
+
 local scoreEvent = ReplicatedStorage:WaitForChild("ScoreUpdate")
 local monsterCountEvent = ReplicatedStorage:WaitForChild("MonsterCountUpdate")
 local recordsEvent = ReplicatedStorage:WaitForChild("RecordsUpdate")
@@ -412,7 +425,9 @@ local function bindCharacter(character)
 		updateHealthPanel(humanoid)
 		if newHealth < oldHealth and oldHealth > 0 then
 			showDamage((oldHealth - newHealth) / oldHealth * 100)
-		elseif newHealth - oldHealth >= MIN_REPORTED_HEAL then
+		elseif humanoid.Health > 0
+			and humanoid:GetState() ~= Enum.HumanoidStateType.Dead
+			and newHealth - oldHealth >= MIN_REPORTED_HEAL then
 			showHeal(newHealth - oldHealth)
 		end
 	end)

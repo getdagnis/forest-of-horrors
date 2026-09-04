@@ -35,6 +35,10 @@ local function setupCharacter(player, character)
 
 	humanoid.MaxHealth = DEFAULT_MAX_HP + bonusHP
 	humanoid.Health = DEFAULT_MAX_HP + bonusHP
+	-- ScoreGui owns the player's health presentation. Suppress Roblox's
+	-- world-space Humanoid bar so it cannot cover the scoreboard/radar.
+	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
 	-- Store the bonus on the humanoid too for convenience
 	humanoid:SetAttribute("BonusHP", bonusHP)

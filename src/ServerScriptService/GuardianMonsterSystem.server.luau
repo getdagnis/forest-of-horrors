@@ -28,6 +28,7 @@ local PET_ATTACK_COOLDOWN = 0.8
 local SHIELD_DURATION = 30
 local SHIELD_COOLDOWN = 45
 local UPDATE_INTERVAL = 0.25
+local GUARDIAN_CORPSE_DISPLAY_TIME = 60 -- battlefield remains; guardians do not respawn here
 
 local function getOrCreateRemoteEvent(name)
 	local event = ReplicatedStorage:FindFirstChild(name)
@@ -374,6 +375,16 @@ local function setupGuardian(model)
 	end)
 	state.lastHealth = humanoid.Health
 	state.attackerDeaths = {}
+	humanoid.Died:Connect(function()
+		-- Guardians are intentionally outside MonsterSystem's respawn ledger.
+		-- Keep the defeated body as battlefield evidence for a bounded duration,
+		-- then remove it so dead guardians cannot accumulate forever.
+		task.delay(GUARDIAN_CORPSE_DISPLAY_TIME, function()
+			if model.Parent and humanoid.Health <= 0 then
+				model:Destroy()
+			end
+		end)
+	end)
 	task.spawn(updateGuardian, state)
 end
 

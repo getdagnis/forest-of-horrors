@@ -5,19 +5,14 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ZombieAI = require(ServerStorage:WaitForChild("ROBLOX_ZombieAI"))
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
+local AIUtilities = require(ServerStorage:WaitForChild("ROBLOX_AIUtilities"))
 
 local ZOMBIE_NAME = "Drooling Zombie"
 local managed = {}
 local brains = {}
 
--- All map-scale decisions are deliberately slow. The per-zombie module only
--- asks for a waypoint occasionally, so this never becomes a crowd hot loop.
---
--- Central flow: zombies outside this radius take small, indirect steps toward
--- the broad McDonald's area. Once inside it, they browse locally rather than
--- piling onto one exact point. Raising CENTER_RADIUS makes that relaxed region
--- larger; lowering it keeps more zombies travelling inward.
-local CENTER_RADIUS = 200
+-- The coordinator only makes slow, bounded target assignments. It never
+-- invents map waypoints or changes a zombie's physical position.
 
 -- Nearby players always win over map-scale flow. This keeps a zombie that can
 -- plausibly threaten a player from ignoring them just to satisfy a late-round
@@ -25,9 +20,10 @@ local CENTER_RADIUS = 200
 -- but also makes the late round less able to pull distant zombies into play.
 local PLAYER_OVERRIDE_RADIUS = 80
 
--- Late-round pressure is reassigned infrequently and capped globally/per
--- player. This adds urgency after the crowd thins without turning every zombie
--- into an immediate swarm or creating a repeated all-zombies scan every frame.
+-- Phase 1 parks the former global pressure experiment. It made a small set of
+-- remote zombies share one player target; MonsterWorldDirector will later
+-- schedule local centre scenes instead.
+local ENABLE_LEGACY_GLOBAL_PRESSURE = false
 local PRESSURE_INTERVAL = 20
 local MAX_PRESSURE_TOTAL = 6
 local MAX_PRESSURE_PER_PLAYER = 2
@@ -35,13 +31,10 @@ local MAX_PRESSURE_PER_PLAYER = 2
 -- Idle browsing must look alive even in the broad central region. Every search
 -- decision gets a different local waypoint, so zombies do not all converge on
 -- one point or simply stand still after reaching the centre.
-local IDLE_WANDER_MIN_DISTANCE = 18
-local IDLE_WANDER_MAX_DISTANCE = 55
-
 -- Infighting is a rare ambient event: one nearby group of exactly three
 -- zombies may harass one non-guardian monster. Low damage lives in
 -- MonsterManager; these limits prevent NPCs from clearing the map themselves.
-local INFIGHT_CHECK_CHANCE = 0.35
+local INFIGHT_CHECK_CHANCE = 0
 local INFIGHT_GROUP_SIZE = 3
 local INFIGHT_MAX_DISTANCE = 160
 local INFIGHT_DURATION = 14
@@ -53,8 +46,6 @@ local infightTargets = {}
 
 -- The broad central anchor is cached and refreshed only when needed. This
 -- avoids repeatedly scanning the map for the same McDonald's marker.
-local cachedMcDonaldsCenter = nil
-local nextAnchorRefresh = 0
 
 local function rootOf(model)
 	local root = model and model:FindFirstChild("HumanoidRootPart", true)
@@ -72,33 +63,6 @@ local function livingPlayerCharacters()
 		end
 	end
 	return characters
-end
-
-local function findNavigationAnchor(attributeName, names)
-	for _, instance in ipairs(Workspace:GetDescendants()) do
-		if instance:GetAttribute(attributeName) == true then
-			if instance:IsA("BasePart") then return instance.Position end
-			if instance:IsA("Model") then return instance:GetPivot().Position end
-		end
-	end
-
-	for _, name in ipairs(names) do
-		local instance = Workspace:FindFirstChild(name, true)
-		if instance then
-			if instance:IsA("BasePart") then return instance.Position end
-			if instance:IsA("Model") then return instance:GetPivot().Position end
-		end
-	end
-
-	return nil
-end
-
-local function getAnchors()
-	if time() >= nextAnchorRefresh then
-		cachedMcDonaldsCenter = findNavigationAnchor("ZombieMcDonaldsCenter", { "McDonalds", "McDonald's", "McDonald" })
-		nextAnchorRefresh = time() + 60
-	end
-	return cachedMcDonaldsCenter
 end
 
 local function hasNearbyPlayer(position, radius)
@@ -120,12 +84,6 @@ local function livingManagedZombies()
 		end
 	end
 	return zombies
-end
-
-local function randomFlatOffset(minRadius, maxRadius)
-	local angle = math.random() * math.pi * 2
-	local radius = minRadius + math.random() * (maxRadius - minRadius)
-	return Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius)
 end
 
 local navigation = {}
@@ -181,25 +139,10 @@ function navigation:ReportStuck(model)
 end
 
 function navigation:GetIdleDestination(model, position)
-	-- Real nearby players always win over ambient map movement.
-	if hasNearbyPlayer(position, PLAYER_OVERRIDE_RADIUS) then
-		return nil
-	end
-
-	local mcdonaldsCenter = getAnchors()
-	if not mcdonaldsCenter or (position - mcdonaldsCenter).Magnitude <= CENTER_RADIUS then
-		-- Different random local destinations make the central region feel browsed
-		-- rather than empty, without using any player-directed global lure.
-		return position + randomFlatOffset(IDLE_WANDER_MIN_DISTANCE, IDLE_WANDER_MAX_DISTANCE)
-	end
-
-	-- A 6-14 stud centreward step every 12+ seconds makes this background flow,
-	-- not a rush: typical map distances take roughly 10-30 minutes to converge.
-	local towardCenter = mcdonaldsCenter - position
-	local flat = Vector3.new(towardCenter.X, 0, towardCenter.Z)
-	if flat.Magnitude < 1 then return nil end
-	local sideways = Vector3.new(-flat.Z, 0, flat.X).Unit * math.random(-8, 8)
-	return position + flat.Unit * math.random(6, 14) + sideways
+	-- A local walking choice restores visible everyday activity without imposing
+	-- a centre quota or pulling any zombie across the map. The imported brain
+	-- owns the actual path and may abandon this destination if it is blocked.
+	return AIUtilities:FindCloseEmptySpace(model)
 end
 
 local function refreshInfightTargets()
@@ -243,24 +186,17 @@ local function refreshInfightTargets()
 	end
 end
 
-local function isLateRound()
-	if Workspace:GetAttribute("LateRound") == true then return true end
-	local maximum = Workspace:GetAttribute("MonsterMaxCount") or 90
-	if maximum <= 0 then return false end
-
-	local alive = 0
-	for _, instance in ipairs(Workspace:GetDescendants()) do
-		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
-			local humanoid = MonsterManager.getMonsterHumanoid(instance)
-			if humanoid and humanoid.Health > 0 then alive += 1 end
-		end
-	end
-	return alive <= math.floor(maximum * 0.25)
-end
-
 local function refreshPressureTargets()
 	table.clear(pressureTargets)
-	if not isLateRound() then return end
+	if not ENABLE_LEGACY_GLOBAL_PRESSURE then return end
+	local roundStartedAt = tonumber(Workspace:GetAttribute("RoundStartedAt"))
+	local elapsed = roundStartedAt and math.max(0, Workspace:GetServerTimeNow() - roundStartedAt) or 0
+	local lureFraction = elapsed < 180 and 0
+		or elapsed < 420 and 0.10
+		or elapsed < 660 and 0.25
+		or elapsed < 1020 and 0.40
+		or 0.70
+	if Workspace:GetAttribute("LateRound") ~= true and lureFraction <= 0 then return end
 
 	local candidates = {}
 	for _, zombie in ipairs(livingManagedZombies()) do
@@ -271,14 +207,16 @@ local function refreshPressureTargets()
 	end
 
 	local assigned = 0
+	local assignmentLimit = math.min(MAX_PRESSURE_TOTAL, math.floor(#candidates * lureFraction))
+	if assignmentLimit <= 0 then return end
 	for _, character in ipairs(livingPlayerCharacters()) do
-		if assigned >= MAX_PRESSURE_TOTAL then break end
+		if assigned >= assignmentLimit then break end
 		local targetRoot = rootOf(character)
 		if targetRoot then
 			table.sort(candidates, function(a, b)
 				return (rootOf(a).Position - targetRoot.Position).Magnitude > (rootOf(b).Position - targetRoot.Position).Magnitude
 			end)
-			for _ = 1, MAX_PRESSURE_PER_PLAYER do
+			for _ = 1, math.min(MAX_PRESSURE_PER_PLAYER, assignmentLimit - assigned) do
 				local zombie = table.remove(candidates, 1)
 				if not zombie or assigned >= MAX_PRESSURE_TOTAL then break end
 				pressureTargets[zombie] = character

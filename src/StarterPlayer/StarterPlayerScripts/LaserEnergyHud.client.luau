@@ -1,6 +1,11 @@
 -- LaserEnergyHud: quiet reserve feedback plus the temporary Power Box charge bar.
 -- The server owns Player.LaserEnergy; this LocalScript only animates that value.
 
+-- The reserve has no accessible player loop in the current round, so do not
+-- display a battery state that weapons no longer consume.
+local ENABLED = false
+if not ENABLED then return end
+
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

@@ -7,15 +7,6 @@ local TweenService = game:GetService("TweenService")
 
 local tool = script.Parent
 local shootEvent = tool:WaitForChild("ShootEvent")
--- Create this small protocol RemoteEvent on the server if a manually assembled
--- template missed it. The client waits for the replicated instance before it
--- binds input, so this avoids a silent, inert Tool during Studio handoff.
-local chargeEvent = tool:FindFirstChild("ChargeEvent")
-if not chargeEvent then
-	chargeEvent = Instance.new("RemoteEvent")
-	chargeEvent.Name = "ChargeEvent"
-	chargeEvent.Parent = tool
-end
 
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFeedback"))
@@ -39,10 +30,8 @@ end
 local BOMB_MONSTER_NAME = "BombMonster"
 
 -- Server gameplay, validation, and replicated-effect tuning.
-local RAYCAST_ADVANCE = 0.1 -- move beyond struck surface
 local GROUND_SURFACE_NORMAL_MIN = 0.45
 local DIRECTION_EPSILON = 0.01
-local FULL_POWER_THRESHOLD = 0.999
 local MONSTER_FLASH_DURATION = 0.25
 local KILL_ILLUMINATION_DURATION = 0.3
 local DISINTEGRATION_DIRECTION_EPSILON = 0.1
@@ -100,13 +89,6 @@ local function disableLegacyToolScripts()
 			item.Disabled = true
 		end
 	end
-end
-
-local function consumeLaserEnergy(player)
-	local energy = math.clamp(tonumber(player:GetAttribute("LaserEnergy")) or 600, 0, 600)
-	if energy < 5 then return false end
-	player:SetAttribute("LaserEnergy", energy - 5)
-	return true
 end
 
 local function hasToolJoint(handle, part)
@@ -242,33 +224,6 @@ local function getServerShotResult(player, cameraOrigin, direction)
 		end
 	end
 	return result, cameraOrigin, false
-end
-
-local function getPiercedMonsterHits(origin, direction, character)
-	local hits = {}
-	local ignored = { character, tool }
-	local currentOrigin = origin
-	local remainingRange = Config.RANGE
-
-	while remainingRange > 0 do
-		local params = RaycastParams.new()
-		params.FilterType = Enum.RaycastFilterType.Exclude
-		params.FilterDescendantsInstances = ignored
-		params.IgnoreWater = true
-		local result = workspace:Raycast(currentOrigin, direction * remainingRange, params)
-		if not result then break end
-
-		local monster = getMonsterModelFromHit(result.Instance)
-		if not monster then break end -- Full charge pierces monsters, never map walls.
-		table.insert(hits, monster)
-		table.insert(ignored, monster)
-
-		local travelled = (result.Position - currentOrigin).Magnitude
-		remainingRange -= travelled + RAYCAST_ADVANCE
-		currentOrigin = result.Position + direction * RAYCAST_ADVANCE
-	end
-
-	return hits
 end
 
 local function shouldGroundShockwave(result)
@@ -461,31 +416,15 @@ local function pushShooterBack(player, direction)
 	root.AssemblyLinearVelocity += -flatDirection.Unit * KNOCKBACK_HORIZONTAL_SPEED + Vector3.new(0, KNOCKBACK_UPWARD_SPEED, 0)
 end
 
-chargeEvent.OnServerEvent:Connect(function(player, action)
-	if action ~= "Begin" or not isEquippedBy(player) then return end
-	local state = playerState[player] or {}
-	if os.clock() - (state.lastShotAt or -math.huge) >= Config.COOLDOWN then
-		state.chargeStartedAt = os.clock()
-		playerState[player] = state
-	end
-end)
-
 shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outlinedTarget)
 	if typeof(direction) ~= "Vector3" or direction.Magnitude < DIRECTION_EPSILON or not isEquippedBy(player) then return end
 	local state = playerState[player] or {}
 	local now = os.clock()
 	if now - (state.lastShotAt or -math.huge) < Config.COOLDOWN then return end
-	local startedAt = state.chargeStartedAt or now
-	local heldFor = now - startedAt
-	-- Authoritative counterpart to the client's tap cancellation. Include the
-	-- existing tolerance so a real one-second client hold survives normal lag.
-	if heldFor + Config.FULL_CHARGE_TOLERANCE < Config.MIN_CHARGE_TIME then return end
 	state.lastShotAt = now
-	state.chargeStartedAt = nil
 	playerState[player] = state
 
-	local holdRatio = math.clamp((heldFor + Config.FULL_CHARGE_TOLERANCE) / Config.CHARGE_TIME, 0, 1)
-	local power = Config.powerForHoldRatio(holdRatio)
+	local power = Config.SHOT_POWER
 	-- Keep hit validation on the camera-selected ray.  Barrel direction can be
 	-- temporarily stale while a shoulder camera turns, and must not move a
 	-- shockwave or hit point away from the visible crosshair.
@@ -496,7 +435,6 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	local graceTarget = getGraceTarget(player, cameraOrigin, unitDirection)
 	local serverResult, origin, muzzleBlocked = getServerShotResult(player, cameraOrigin, unitDirection)
 	if not origin then return end
-	if not consumeLaserEnergy(player) then return end
 	pushShooterBack(player, unitDirection)
 
 	if shouldGroundShockwave(serverResult) then
@@ -510,20 +448,9 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	if not target and not muzzleBlocked then target = graceTarget end
 	if not target then return end
 	local damage = Config.damageForPower(power)
-	if power >= FULL_POWER_THRESHOLD then
-		for _, monster in ipairs(getPiercedMonsterHits(origin, unitDirection, player.Character)) do
-			damageMonster(player, monster, damage, origin)
-		end
-	else
-		damageMonster(player, target, damage, origin)
-	end
+	damageMonster(player, target, damage, origin)
 end)
 
-tool.Unequipped:Connect(function()
-	for player, state in pairs(playerState) do
-		if tool.Parent ~= player.Character then state.chargeStartedAt = nil end
-	end
-end)
 Players.PlayerRemoving:Connect(function(player)
 	playerState[player] = nil
 	contourTargets[player] = nil

@@ -2,6 +2,11 @@
 -- Server owner for the shared laser-weapon reserve, map pickups, and permanent
 -- charge stations. Place this Script in ServerScriptService.
 
+-- The round has no player-facing recharge loop yet.  Keep this legacy system
+-- parked until pickups and stations are deliberately reintroduced as gameplay.
+local ENABLED = false
+if not ENABLED then return end
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")

@@ -93,13 +93,6 @@ local function getMuzzlePosition(tool)
 	return barrel and barrel:IsA("BasePart") and barrel.Position or nil
 end
 
-local function consumeLaserEnergy(player, amount)
-	local energy = math.clamp(tonumber(player:GetAttribute("LaserEnergy")) or 600, 0, 600)
-	if energy < amount then return false end
-	player:SetAttribute("LaserEnergy", energy - amount)
-	return true
-end
-
 local function validateCameraOrigin(player, originOffset)
 	if typeof(originOffset) ~= "Vector3" or originOffset.Magnitude > AimConfig.MaxCameraOriginOffset then return nil end
 	local character = player.Character
@@ -277,12 +270,10 @@ local function bindTool(tool)
 		if not cameraOrigin then return end
 		updateContourGrace(player, tool, outlinedTarget, cameraOrigin, direction)
 		local graceTarget = getGraceTarget(player, tool, cameraOrigin, direction)
-		if not consumeLaserEnergy(player, 1) then return end
 		resolveShot(player, tool, currentConfig, cameraOrigin, direction, graceTarget)
 		if currentConfig.shots == 2 then
 			task.delay(currentConfig.burstDelay, function()
 				if not isEquippedBy(player, tool) then return end
-				if not consumeLaserEnergy(player, 1) then return end
 				resolveShot(player, tool, currentConfig, cameraOrigin, direction, graceTarget)
 			end)
 		end

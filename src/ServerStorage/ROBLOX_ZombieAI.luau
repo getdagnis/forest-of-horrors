@@ -409,11 +409,10 @@ ZombieAI.new = function(model, navigation)
 				root.AssemblyLinearVelocity = Vector3.zero
 			end
 
-			local localZombies = navigation and navigation:GetNearbyZombiePositions(model, root.Position, 2.5) or {}
-
 			local force = root:FindFirstChild("RepulsionForce")
-			if force then
-				force.Force = AIUtilities:GetRepulsionVector(root.Position, localZombies)
+			if force and (force:IsA("VectorForce") or force:IsA("BodyForce")) then
+				force.Force = Vector3.zero
+				if force:IsA("VectorForce") then force.Enabled = false end
 			end
 
 			-- Eight seconds without three studs of progress is a failed route.

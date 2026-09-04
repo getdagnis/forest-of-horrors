@@ -27,6 +27,7 @@ local lastBroadcastMonsterCount = nil
 local multikillStates = {}
 
 local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
+local CORPSE_DISPLAY_TIME = 5 -- separate from respawn time; body remains briefly visible
 local RESPAWN_LIVES = 4 -- original life plus two server-owned resurrections
 local ROUND_DURATION_SECONDS = 30 * 60 + 33
 local DEFAULT_MONSTER_MAX_COUNT = 90
@@ -267,7 +268,7 @@ local function countLivingMonsters()
 	local count = 0
 
 	for model in pairs(managedMonsters) do
-		if model.Parent and model:IsDescendantOf(ws) then
+		if model.Parent and model:IsDescendantOf(ws) and MonsterManager.isRoundTracked(model) then
 			local humanoid = MonsterManager.getMonsterHumanoid(model)
 			if humanoid and humanoid.Health > 0 and getMonsterRoot(model) then
 				count += 1
@@ -485,7 +486,7 @@ local function onMonsterKilled(hum, model)
 
 		local livesAfterDeath = permanentWeaponKill and 0 or math.max(0, (data.livesRemaining or 1) - 1)
 		if livesAfterDeath == 0 or roundFailed or roundComplete then
-			task.delay(2, function()
+			task.delay(CORPSE_DISPLAY_TIME, function()
 				if model.Parent then
 					model:Destroy()
 				end
@@ -499,6 +500,11 @@ local function onMonsterKilled(hum, model)
 
 		pendingRespawns += 1
 		local generation = roundGeneration
+		task.delay(CORPSE_DISPLAY_TIME, function()
+			if model.Parent then
+				model:Destroy()
+			end
+		end)
 
 		task.delay(RESPAWN_TIME, function()
 			if model.Parent then
@@ -548,7 +554,7 @@ end
 -- and connect its Died event (only for real monsters).
 local function setupMonster(model)
 	local config = MonsterManager.getConfig(model)
-	if not config then return end
+	if not config or not MonsterManager.isRoundTracked(model) then return end
 	local hum = MonsterManager.getMonsterHumanoid(model)
 	if not hum then return end
 
@@ -623,7 +629,7 @@ local function restartRound()
 	resetRoundClock()
 
 	for _, instance in ws:GetDescendants() do
-		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
+		if instance:IsA("Model") and MonsterManager.isRoundTracked(instance) then
 			instance:Destroy()
 		end
 	end

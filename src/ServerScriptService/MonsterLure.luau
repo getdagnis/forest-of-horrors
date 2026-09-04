@@ -9,7 +9,7 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 -- but leave zombies to ZombieAISystem by default so they retain varied goals.
 -- Set ENABLED false to park this system without deleting it; set LURE_ZOMBIES
 -- true only when deliberately testing the old all-zombies-to-player effect.	
-local ENABLED = true
+local ENABLED = false
 local LURE_ZOMBIES = false
 local LURE_GUARDIANS = false
 

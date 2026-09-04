@@ -2,6 +2,7 @@
 
 ## Working agreement
 
+- **`MONSTER_AI_ECOSYSTEM.md` is a MUST OBEY reference** for any monster, zombie, guardian, lure, safety-zone, respawn, death, round-count, or monster-event change. In particular, never force-reposition a living monster to satisfy a distribution or safety goal.
 - The live Roblox Studio place is the current source of truth. **Rojo has been uninstalled** after a bad sync/conflict incident. Do not ask the user to reconnect it or assume filesystem changes reach Studio.
 - The files in this repository are the manual code backup and drafting area. When changing one, state exactly which Studio instance must be replaced or added. The user copies code manually.
 - Do not make broad cleanup/refactor passes in the live place. It is an old, marketplace-model-heavy game with many legacy scripts and asset warnings. Work one system at a time and test each slice before continuing.

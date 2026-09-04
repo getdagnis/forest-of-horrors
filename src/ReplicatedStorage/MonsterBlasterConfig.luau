@@ -1,13 +1,13 @@
 -- Shared MonsterBlaster tuning. Both the Tool client and Tool server use this
--- module so the charge HUD always represents the damage actually requested.
+-- module so its one-press impact is presented and applied consistently.
 
 local MonsterBlasterConfig = {}
 
-MonsterBlasterConfig.CHARGE_TIME = 5.2
-MonsterBlasterConfig.MIN_CHARGE_TIME = 1
 MonsterBlasterConfig.COOLDOWN = 2
 MonsterBlasterConfig.RANGE = 450
-MonsterBlasterConfig.FULL_CHARGE_TOLERANCE = 0.1
+-- The Blaster is a one-press crowd-control weapon.  Its distinction is a
+-- strong fixed impact plus cooldown, not a release-timing mini-game.
+MonsterBlasterConfig.SHOT_POWER = 0.65
 
 MonsterBlasterConfig.MIN_DAMAGE = 80
 MonsterBlasterConfig.MAX_DAMAGE = 420
@@ -16,12 +16,6 @@ MonsterBlasterConfig.MAX_SHOCKWAVE_DAMAGE = 160
 MonsterBlasterConfig.MIN_SHOCKWAVE_RADIUS = 6
 MonsterBlasterConfig.MAX_SHOCKWAVE_RADIUS = 20
 MonsterBlasterConfig.FLASH_COLOR = Color3.fromRGB(62, 169, 255)
-
-function MonsterBlasterConfig.powerForHoldRatio(holdRatio)
-	-- Energy is paid per valid shot, so each extra moment of holding should give
-	-- a predictable, proportional improvement rather than a late-charge tax.
-	return math.clamp(tonumber(holdRatio) or 0, 0, 1)
-end
 
 function MonsterBlasterConfig.damageForPower(power)
 	power = math.clamp(tonumber(power) or 0, 0, 1)

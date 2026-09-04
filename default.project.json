@@ -8,6 +8,9 @@
       "MonsterManager": {
         "$path": "src/ReplicatedStorage/MonsterManager.luau"
       },
+      "MonsterWorldConfig": {
+        "$path": "src/ReplicatedStorage/MonsterWorldConfig.luau"
+      },
       "MonsterHitFeedback": {
         "$path": "src/ReplicatedStorage/MonsterHitFeedback.luau"
       },
@@ -76,6 +79,9 @@
       "ZombieAISystem": {
         "$path": "src/ServerScriptService/ZombieAISystem.server.luau"
       },
+      "MonsterWorldDirector": {
+        "$path": "src/ServerScriptService/MonsterWorldDirector.server.luau"
+      },
       "MonsterGunDamageSystem": {
         "$path": "src/ServerScriptService/MonsterGunDamageSystem.server.luau"
       },
@@ -117,6 +123,9 @@
       },
       "WeaponSpawnSystem": {
         "$path": "src/ServerScriptService/WeaponSpawnSystem.luau"
+      },
+      "TeleportSystem": {
+        "$path": "src/ServerScriptService/TeleportSystem.server.luau"
       }
     },
 

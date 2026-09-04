@@ -18,8 +18,10 @@ local SHOULDER_DISTANCE = AimConfig.ShoulderDistance
 local SHOULDER_OFFSET = AimConfig.ShoulderOffset
 local firstPersonEnabled = false
 local shoulderAiming = false
+local focusAiming = false
 local savedMinZoom
 local savedMaxZoom
+local savedFieldOfView
 local savedAutoRotate
 local shoulderTransitionId = 0
 
@@ -65,12 +67,18 @@ local function stopShoulderAim()
 	shoulderTransitionId += 1
 	RunService:UnbindFromRenderStep("PreserveShoulderAimPoint")
 	shoulderAiming = false
+	focusAiming = false
 	player:SetAttribute("WeaponShoulderAim", false)
 	UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	if savedMinZoom then player.CameraMinZoomDistance = savedMinZoom end
 	if savedMaxZoom then player.CameraMaxZoomDistance = savedMaxZoom end
 	savedMinZoom = nil
 	savedMaxZoom = nil
+	if savedFieldOfView then
+		local camera = workspace.CurrentCamera
+		if camera then camera.FieldOfView = savedFieldOfView end
+		savedFieldOfView = nil
+	end
 	local humanoid = getHumanoid()
 	if humanoid then
 		humanoid.CameraOffset = Vector3.zero
@@ -78,17 +86,15 @@ local function stopShoulderAim()
 	end
 end
 
-local function startShoulderAim()
+local function startShoulderAim(focused)
 	if firstPersonEnabled or shoulderAiming or not hasEquippedAimWeapon() then return end
 	local humanoid = getHumanoid()
 	if not humanoid then return end
 	local camera = workspace.CurrentCamera
-	local mouse = player:GetMouse()
-	local cursorRay = camera and camera:ViewportPointToRay(mouse.X, mouse.Y)
-	local cursorPoint = cursorRay and (cursorRay.Origin + cursorRay.Direction * AimConfig.Range)
 	shoulderTransitionId += 1
 	local transitionId = shoulderTransitionId
 	shoulderAiming = true
+	focusAiming = focused == true
 	player:SetAttribute("WeaponShoulderAim", true)
 	savedMinZoom = player.CameraMinZoomDistance
 	savedMaxZoom = player.CameraMaxZoomDistance
@@ -98,8 +104,12 @@ local function startShoulderAim()
 	savedAutoRotate = humanoid.AutoRotate
 	humanoid.AutoRotate = false
 	UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
-	if cursorPoint then
-		preserveCursorAimPoint(cursorPoint, transitionId)
+	-- The canonical center ray becomes active as soon as the weapon is equipped;
+	-- do not preserve a stale mouse ray through the avatar's head.
+	if focusAiming then
+		local currentCamera = workspace.CurrentCamera
+		savedFieldOfView = currentCamera and currentCamera.FieldOfView or 70
+		if currentCamera then currentCamera.FieldOfView = math.max(40, savedFieldOfView - 4) end
 	end
 end
 
@@ -115,13 +125,25 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		firstPersonEnabled = not firstPersonEnabled
 		applyFirstPersonMode()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-		startShoulderAim()
+		if shoulderAiming then
+			focusAiming = true
+			local camera = workspace.CurrentCamera
+			savedFieldOfView = savedFieldOfView or (camera and camera.FieldOfView or 70)
+			if camera then camera.FieldOfView = math.max(40, savedFieldOfView - 4) end
+		else
+			startShoulderAim(true)
+		end
 	end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton2 then
-		stopShoulderAim()
+		if shoulderAiming and focusAiming then
+			focusAiming = false
+			local camera = workspace.CurrentCamera
+			if camera and savedFieldOfView then camera.FieldOfView = savedFieldOfView end
+			savedFieldOfView = nil
+		end
 	end
 end)
 
@@ -141,7 +163,17 @@ player:SetAttribute("WeaponShoulderAim", false)
 player:SetAttribute("WeaponFirstPerson", firstPersonEnabled)
 
 RunService.RenderStepped:Connect(function()
-	if shoulderAiming and not hasEquippedAimWeapon() then
+	-- Radar is a modal interaction surface. Do not let the weapon camera
+	-- reclaim the mouse or shoulder camera while its Exit button is active.
+	if player:GetAttribute("RadarHudOpen") == true then
+		if shoulderAiming then stopShoulderAim() end
+		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+		UserInputService.MouseIconEnabled = true
+		return
+	end
+	if not firstPersonEnabled and hasEquippedAimWeapon() and not shoulderAiming then
+		startShoulderAim(false)
+	elseif shoulderAiming and not hasEquippedAimWeapon() then
 		stopShoulderAim()
 		return
 	end

@@ -82,13 +82,7 @@ RunService.RenderStepped:Connect(function()
 		lastContourTarget = nil
 		return
 	end
-	if not GunAim.shouldShowAimHelpers(player) then
-		highlight.Enabled = false
-		highlight.Adornee = nil
-		lastContourWeapon = nil
-		lastContourTarget = nil
-		return
-	end
+	-- Weapon-ready camera mode is centered for desktop, touch, and focus aim.
 
 	local range = weapon.Name == "MonsterBlaster" and MonsterBlasterConfig.RANGE or nil
 	local monster = GunAim.getDirectTarget(player, weapon, nil, range)

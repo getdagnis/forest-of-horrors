@@ -84,22 +84,24 @@ function GunAim.getRay(player, lockedTarget)
 	local camera = workspace.CurrentCamera
 	if not camera then return nil end
 	local origin = camera.CFrame.Position
-	local aimTarget = lockedTarget or GunAim.getLockedTarget()
-	if aimTarget and aimTarget.Parent then
-		local targetPart = aimTarget:FindFirstChild("HumanoidRootPart", true)
-			or aimTarget:FindFirstChild("Head", true)
-			or aimTarget.PrimaryPart
-		if targetPart and targetPart:IsA("BasePart") then
-			local offset = targetPart.Position - origin
-			if offset.Magnitude > 0.01 then return Ray.new(origin, offset.Unit) end
-		end
-	end
+	-- A lock may assist target selection, but it must never redirect the ray to a
+	-- target's head/root. The visible center point is always authoritative.
 	if GunAim.isCentered(player) then
 		local viewport = camera.ViewportSize
 		return camera:ViewportPointToRay(viewport.X * 0.5, viewport.Y * 0.5)
 	end
-	local mouse = player:GetMouse()
-	return camera:ViewportPointToRay(mouse.X, mouse.Y)
+	local mouseLocation = UserInputService:GetMouseLocation()
+	return camera:ScreenPointToRay(mouseLocation.X, mouseLocation.Y)
+end
+
+function GunAim.getScreenPoint(player)
+	local camera = workspace.CurrentCamera
+	if not camera then return nil end
+	if GunAim.isCentered(player) then
+		local viewport = camera.ViewportSize
+		return Vector2.new(viewport.X * 0.5, viewport.Y * 0.5), "viewport"
+	end
+	return UserInputService:GetMouseLocation(), "screen"
 end
 
 function GunAim.getLockedTarget()

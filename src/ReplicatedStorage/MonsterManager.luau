@@ -12,7 +12,7 @@ local MONSTER_CONFIG = {
 	["Drooling Zombie"] = { shortName = "a zombie", pluralShortName = "zombies", hp = 90, hpVsPlayers = 90, hpVsMonsters = 90, points = 1, damageToPlayers = 20, damageToMonsters = 4 },
 	-- WMT player damage remains zero: GuardianMonsterSystem owns its special
 	-- rescue/pet behaviour and uses this monster-only value when appropriate.
-	["weird monster thing"] = { shortName = "a weird monster thing", pluralShortName = "weird monster things", hp = 320, hpVsPlayers = 320, hpVsMonsters = 420, points = 3, damageToPlayers = 20, damageToMonsters = 50, zombieGroupTarget = false },
+	["weird monster thing"] = { shortName = "a weird monster thing", pluralShortName = "weird monster things", hp = 320, hpVsPlayers = 320, hpVsMonsters = 420, points = 3, damageToPlayers = 20, damageToMonsters = 50, zombieGroupTarget = false, roundTracked = false },
 	-- Creepy damage against monsters is intentionally much lower than its player
 	-- damage, preserving occasional conflict without NPCs clearing the map.
 	["creepyMonster"] = { shortName = "a creepy monster", pluralShortName = "creepy monsters", hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 5, damageToPlayers = 40, damageToMonsters = 10, zombieGroupTarget = true },
@@ -103,6 +103,26 @@ end
 function MonsterManager.getDamageToPlayers(model)
 	local config = MonsterManager.getConfig(model)
 	return config and (config.damageToPlayers or 0) or 0
+end
+
+-- Round/radar eligibility is a gameplay contract, not a model-name guess.
+-- Guardians are harmless rescue actors until a future hostility state opts them
+-- in explicitly (for example by setting RoundTracked=true on the model).
+function MonsterManager.isRoundTracked(model)
+	local config = MonsterManager.getConfig(model)
+	if not config then return false end
+	local override = model:GetAttribute("RoundTracked")
+	if override ~= nil then return override == true end
+	return config.roundTracked ~= false and (config.damageToPlayers or 0) > 0
+end
+
+function MonsterManager.getMonsterRoot(model)
+	if not model then return nil end
+	local root = model:FindFirstChild("HumanoidRootPart", true)
+		or model:FindFirstChild("UpperTorso", true)
+		or model:FindFirstChild("Head", true)
+		or model:FindFirstChildWhichIsA("BasePart", true)
+	return root and root:IsA("BasePart") and root or nil
 end
 
 function MonsterManager.getDamageToMonsters(model)

@@ -1,4 +1,5 @@
 -- StarterPlayerScripts > GunClientController
+
 -- Sole local input, HUD, target-lock, and cosmetic-shot controller for the
 -- MonsterGun family.  Combat is always validated by MonsterGunDamageSystem.
 
@@ -30,8 +31,6 @@ local DEFAULT_COLORS = {
 local GUN_MUZZLE_LIGHT_LIFETIME = 0.12
 local GUN_IMPACT_LIGHT_LIFETIME = 0.32
 local GUN_BEAM_LIFETIME = 0.2
-local NO_POWER_SOUND = "rbxassetid://124307033081669"
-
 local knownMonsters = {}
 local flashStates = {}
 local equippedTool
@@ -214,23 +213,12 @@ local function updateCrosshair()
 	local crosshair = activeHud:FindFirstChild("Crosshair", true)
 	if not crosshair or not crosshair:IsA("GuiObject") then return end
 
-	if lockedMonster then
-		local camera = workspace.CurrentCamera
-		local displayPart = getDisplayPart(lockedMonster)
-		if camera and displayPart then
-			local point, visible = camera:WorldToViewportPoint(displayPart.Position)
-			if visible then
-				crosshair.Position = UDim2.fromOffset(point.X, point.Y)
-				return
-			end
-		end
-	end
-
-	if GunAim.isCentered(player) then
+	local point, space = GunAim.getScreenPoint(player)
+	if not point then return end
+	if space == "viewport" then
 		crosshair.Position = UDim2.fromScale(0.5, 0.5)
 	else
-		local mouse = player:GetMouse()
-		crosshair.Position = UDim2.fromOffset(mouse.X, mouse.Y)
+		crosshair.Position = UDim2.fromOffset(point.X, point.Y)
 	end
 end
 
@@ -241,16 +229,6 @@ local function playShotSound(tool)
 		sound = SoundService:FindFirstChild("FallbackShotSound")
 	end
 	if sound and sound:IsA("Sound") then sound:Play() end
-end
-
-local function playNoPowerSound()
-	local source = SoundService:FindFirstChild("EnergyShutdown", true)
-	local sound = source and source:IsA("Sound") and source:Clone() or Instance.new("Sound")
-	sound.SoundId = sound.SoundId ~= "" and sound.SoundId or NO_POWER_SOUND
-	sound.Volume = sound.Volume > 0 and sound.Volume or 1
-	sound.Parent = workspace.CurrentCamera or workspace
-	sound:Play()
-	Debris:AddItem(sound, 5)
 end
 
 local function renderShot(tool, origin, endPosition, color, hitModel)
@@ -362,11 +340,6 @@ fireGun = function(tool)
 	while ancestor and ancestor ~= workspace do
 		if ancestor:IsA("Model") and ancestor:GetAttribute("Turret") == true then return end
 		ancestor = ancestor.Parent
-	end
-	local energy = player:GetAttribute("LaserEnergy")
-	if energy ~= nil and (tonumber(energy) or 0) < 1 then
-		playNoPowerSound()
-		return
 	end
 	local originOffset, direction, target = GunAim.getShotPayload(player, tool)
 	local shootEvent = tool:FindFirstChild("ShootEvent")
