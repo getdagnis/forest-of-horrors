@@ -6,18 +6,24 @@ local MonsterBombConfig = {}
 MonsterBombConfig.MODEL_NAME = "BombMonster"
 
 -- Bomb monster hit points before it is destroyed by a weapon or its own timer.
-MonsterBombConfig.HEALTH = 430
+MonsterBombConfig.HEALTH = 160
+-- Player weapon damage needed to arm a bomb. MG1 deals 40 damage per hit, so
+-- this is four deliberate MG1 hits before the existing warning begins.
+MonsterBombConfig.PLAYER_ARM_DAMAGE = 160
 
 -- Random idle time in seconds before the warning countdown starts.
 MonsterBombConfig.MIN_WAIT = 120
 MonsterBombConfig.MAX_WAIT = 270
 -- Length of the spoken five-to-one warning announcement in seconds.
 MonsterBombConfig.WARNING_TIME = 5.5
+-- Time after a bomb dies before its replacement returns. Other monster types
+-- continue using MonsterSystem's normal respawn delay.
+MonsterBombConfig.RESPAWN_TIME = 30
 
 -- Maximum distance in studs affected by the explosion.
 MonsterBombConfig.BLAST_RADIUS = 100
 -- Maximum distance in studs at which the warning beep can be heard.
-MonsterBombConfig.WARNING_SOUND_RADIUS = 115
+MonsterBombConfig.WARNING_SOUND_RADIUS = 250
 -- Maximum distance in studs at which the explosion sound can be heard.
 MonsterBombConfig.EXPLOSION_SOUND_RADIUS = 120
 -- Preferred SoundService template name. A model child remains a compatibility
@@ -34,7 +40,7 @@ MonsterBombConfig.MONSTER_DAMAGE = 150
 -- Portion of each player target's maximum health removed in range.
 MonsterBombConfig.PLAYER_DAMAGE_FRACTION = 0.3
 
--- Reserved idle bobbing settings for the bomb model's calm state.
+-- Calm vertical bobbing settings for the bomb model's idle state.
 MonsterBombConfig.IDLE_PULSE_HEIGHT = 12
 MonsterBombConfig.IDLE_PULSE_SPEED = 1.6
 

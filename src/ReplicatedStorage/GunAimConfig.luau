@@ -16,6 +16,9 @@ return {
 	MaxCameraHeadOffset = 30,
 	ShoulderDistance = 7,
 	ShoulderOffset = Vector3.new(1.5, 1, 0),
+	-- RMB focus keeps the safe shoulder position but narrows the view enough to
+	-- read as an intentional aim zoom instead of the previous 4-degree nudge.
+	FocusFieldOfView = 52,
 	AimTurnSpeed = 18,
 	LockAcquireDistance = 7,
 	LockReleaseDistance = 15,

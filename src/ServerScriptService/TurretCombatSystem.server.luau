@@ -110,12 +110,15 @@ end
 local function hitMonster(player, model)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
+	if model.Name == "BombMonster" and model:GetAttribute("BombWarningActive") == true then return end
 	local damage = MonsterManager.getPlayerWeaponDamage(model, Config.Damage)
 	if damage <= 0 then return end
 
 	local willDie = humanoid.Health <= damage
 	MonsterManager.recordPlayerDamage(humanoid, player, damage, Config.ShotColor)
-	if willDie and (model.Name == "Monster" or model.Name == "BombMonster") then
+	-- BombMonster is an ignitable, reusable world target. Keep the legacy
+	-- permanent-kill behaviour only for the separate old "Monster" model.
+	if willDie and model.Name == "Monster" then
 		MonsterManager.markPermanentKill(humanoid, "Turret")
 	end
 	humanoid:TakeDamage(damage)

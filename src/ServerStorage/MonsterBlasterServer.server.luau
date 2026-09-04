@@ -27,8 +27,6 @@ if not contourTargetEvent then
 	contourTargetEvent.Parent = ReplicatedStorage
 end
 
-local BOMB_MONSTER_NAME = "BombMonster"
-
 -- Server gameplay, validation, and replicated-effect tuning.
 local PIERCE_RAY_ADVANCE = 0.1
 local GROUND_SURFACE_NORMAL_MIN = 0.45
@@ -304,12 +302,6 @@ local function disintegrateMonster(model, blastOrigin)
 	end
 end
 
-local function markBlasterKillIfNeeded(model, humanoid, damage)
-	if model.Name == BOMB_MONSTER_NAME and humanoid.Health <= damage then
-		MonsterManager.markPermanentKill(humanoid, "MonsterBlaster")
-	end
-end
-
 local function pushMonsterBack(model, blastOrigin)
 	local root = model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChild("Torso", true)
 	if not root or not root:IsA("BasePart") then return end
@@ -334,6 +326,7 @@ end
 local function damageMonster(player, model, damage, blastOrigin)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
+	if model.Name == "BombMonster" and model:GetAttribute("BombWarningActive") == true then return end
 
 	local effectiveDamage = MonsterManager.getPlayerWeaponDamage(model, damage)
 	if effectiveDamage <= 0 then return end
@@ -344,7 +337,6 @@ local function damageMonster(player, model, damage, blastOrigin)
 		-- during the weapon's own charge/cooldown window.
 		humanoid:SetAttribute("BlasterRegenLockedUntil", workspace:GetServerTimeNow() + 5)
 	end
-	markBlasterKillIfNeeded(model, humanoid, effectiveDamage)
 	if willDie and (model.Name == "Drooling Zombie" or model.Name == "creepyMonster") then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false

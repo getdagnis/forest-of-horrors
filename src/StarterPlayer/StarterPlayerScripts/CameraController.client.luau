@@ -109,7 +109,7 @@ local function startShoulderAim(focused)
 	if focusAiming then
 		local currentCamera = workspace.CurrentCamera
 		savedFieldOfView = currentCamera and currentCamera.FieldOfView or 70
-		if currentCamera then currentCamera.FieldOfView = math.max(40, savedFieldOfView - 4) end
+		if currentCamera then currentCamera.FieldOfView = AimConfig.FocusFieldOfView end
 	end
 end
 
@@ -125,11 +125,16 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		firstPersonEnabled = not firstPersonEnabled
 		applyFirstPersonMode()
 	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-		if shoulderAiming then
+		-- Z remains the persistent toggle. RMB is a second, obvious desktop exit
+		-- from its otherwise locked first-person state; it had no action there.
+		if firstPersonEnabled then
+			firstPersonEnabled = false
+			applyFirstPersonMode()
+		elseif shoulderAiming then
 			focusAiming = true
 			local camera = workspace.CurrentCamera
 			savedFieldOfView = savedFieldOfView or (camera and camera.FieldOfView or 70)
-			if camera then camera.FieldOfView = math.max(40, savedFieldOfView - 4) end
+			if camera then camera.FieldOfView = AimConfig.FocusFieldOfView end
 		else
 			startShoulderAim(true)
 		end

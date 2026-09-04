@@ -73,7 +73,7 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 
 - The active server damage owner is `MonsterGunDamageSystem`, not `ServerStorage.MonsterGunServer`.
 - It deals 20 damage, records score via `MonsterManager.recordPlayerDamage`, shows `current / max` hit points, and flashes the entire hit monster pink Neon for 0.25 seconds.
-- Lethal kills use pink disintegration. `Monster` bomb monsters killed by weapons are marked permanent so `MonsterSystem` does not respawn them.
+- Lethal kills use pink disintegration, except `BombMonster`: weapon damage lets `MonsterBombSystem` detonate it normally and it respawns through the round lifecycle.
 - Gun client beam is pink and is only a brief visual. Client visual/input code must remain a Tool `LocalScript`.
 
 ### MonsterBlaster
@@ -84,7 +84,7 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 - Its server Script validates hold time, cooldown, hits, and damage. Direct damage is 40–420, with a full charge piercing monsters until map geometry blocks it. Ground shots are emergency shockwaves scaling from 40–120 damage and 6–20 studs. Hit monsters briefly flash blue Neon for 0.25 seconds.
 - AmbientLoop is local to the equipped owner and stops on unequip. Shockwave is server-triggered at the validated impact so nearby players hear it.
 - The charge HUD uses `ResetOnSpawn = false`, so the Blaster client must explicitly hide/reset it on unequip, respawn, or whenever the Tool is no longer equipped.
-- Do not make bombs damage/explode each other. Only weapon damage can permanently kill bomb monsters.
+- Do not make bombs damage/explode each other. Player weapon damage may detonate a `BombMonster`, but must not mark it permanent; it returns only while its normal finite round lives remain, keeping the round clearable.
 
 ### Legacy marketplace-model revival
 
@@ -134,7 +134,7 @@ Fortress bosses are identified by a `Zombie` Humanoid child and use 800 HP / 15 
 The immediate goal is a stable, playable horror survival round before ambitious systems or broad cleanup:
 
 1. Keep monster AI responsive and prevent uncontrolled NPC self-killing.
-2. Make gun/blaster damage, health feedback, death behavior, and permanent bomb kills reliable.
+2. Make gun/blaster damage, health feedback, death behavior, and BombMonster detonation/respawn reliable.
 3. Keep portals functioning without broad rewrites.
 4. Improve mobile-safe HUD and game flow only after the base loop is stable.
 5. Reduce actual measured performance bottlenecks, beginning with legacy per-NPC loops and repeat error spam.

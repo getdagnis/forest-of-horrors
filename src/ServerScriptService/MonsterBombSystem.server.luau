@@ -26,6 +26,31 @@ local function getRoot(model)
 		or model:FindFirstChildWhichIsA("BasePart", true)
 end
 
+-- BombMonster has no model-local Animator. Restore only its original calm
+-- float here, relative to the spawn pivot; warning and explosion presentation
+-- deliberately stay exactly as they are below.
+local function startIdleBob(model, humanoid)
+	local active = true
+	local basePivot = model:GetPivot()
+
+	task.spawn(function()
+		local startedAt = os.clock()
+		while active and model.Parent and humanoid.Parent and humanoid.Health > 0 do
+			local offset = math.sin((os.clock() - startedAt) * Config.IDLE_PULSE_SPEED) * Config.IDLE_PULSE_HEIGHT
+			model:PivotTo(basePivot * CFrame.new(0, offset, 0))
+			task.wait(0.03)
+		end
+	end)
+
+	return function(resetToBase)
+		if not active then return end
+		active = false
+		if resetToBase and model.Parent then
+			model:PivotTo(basePivot)
+		end
+	end
+end
+
 local function playWarning(model)
 	local root = getRoot(model)
 	if not root or not root:IsA("BasePart") then return end
@@ -210,13 +235,18 @@ local function setupBomb(model)
 	humanoid.NameDisplayDistance = 0
 	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.DisplayWhenDamaged
 
+	local stopIdleBob = startIdleBob(model, humanoid)
 	local exploded = false
+	local warningActive = false
 	local function explode()
 		if exploded then return end
 		exploded = true
+		warningActive = false
+		model:SetAttribute("BombWarningActive", false)
 
 		local root = getRoot(model)
 		local position = root and root.Position or model:GetPivot().Position
+		stopIdleBob()
 		makeExplosionVisual(position)
 		playExplosionSound(model, position)
 		damagePlayers(position)
@@ -225,14 +255,43 @@ local function setupBomb(model)
 		-- MonsterSystem. Avoid a second aggregate row that obscures the victims.
 		fadeAndRemoveBomb(model)
 
-		-- Mark this as a normal bomb death. MonsterSystem may respawn it; only
-		-- MonsterGun/MonsterBlaster set permanent weapon-kill attributes.
+		-- Every bomb death uses the normal lifecycle so a player can deliberately
+		-- ignite one to clear a crowd and it can return later as ambient danger.
 		if humanoid.Health > 0 then
 			humanoid.Health = 0
 		end
 	end
 
-	humanoid.Died:Connect(explode)
+	local function beginWarning()
+		if warningActive or exploded or not model.Parent then return end
+		warningActive = true
+		model:SetAttribute("BombWarningActive", true)
+		stopIdleBob(true)
+		playWarning(model)
+		task.delay(Config.WARNING_TIME, explode)
+	end
+
+	-- A bomb takes four MG1 hits to arm. Player weapons record LastAttackerId
+	-- before changing Health, which keeps incidental NPC damage from activating
+	-- the warning sequence.
+	humanoid.HealthChanged:Connect(function(health)
+		local damageTaken = humanoid.MaxHealth - health
+		if not warningActive and not exploded
+			and damageTaken >= Config.PLAYER_ARM_DAMAGE
+			and humanoid:GetAttribute("LastAttackerId")
+		then
+			beginWarning()
+		end
+	end)
+
+	humanoid.Died:Connect(function()
+		if warningActive then return end
+		if humanoid:GetAttribute("LastAttackerId") then
+			beginWarning()
+		else
+			explode()
+		end
+	end)
 
 	task.spawn(function()
 		task.wait(math.random(Config.MIN_WAIT, Config.MAX_WAIT))
@@ -240,13 +299,11 @@ local function setupBomb(model)
 
 		-- The imported warning asset is a complete spoken five-to-one countdown,
 		-- not a one-second beep. Start it once and let the announcement finish.
-		playWarning(model)
-		task.wait(Config.WARNING_TIME)
-
-		explode()
+		beginWarning()
 	end)
 
 	model.Destroying:Connect(function()
+		stopIdleBob()
 		activeBombs[model] = nil
 	end)
 end

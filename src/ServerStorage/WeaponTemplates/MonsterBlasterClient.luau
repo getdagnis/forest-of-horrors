@@ -29,9 +29,9 @@ local CHARGE_SOUND_VOLUME = 1.4
 local SCREEN_CENTER = 0.5
 -- The legacy Crosshair in this marketplace HUD has an old absolute position.
 -- Use one fixed, unobtrusive four-line reticle instead of a filled blue dot.
-local CROSSHAIR_SIZE = 32
+local CROSSHAIR_SIZE = 56
 local CROSSHAIR_LINE_LENGTH = 12
-local CROSSHAIR_LINE_THICKNESS = 4
+local CROSSHAIR_LINE_THICKNESS = 2
 local CROSSHAIR_GAP = 3
 local CROSSHAIR_Z_INDEX = 10
 local GROUND_SURFACE_NORMAL_MIN = 0.45

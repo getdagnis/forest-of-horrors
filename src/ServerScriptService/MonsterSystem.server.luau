@@ -6,7 +6,9 @@ local Players = game:GetService("Players")
 local ws = game:GetService("Workspace")
 local rs = game:GetService("ReplicatedStorage")
 local MonsterManager = require(rs:WaitForChild("MonsterManager"))
+local MonsterBombConfig = require(rs:WaitForChild("MonsterBombConfig"))
 local RadarEventBus = require(rs:WaitForChild("RadarEventBus"))
+local SoundService = game:GetService("SoundService")
 
 local scores = {} -- Player -> current score
 local kills = {} -- Player -> monsters for which the player earned score
@@ -28,7 +30,7 @@ local multikillStates = {}
 
 local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
 local CORPSE_DISPLAY_TIME = 5 -- separate from respawn time; body remains briefly visible
-local RESPAWN_LIVES = 4 -- original life plus two server-owned resurrections
+local RESPAWN_LIVES = 4 -- initial life plus three server-owned replacements
 local ROUND_DURATION_SECONDS = 30 * 60 + 33
 local DEFAULT_MONSTER_MAX_COUNT = 90
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
@@ -36,6 +38,13 @@ local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
 local MONSTER_MAX_COUNT_ATTRIBUTE = "MonsterMaxCount"
 local MANAGED_MONSTER_ATTRIBUTE = "RoundManagedMonster"
 local LIVES_REMAINING_ATTRIBUTE = "RoundLivesRemaining"
+
+local function getRespawnTime(model)
+	if model.Name == MonsterBombConfig.MODEL_NAME then
+		return MonsterBombConfig.RESPAWN_TIME
+	end
+	return RESPAWN_TIME
+end
 
 local function getMonsterMaxCount()
 	local configured = tonumber(ws:GetAttribute(MONSTER_MAX_COUNT_ATTRIBUTE))
@@ -321,6 +330,7 @@ end
 
 local DEFAULT_SCORE_POPUP_COLOR = Color3.fromRGB(255, 238, 150)
 local MULTIKILL_WINDOW_SECONDS = 5
+local MAJOR_KILL_MIN_HP = 600
 
 local function showScorePopup(model, awards, color)
 	if #awards == 0 then return end
@@ -389,7 +399,18 @@ local function clearMultikill(player, state, token)
 	multikillStates[player] = nil
 end
 
-local function registerMultikillKill(player, points)
+local function playMonsterKillAnnouncement()
+	local source = SoundService:FindFirstChild("MonsterKill")
+	if not (source and source:IsA("Sound")) then return end
+
+	local sound = source:Clone()
+	sound.Looped = false
+	sound.Parent = SoundService
+	sound:Play()
+	game:GetService("Debris"):AddItem(sound, math.max(3, sound.TimeLength + 1))
+end
+
+local function registerMultikillKill(player, points, isMajorKill)
 	local state = multikillStates[player]
 	if not state then
 		state = { count = 0, baseScore = 0, token = 0, awardedBonus = 0 }
@@ -398,6 +419,13 @@ local function registerMultikillKill(player, points)
 	state.count += 1
 	state.baseScore += points
 	state.token += 1
+
+	-- Keep the original satisfying third-kill announcement. The source sound
+	-- remains untouched in SoundService; each announcement plays on its own
+	-- temporary clone so concurrent players cannot cut one another off.
+	if state.count == 3 and not isMajorKill then
+		playMonsterKillAnnouncement()
+	end
 
 	-- A chain becomes visible and earns its current bonus immediately on its
 	-- second kill; subsequent kills update the same five-second chain.
@@ -422,13 +450,13 @@ local function registerMultikillKill(player, points)
 	end)
 end
 
-local function awardScore(player, points)
+local function awardScore(player, points, isMajorKill)
 	scores[player] = (scores[player] or 0) + points
 	kills[player] = (kills[player] or 0) + 1
 	setLeaderboardStats(player, scores[player], kills[player])
 	scoreEvent:FireClient(player, scores[player], kills[player])
 	updateScoreRecords(player)
-	registerMultikillKill(player, points)
+	registerMultikillKill(player, points, isMajorKill)
 end
 
 -- Award points when a monster dies, then schedule one of its two permitted
@@ -444,6 +472,7 @@ local function onMonsterKilled(hum, model)
 	if config then
 		local awards = MonsterManager.consumeScoreAwards(hum, config.points)
 		local popupColor = MonsterManager.getLastScoreColor(hum, DEFAULT_SCORE_POPUP_COLOR)
+		local isMajorKill = config.hp >= MAJOR_KILL_MIN_HP
 		local awardedAny = false
 		local monsterAttacker = hum:GetAttribute("LastMonsterAttacker")
 		local monsterAttackCause = hum:GetAttribute("LastMonsterAttackCause")
@@ -452,7 +481,7 @@ local function onMonsterKilled(hum, model)
 			local attacker = Players:GetPlayerByUserId(award.userId)
 
 			if attacker then
-				awardScore(attacker, award.points)
+				awardScore(attacker, award.points, isMajorKill)
 				awardedAny = true
 				RadarEventBus.publish({ kind = "kill", actor = attacker.DisplayName, actorKind = "player", target = shortName, targetPlural = pluralShortName })
 				eventReported = true
@@ -460,6 +489,9 @@ local function onMonsterKilled(hum, model)
 		end
 
 		if awardedAny then
+			if isMajorKill then
+				playMonsterKillAnnouncement()
+			end
 			showScorePopup(model, awards, popupColor)
 			broadcastRecords()
 		end
@@ -484,6 +516,8 @@ local function onMonsterKilled(hum, model)
 			or hum:GetAttribute("KilledByMonsterBlaster") == true
 			or hum:GetAttribute("KilledByMonsterGun") == true
 
+		-- Bombs use the same finite round lives as every other monster. Each
+		-- remaining life still respawns reliably, but a round can eventually clear.
 		local livesAfterDeath = permanentWeaponKill and 0 or math.max(0, (data.livesRemaining or 1) - 1)
 		if livesAfterDeath == 0 or roundFailed or roundComplete then
 			task.delay(CORPSE_DISPLAY_TIME, function()
@@ -506,7 +540,7 @@ local function onMonsterKilled(hum, model)
 			end
 		end)
 
-		task.delay(RESPAWN_TIME, function()
+		task.delay(getRespawnTime(model), function()
 			if model.Parent then
 				model:Destroy()
 			end
@@ -522,15 +556,15 @@ local function onMonsterKilled(hum, model)
 				return
 			end
 
-			if countLivingMonsters() < getMonsterMaxCount() then
-				local clone = data.template:Clone()
-				clone:SetAttribute("RoundRespawned", true)
-				clone:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
-				clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesAfterDeath)
-				clone:PivotTo(data.cframe)
-				clone.Parent = ws
-				RadarEventBus.publish({ kind = "respawn", target = shortName, targetPlural = pluralShortName })
-			end
+			-- This is a replacement for a managed monster that just died, not a new
+			-- spawn. The cap must not silently consume one of its remaining lives.
+			local clone = data.template:Clone()
+			clone:SetAttribute("RoundRespawned", true)
+			clone:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
+			clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesAfterDeath)
+			clone:PivotTo(data.cframe)
+			clone.Parent = ws
+			RadarEventBus.publish({ kind = "respawn", target = shortName, targetPlural = pluralShortName })
 
 			pendingRespawns -= 1
 			broadcastMonsterCount()

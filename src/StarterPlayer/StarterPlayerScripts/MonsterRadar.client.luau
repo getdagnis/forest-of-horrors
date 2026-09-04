@@ -19,6 +19,8 @@ local UPDATE_SECONDS = 0.12
 local DOT_SIZE = 6
 local MAX_DOTS = 96
 local PRIORITY_WARNING_RANGE = 80
+local MONSTER_DOT_COLOR = Color3.fromRGB(238, 67, 70)
+local BOMB_DOT_COLOR = Color3.fromRGB(255, 174, 192)
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "MonsterRadarHud"
@@ -109,7 +111,7 @@ for index = 1, MAX_DOTS do
 	dot.Name = "MonsterDot"
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
 	dot.Size = UDim2.fromOffset(DOT_SIZE, DOT_SIZE)
-	dot.BackgroundColor3 = Color3.fromRGB(238, 67, 70)
+	dot.BackgroundColor3 = MONSTER_DOT_COLOR
 	dot.BorderSizePixel = 0
 	dot.Visible = false
 	dot.ZIndex = 2
@@ -117,6 +119,12 @@ for index = 1, MAX_DOTS do
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(1, 0)
 	corner.Parent = dot
+	local ring = Instance.new("UIStroke")
+	ring.Name = "BombRing"
+	ring.Color = BOMB_DOT_COLOR
+	ring.Thickness = 1.5
+	ring.Enabled = false
+	ring.Parent = dot
 	dots[index] = dot
 end
 
@@ -251,7 +259,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			local localOffset = camera.CFrame:VectorToObjectSpace(monster.offset)
 			local scale = 0.43 / radarRange
 			local dot = dots[shown]
-			dot.Size = UDim2.fromOffset(monster.priority and DOT_SIZE * 2 or DOT_SIZE, monster.priority and DOT_SIZE * 2 or DOT_SIZE)
+			local bomb = monster.model.Name == "BombMonster"
+			local dotSize = bomb and DOT_SIZE * 2 or (monster.priority and DOT_SIZE * 2 or DOT_SIZE)
+			dot.Size = UDim2.fromOffset(dotSize, dotSize)
+			dot.BackgroundColor3 = bomb and BOMB_DOT_COLOR or MONSTER_DOT_COLOR
+			dot.BackgroundTransparency = bomb and 1 or 0
+			local ring = dot:FindFirstChild("BombRing")
+			if ring and ring:IsA("UIStroke") then ring.Enabled = bomb end
 			dot.Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
 			dot.Visible = true
 		elseif radarRange == MAX_RADAR_RANGE and monster.distance > MAX_RADAR_RANGE and (not nearestOutside or monster.distance < nearestOutside.distance) then

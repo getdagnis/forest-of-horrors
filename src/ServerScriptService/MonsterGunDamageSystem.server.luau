@@ -213,6 +213,9 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 	-- owns only short-lived visuals; no client result can affect combat.
 	shotVisualEvent:FireAllClients(tool, origin, endPosition, config.color, monsterModel)
 	if not monsterModel then return end
+	-- Once a bomb is armed, preserve its countdown and planned blast instead of
+	-- letting extra fire kill it before the warning finishes.
+	if monsterModel.Name == "BombMonster" and monsterModel:GetAttribute("BombWarningActive") == true then return end
 
 	local humanoid = MonsterManager.getMonsterHumanoid(monsterModel)
 	if not humanoid or humanoid.Health <= 0 then return end
@@ -224,11 +227,12 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 	if willDie then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
-		if monsterModel.Name == "BombMonster" then
-			MonsterManager.markPermanentKill(humanoid, "MonsterGun")
+		-- A lethal bomb shot must run MonsterBombSystem's normal explosion and
+		-- respawn lifecycle. Disintegrating it here would erase that gameplay.
+		if monsterModel.Name ~= "BombMonster" then
+			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			disintegrateMonster(monsterModel, root and root.Position or monsterModel:GetPivot().Position)
 		end
-		local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		disintegrateMonster(monsterModel, root and root.Position or monsterModel:GetPivot().Position)
 	end
 
 	humanoid:TakeDamage(damage)
