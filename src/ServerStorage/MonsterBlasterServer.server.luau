@@ -30,6 +30,7 @@ end
 local BOMB_MONSTER_NAME = "BombMonster"
 
 -- Server gameplay, validation, and replicated-effect tuning.
+local PIERCE_RAY_ADVANCE = 0.1
 local GROUND_SURFACE_NORMAL_MIN = 0.45
 local DIRECTION_EPSILON = 0.01
 local MONSTER_FLASH_DURATION = 0.25
@@ -42,6 +43,8 @@ local DISINTEGRATION_UPWARD_SPEED_MIN = 25
 local DISINTEGRATION_UPWARD_SPEED_MAX = 55
 local KNOCKBACK_HORIZONTAL_SPEED = 65
 local KNOCKBACK_UPWARD_SPEED = 8
+local MONSTER_PUSH_DISTANCE = 8
+local MONSTER_PUSH_SECONDS = 0.20
 
 local SHOCKWAVE_SOUND_EMITTER_SIZE = 0.1
 local SHOCKWAVE_SOUND_LIFETIME = 8
@@ -50,15 +53,15 @@ local SHOCKWAVE_CORE_FINAL_HEIGHT = 2.5
 local SHOCKWAVE_CORE_LIFT = 1
 local SHOCKWAVE_CORE_TRANSPARENCY = 0.15
 local SHOCKWAVE_LIGHT_BRIGHTNESS = 42
-local SHOCKWAVE_CORE_TWEEN_SECONDS = 0.8
-local SHOCKWAVE_CORE_LIFETIME = 0.9
+local SHOCKWAVE_CORE_TWEEN_SECONDS = 1.20
+local SHOCKWAVE_CORE_LIFETIME = 1.30
 local SHOCKWAVE_SEGMENT_COUNT = 30
 local SHOCKWAVE_SEGMENT_START_RADIUS = 1.25
 local SHOCKWAVE_SEGMENT_LENGTH_EXTRA = 0.7
 local SHOCKWAVE_SEGMENT_SIZE = Vector3.new(1.8, 0.7, 1.8)
 local SHOCKWAVE_SEGMENT_FINAL_WIDTH = 2.2
-local SHOCKWAVE_SEGMENT_TWEEN_SECONDS = 0.35
-local SHOCKWAVE_SEGMENT_LIFETIME = 0.45
+local SHOCKWAVE_SEGMENT_TWEEN_SECONDS = 0.70
+local SHOCKWAVE_SEGMENT_LIFETIME = 0.80
 local playerState = {}
 local didWarnMissingShockwave = false
 local contourTargets = {}
@@ -226,6 +229,33 @@ local function getServerShotResult(player, cameraOrigin, direction)
 	return result, cameraOrigin, false
 end
 
+local function getPiercedMonsterHits(origin, direction, character)
+	local hits = {}
+	local ignored = { character, tool }
+	local currentOrigin = origin
+	local remainingRange = Config.RANGE
+
+	while remainingRange > 0 do
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = ignored
+		params.IgnoreWater = true
+		local result = workspace:Raycast(currentOrigin, direction * remainingRange, params)
+		if not result then break end
+
+		local monster = getMonsterModelFromHit(result.Instance)
+		if not monster then break end -- monsters pierce; map geometry does not
+		table.insert(hits, monster)
+		table.insert(ignored, monster)
+
+		local travelled = (result.Position - currentOrigin).Magnitude
+		remainingRange -= travelled + PIERCE_RAY_ADVANCE
+		currentOrigin = result.Position + direction * PIERCE_RAY_ADVANCE
+	end
+
+	return hits
+end
+
 local function shouldGroundShockwave(result)
 	if not result or result.Normal.Y < GROUND_SURFACE_NORMAL_MIN then return false end
 	if getMonsterModelFromHit(result.Instance) then return false end
@@ -280,6 +310,27 @@ local function markBlasterKillIfNeeded(model, humanoid, damage)
 	end
 end
 
+local function pushMonsterBack(model, blastOrigin)
+	local root = model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChild("Torso", true)
+	if not root or not root:IsA("BasePart") then return end
+	local direction = root.Position - blastOrigin
+	direction = Vector3.new(direction.X, 0, direction.Z)
+	if direction.Magnitude < DIRECTION_EPSILON then return end
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "BlasterPushAttachment"
+	attachment.Parent = root
+	local velocity = Instance.new("LinearVelocity")
+	velocity.Name = "BlasterPush"
+	velocity.Attachment0 = attachment
+	velocity.MaxForce = 80000
+	velocity.VectorVelocity = direction.Unit * (MONSTER_PUSH_DISTANCE / MONSTER_PUSH_SECONDS)
+	velocity.RelativeTo = Enum.ActuatorRelativeTo.World
+	velocity.Parent = root
+	Debris:AddItem(velocity, MONSTER_PUSH_SECONDS)
+	Debris:AddItem(attachment, MONSTER_PUSH_SECONDS)
+end
+
 local function damageMonster(player, model, damage, blastOrigin)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
@@ -300,6 +351,7 @@ local function damageMonster(player, model, damage, blastOrigin)
 		disintegrateMonster(model, blastOrigin)
 	end
 	humanoid:TakeDamage(effectiveDamage)
+	if humanoid.Health > 0 then pushMonsterBack(model, blastOrigin) end
 
 	if humanoid.Health > 0 then
 		damageLabelEvent:FireClient(player, model, humanoid.Health, humanoid.MaxHealth)
@@ -448,7 +500,20 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	if not target and not muzzleBlocked then target = graceTarget end
 	if not target then return end
 	local damage = Config.damageForPower(power)
-	damageMonster(player, target, damage, origin)
+	if Config.PIERCES_MONSTERS then
+		-- Preserve the forgiving Spherecast/contour target first, then continue
+		-- through every monster that the exact camera ray crosses behind it.
+		local damaged = { [target] = true }
+		damageMonster(player, target, damage, origin)
+		for _, monster in ipairs(getPiercedMonsterHits(origin, unitDirection, player.Character)) do
+			if not damaged[monster] then
+				damaged[monster] = true
+				damageMonster(player, monster, damage, origin)
+			end
+		end
+	else
+		damageMonster(player, target, damage, origin)
+	end
 end)
 
 Players.PlayerRemoving:Connect(function(player)

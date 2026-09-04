@@ -98,6 +98,12 @@ ZombieAI.new = function(model, navigation)
 
 	local function moveTo(destination, usePathfinding)
 		if not destination then return end
+		-- A bat strike earns the player a brief escape window.  This is a local
+		-- movement pause, never a relocation or a new target decision.
+		if (model:GetAttribute("BatStaggeredUntil") or 0) > workspace:GetServerTimeNow() then
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 
 		activeDestination = destination
 		if usePathfinding then
@@ -172,6 +178,10 @@ ZombieAI.new = function(model, navigation)
 	end
 
 	AttackState.Action = function()
+		if (model:GetAttribute("BatStaggeredUntil") or 0) > workspace:GetServerTimeNow() then
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 		local targetRoot = ZombieTarget and getRoot(ZombieTarget)
 		local ownRoot = getRoot(model)
 		if not targetRoot or not ownRoot then
@@ -369,6 +379,9 @@ ZombieAI.new = function(model, navigation)
 	local lastHit = os.time()
 
 	local function handleHit(other)
+		if (model:GetAttribute("BatStaggeredUntil") or 0) > workspace:GetServerTimeNow() then
+			return
+		end
 		if canHit then
 			local character = getPlayerCharacterFromHit(other)
 			local enemyHumanoid = character and getHumanoid(character)

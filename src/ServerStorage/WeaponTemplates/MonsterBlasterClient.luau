@@ -1,5 +1,5 @@
 -- MonsterBlasterClient. Place inside the canonical MonsterBlaster Tool.
--- Tool.Activated handles mouse, touch, and gamepad with one immediate shot.
+-- Tool.Activated/Deactivated handles a short charge on mouse, touch, and gamepad.
 
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
@@ -12,8 +12,10 @@ local tool = script.Parent
 local shootEvent = tool:WaitForChild("ShootEvent")
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
+local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local GUNSHOT_SOUND = "rbxassetid://131794614393147"
+local CHARGE_SOUND = "rbxassetid://140102991925260"
 local COOLDOWN_SOUND = "rbxassetid://124307033081669"
 
 -- Client presentation and feel tuning.
@@ -22,19 +24,20 @@ local SHOT_VOLUME_POWER_GAIN = 2.5
 local SHOT_PITCH_MIN_PERCENT = 95
 local SHOT_PITCH_MAX_PERCENT = 105
 local DEFAULT_SOUND_VOLUME = 1
+local CHARGE_SOUND_VOLUME = 1.4
 
 local SCREEN_CENTER = 0.5
 -- The legacy Crosshair in this marketplace HUD has an old absolute position.
 -- Use one fixed, unobtrusive four-line reticle instead of a filled blue dot.
-local CROSSHAIR_SIZE = 24
-local CROSSHAIR_LINE_LENGTH = 6
-local CROSSHAIR_LINE_THICKNESS = 2
+local CROSSHAIR_SIZE = 32
+local CROSSHAIR_LINE_LENGTH = 12
+local CROSSHAIR_LINE_THICKNESS = 4
 local CROSSHAIR_GAP = 3
 local CROSSHAIR_Z_INDEX = 10
 local GROUND_SURFACE_NORMAL_MIN = 0.45
-local GROUND_PREVIEW_THICKNESS = 0.08
+local GROUND_PREVIEW_THICKNESS = 0.2
 local GROUND_PREVIEW_LIFT = 0.06
-local GROUND_PREVIEW_TRANSPARENCY = 0.9
+local GROUND_PREVIEW_TRANSPARENCY = 0.95
 
 local MUZZLE_FLASH_BASE_SIZE = 0.5
 local MUZZLE_FLASH_POWER_SIZE_GAIN = 2.5
@@ -55,10 +58,14 @@ local BEAM_WIDTH0_MIN = 0.35
 local BEAM_WIDTH0_POWER_GAIN = 1.2
 local BEAM_WIDTH1_MIN = 0.18
 local BEAM_WIDTH1_POWER_GAIN = 0.65
-local BEAM_TRANSPARENCY = 0.08
-local BEAM_LIFETIME = 0.24
+local BEAM_TRANSPARENCY = 0.1
+local BEAM_LIFETIME = 0.36
+local PIERCE_RAY_ADVANCE = 0.1
+local charging = false
 local coolingDown = false
+local chargeStartedAt = 0
 local cooldownStartedAt = 0
+local chargeSound
 local ambientLoop
 local activeHud
 local aimCrosshair
@@ -103,6 +110,11 @@ local function getPower()
 	return Config.SHOT_POWER
 end
 
+local function getChargeProgress()
+	if not charging or chargeStartedAt <= 0 then return 0 end
+	return math.clamp((os.clock() - chargeStartedAt) / Config.CHARGE_TIME, 0, 1)
+end
+
 local function playShotSound(power)
 	local sound = getOrCreateSound("GunshotSound", GUNSHOT_SOUND, DEFAULT_SOUND_VOLUME)
 	if not sound then return end
@@ -115,7 +127,26 @@ end
 
 local function playCooldownSound()
 	local sound = getOrCreateSound("CooldownSound", COOLDOWN_SOUND, DEFAULT_SOUND_VOLUME)
-	if sound then sound:Play() end
+	if sound then
+		-- Repeated clicks during cooldown must give repeated feedback, rather than
+		-- silently ignoring input while an earlier click sound is still playing.
+		sound:Stop()
+		sound.TimePosition = 0
+		sound:Play()
+	end
+end
+
+local function startChargeSound()
+	chargeSound = getOrCreateSound("ChargeSound", CHARGE_SOUND, CHARGE_SOUND_VOLUME)
+	if chargeSound then
+		chargeSound.Looped = false
+		chargeSound.TimePosition = 0
+		chargeSound:Play()
+	end
+end
+
+local function stopChargeSound()
+	if chargeSound then chargeSound:Stop() end
 end
 
 local function cloneWeaponHud()
@@ -190,6 +221,42 @@ local function raycastFromCamera(direction)
 		GunAim.makeRaycastParams(player.Character, tool))
 end
 
+local function getMonsterModelFromHit(instance)
+	local current = instance
+	while current do
+		if current:IsA("Model") and MonsterManager.getConfig(current) then return current end
+		current = current.Parent
+	end
+	return nil
+end
+
+local function getPiercingBeamEnd(origin, direction)
+	if not Config.PIERCES_MONSTERS then
+		local result = raycastFromCamera(direction)
+		return result and result.Position or (origin + direction * Config.RANGE)
+	end
+
+	local ignored = { player.Character, tool }
+	local currentOrigin = origin
+	local remainingRange = Config.RANGE
+	while remainingRange > 0 do
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = ignored
+		params.IgnoreWater = true
+		local result = workspace:Raycast(currentOrigin, direction * remainingRange, params)
+		if not result then return currentOrigin + direction * remainingRange end
+
+		local monster = getMonsterModelFromHit(result.Instance)
+		if not monster then return result.Position end
+		table.insert(ignored, monster)
+		local travelled = (result.Position - currentOrigin).Magnitude
+		remainingRange -= travelled + PIERCE_RAY_ADVANCE
+		currentOrigin = result.Position + direction * PIERCE_RAY_ADVANCE
+	end
+	return currentOrigin
+end
+
 local function getGroundPreview()
 	if groundPreview then return groundPreview end
 	groundPreview = Instance.new("Part")
@@ -207,8 +274,8 @@ local function getGroundPreview()
 	return groundPreview
 end
 
-local function updateGroundPreview(power)
-	if not isEquipped() or not GunAim.shouldShowAimHelpers(player) then
+local function updateGroundPreview(chargeProgress)
+	if not charging or not isEquipped() or not GunAim.shouldShowAimHelpers(player) then
 		if groundPreview then groundPreview.Transparency = 1 end
 		return
 	end
@@ -221,7 +288,8 @@ local function updateGroundPreview(power)
 		if groundPreview then groundPreview.Transparency = 1 end
 		return
 	end
-	local radius = Config.shockwaveRadiusForPower(power)
+	local fullRadius = Config.shockwaveRadiusForPower(getPower())
+	local radius = math.max(0.5, fullRadius * chargeProgress)
 	local preview = getGroundPreview()
 	preview.Size = Vector3.new(GROUND_PREVIEW_THICKNESS, radius * 2, radius * 2)
 	preview.CFrame = CFrame.new(result.Position + Vector3.new(0, GROUND_PREVIEW_LIFT, 0)) * CFrame.Angles(0, 0, math.pi / 2)
@@ -335,8 +403,7 @@ local function fireShot()
 	if barrel then
 		local aimRay = GunAim.getRay(player)
 		if not aimRay then return end
-		local result = raycastFromCamera(direction)
-		local endPosition = result and result.Position or (aimRay.Origin + direction * Config.RANGE)
+		local endPosition = getPiercingBeamEnd(aimRay.Origin, direction)
 		playShotSound(power)
 		muzzleFlash(power)
 		showShotBeam(barrel, endPosition, power)
@@ -353,12 +420,28 @@ local function fireShot()
 end
 
 local function resetState()
+	charging = false
 	coolingDown = false
+	chargeStartedAt = 0
+	stopChargeSound()
 	destroyGroundPreview()
 end
 
 tool.Activated:Connect(function()
+	if not isEquipped() or charging then return end
 	if coolingDown then playCooldownSound() return end
+	charging = true
+	chargeStartedAt = os.clock()
+	startChargeSound()
+end)
+
+tool.Deactivated:Connect(function()
+	if not charging then return end
+	local heldSeconds = os.clock() - chargeStartedAt
+	charging = false
+	chargeStartedAt = 0
+	stopChargeSound()
+	if heldSeconds < Config.CHARGE_TIME then return end
 	fireShot()
 end)
 
@@ -404,5 +487,5 @@ end)
 RunService.RenderStepped:Connect(function()
 	if not isEquipped() then return end
 	updateCrosshair()
-	updateGroundPreview(getPower())
+	updateGroundPreview(getChargeProgress())
 end)
