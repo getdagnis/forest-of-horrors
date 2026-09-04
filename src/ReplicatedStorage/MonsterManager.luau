@@ -9,21 +9,21 @@ local MonsterManager = {}
 -- the one real pool). Keep both equal to hp unless a specific matchup needs a
 -- deliberate resistance, rather than creating misleading separate health bars.
 local MONSTER_CONFIG = {
-	["Drooling Zombie"] = { shortName = "a zombie", pluralShortName = "zombies", hp = 90, hpVsPlayers = 90, hpVsMonsters = 90, points = 1, damageToPlayers = 20, damageToMonsters = 4 },
+	["Drooling Zombie"] = { shortName = "a zombie", pluralShortName = "zombies", hp = 90, hpVsPlayers = 90, hpVsMonsters = 90, points = 1, damageToPlayers = 35, damageToMonsters = 20 },
 	-- WMT player damage remains zero: GuardianMonsterSystem owns its special
 	-- rescue/pet behaviour and uses this monster-only value when appropriate.
-	["weird monster thing"] = { shortName = "a weird monster thing", pluralShortName = "weird monster things", hp = 320, hpVsPlayers = 320, hpVsMonsters = 420, points = 3, damageToPlayers = 20, damageToMonsters = 50, zombieGroupTarget = false, roundTracked = false },
+	["weird monster thing"] = { shortName = "a weird monster thing", pluralShortName = "weird monster things", hp = 320, hpVsPlayers = 320, hpVsMonsters = 420, points = 2, damageToPlayers = 35, damageToMonsters = 80, zombieGroupTarget = false, roundTracked = false },
 	-- Creepy damage against monsters is intentionally much lower than its player
 	-- damage, preserving occasional conflict without NPCs clearing the map.
-	["creepyMonster"] = { shortName = "a creepy monster", pluralShortName = "creepy monsters", hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 5, damageToPlayers = 40, damageToMonsters = 10, zombieGroupTarget = true },
-	["creepyMonsterOrange"] = { shortName = "an orange creepy monster", pluralShortName = "orange creepy monsters", hp = 420, hpVsPlayers = 420, hpVsMonsters = 420, points = 10, damageToPlayers = 60, damageToMonsters = 10, zombieGroupTarget = false },
-	["creepyMonsterWhite"] = { shortName = "a white creepy monster", pluralShortName = "white creepy monsters", hp = 520, hpVsPlayers = 520, hpVsMonsters = 520, points = 15, damageToPlayers = 100, damageToMonsters = 10, zombieGroupTarget = false },
+	["creepyMonster"] = { shortName = "a creepy monster", pluralShortName = "creepy monsters", hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 3, damageToPlayers = 60, damageToMonsters = 30, zombieGroupTarget = true },
+	["creepyMonsterOrange"] = { shortName = "an orange creepy monster", pluralShortName = "orange creepy monsters", hp = 420, hpVsPlayers = 420, hpVsMonsters = 420, points = 5, damageToPlayers = 60, damageToMonsters = 10, zombieGroupTarget = false },
+	["creepyMonsterWhite"] = { shortName = "a white creepy monster", pluralShortName = "white creepy monsters", hp = 520, hpVsPlayers = 520, hpVsMonsters = 520, points = 7, damageToPlayers = 100, damageToMonsters = 10, zombieGroupTarget = false },
 	-- Keep this in lockstep with MonsterBombConfig. MonsterSystem also applies
 	-- this value during registration, so a mismatch makes startup order decide
 	-- the live health pool.
-	["BombMonster"] = { shortName = "a monsterbomb", pluralShortName = "monsterbombs", hp = 160, hpVsPlayers = 160, hpVsMonsters = 160, points = 5, damageToPlayers = 40, damageToMonsters = 40, zombieGroupTarget = false },
-	["FortressBoss"] = { shortName = "a forest boss", pluralShortName = "forest bosses", hp = 900, hpVsPlayers = 900, hpVsMonsters = 900, points = 20, damageToPlayers = 80, damageToMonsters = 10, zombieGroupTarget = true },
-	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 20, damageToMonsters = 30, zombieGroupTarget = false },
+	["BombMonster"] = { shortName = "a monsterbomb", pluralShortName = "monsterbombs", hp = 200, hpVsPlayers = 200, hpVsMonsters = 200, points = 2, damageToPlayers = 40, damageToMonsters = 40, zombieGroupTarget = false },
+	["FortressBoss"] = { shortName = "a forest boss", pluralShortName = "forest bosses", hp = 900, hpVsPlayers = 900, hpVsMonsters = 900, points = 7, damageToPlayers = 80, damageToMonsters = 10, zombieGroupTarget = true },
+	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 10, damageToPlayers = 7, damageToMonsters = 30, zombieGroupTarget = false },
 }
 
 -- FortressBosses have ambiguous/empty names but contain a "Zombie" Humanoid child.

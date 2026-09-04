@@ -14,16 +14,16 @@ local MONSTER_DAMAGE_COOLDOWN = 0.8
 -- Unbonded WMTs only respond after a player actually takes damage. This keeps
 -- them from turning every harmless nearby crowd into a permanent monster war.
 local HELP_CALL_RANGE = 200
-local HELP_CALL_CHANCE = 0.30
+local HELP_CALL_CHANCE = 0.50
 local HELP_RESPONSE_SECONDS = 6
-local HELP_DEFENSE_RADIUS = 20
+local HELP_DEFENSE_RADIUS = 30
 local HELP_ARRIVAL_DISTANCE = 12
 local FOLLOW_DISTANCE = 7
 local OFFER_DISTANCE = 15
 local OFFER_TIMEOUT = 20
 local THREAT_RADIUS = 15
 local SAFE_RADIUS = 50
-local PET_ATTACK_RANGE = 20
+local PET_ATTACK_RANGE = 30
 local PET_ATTACK_COOLDOWN = 0.8
 local SHIELD_DURATION = 30
 local SHIELD_COOLDOWN = 45
@@ -33,6 +33,16 @@ local GUARDIAN_CORPSE_DISPLAY_TIME = 60 -- battlefield remains; guardians do not
 -- recover a Bomb hit over roughly forty seconds rather than staying crippled.
 local GUARDIAN_REGEN_DELAY = 8
 local GUARDIAN_REGEN_PER_SECOND = 3
+
+-- Killing three WMTs in one minute provokes the nearby guardian group. The
+-- hostility is specific to the killer and persists for those guardians' lives.
+local GUARDIAN_KILLS_TO_PROVOKE = 2 -- two is intended, don't change
+local GUARDIAN_KILL_WINDOW_SECONDS = 60
+local GUARDIAN_PROVOCATION_RADIUS = 200
+-- They are angry but still WMTs: an ominous walk, not a sprinting chase.
+local GUARDIAN_HOSTILE_WALK_SPEED = 12
+local GUARDIAN_HOSTILE_ATTACK_RANGE = 6
+local GUARDIAN_HOSTILE_ATTACK_COOLDOWN = 1
 
 local function getOrCreateRemoteEvent(name)
 	local event = ReplicatedStorage:FindFirstChild(name)
@@ -50,6 +60,7 @@ local rescueEvent = getOrCreateRemoteEvent("WMTRescueOffer")
 local rescueResponseEvent = getOrCreateRemoteEvent("WMTRescueResponse")
 
 local guardians = {}
+local guardianKillTimes = {}
 
 local function getLivingPlayerRoot(player)
 	local character = player and player.Character
@@ -182,8 +193,65 @@ local function restoreUnbonded(state)
 	state.shieldAvailableAt = 0
 	state.helpPlayer = nil
 	state.helpUntil = 0
+	state.hostilePlayer = nil
 	state.model:SetAttribute("WMTGuardianOwnerUserId", nil)
 	state.model:SetAttribute("WMTGuardianPet", false)
+	state.model:SetAttribute("WMTGuardianHostileUserId", nil)
+end
+
+local function makeHostile(state, player)
+	if state.mode == "hostile" or not player or not player.Parent then return end
+
+	-- A nearby pet witnesses the guardian killings too: it abandons its owner
+	-- before joining the local retaliation, so it cannot continue shielding them.
+	clearOffer(state)
+	setShield(state, false)
+	state.owner = nil
+	state.helpPlayer = nil
+	state.helpUntil = 0
+	state.mode = "hostile"
+	state.hostilePlayer = player
+	state.humanoid.WalkSpeed = GUARDIAN_HOSTILE_WALK_SPEED
+	state.model:SetAttribute("WMTGuardianOwnerUserId", nil)
+	state.model:SetAttribute("WMTGuardianPet", false)
+	state.model:SetAttribute("WMTGuardianHostileUserId", player.UserId)
+end
+
+local function provokeNearbyGuardians(sourceState, player, position)
+	for _, state in pairs(guardians) do
+		local root = getRoot(state.model)
+		if state ~= sourceState
+			and state.humanoid.Health > 0
+			and root
+			and (root.Position - position).Magnitude <= GUARDIAN_PROVOCATION_RADIUS
+		then
+			makeHostile(state, player)
+		end
+	end
+end
+
+local function recordGuardianKill(state)
+	local attackerId = state.humanoid:GetAttribute("LastAttackerId")
+	-- A BombMonster or another NPC can finish a WMT that a player wounded long
+	-- ago. That is not a guardian kill by the player and must not provoke them.
+	if state.humanoid:GetAttribute("LastMonsterAttacker") then return end
+	local player = typeof(attackerId) == "number" and Players:GetPlayerByUserId(attackerId) or nil
+	local root = getRoot(state.model)
+	if not player or not root then return end
+
+	local now = os.clock()
+	local timestamps = guardianKillTimes[player] or {}
+	for index = #timestamps, 1, -1 do
+		if now - timestamps[index] > GUARDIAN_KILL_WINDOW_SECONDS then
+			table.remove(timestamps, index)
+		end
+	end
+	table.insert(timestamps, now)
+	guardianKillTimes[player] = timestamps
+
+	if #timestamps == GUARDIAN_KILLS_TO_PROVOKE then
+		provokeNearbyGuardians(state, player, root.Position)
+	end
 end
 
 local function acceptOffer(state, player)
@@ -333,6 +401,23 @@ local function updateGuardian(state)
 					end
 				end
 			end
+		elseif state.mode == "hostile" then
+			local playerRoot = getLivingPlayerRoot(state.hostilePlayer)
+			local guardianRoot = getRoot(state.model)
+			if playerRoot and guardianRoot then
+				state.humanoid:MoveTo(playerRoot.Position)
+				if (guardianRoot.Position - playerRoot.Position).Magnitude <= GUARDIAN_HOSTILE_ATTACK_RANGE
+					and now - (state.lastPlayerHitAt or 0) >= GUARDIAN_HOSTILE_ATTACK_COOLDOWN
+				then
+					local character = state.hostilePlayer.Character
+					local targetHumanoid = character and character:FindFirstChildOfClass("Humanoid")
+					local damage = MonsterManager.getDamageToPlayers(state.model)
+					if targetHumanoid and targetHumanoid.Health > 0 and damage > 0 then
+						state.lastPlayerHitAt = now
+						targetHumanoid:TakeDamage(damage)
+					end
+				end
+			end
 		end
 		task.wait(UPDATE_INTERVAL)
 	end
@@ -369,6 +454,8 @@ local function setupGuardian(model)
 		shieldAvailableAt = 0,
 		unbondedWalkSpeed = humanoid.WalkSpeed,
 		lastDamagedAt = os.clock(),
+		hostilePlayer = nil,
+		lastPlayerHitAt = 0,
 	}
 	guardians[model] = state
 	model:SetAttribute("WMTGuardianPet", false)
@@ -395,6 +482,7 @@ local function setupGuardian(model)
 	state.lastHealth = humanoid.Health
 	state.attackerDeaths = {}
 	humanoid.Died:Connect(function()
+		recordGuardianKill(state)
 		-- Guardians are intentionally outside MonsterSystem's respawn ledger.
 		-- Keep the defeated body as battlefield evidence for a bounded duration,
 		-- then remove it so dead guardians cannot accumulate forever.
@@ -413,6 +501,10 @@ end
 
 Workspace.DescendantAdded:Connect(function(item)
 	if item:IsA("Model") then task.defer(setupGuardian, item) end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	guardianKillTimes[player] = nil
 end)
 
 local function callForHelp(player)

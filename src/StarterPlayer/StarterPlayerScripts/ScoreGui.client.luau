@@ -4,6 +4,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
@@ -27,6 +28,9 @@ local scorepanel_position = {
 }
 local large_font_size = 16
 local details_font_size = 8
+local DAMAGE_FLASH_MIN_OPACITY = 0.20
+local DAMAGE_FLASH_MAX_OPACITY = 0.45
+local FALLBACK_HURT_SOUND_ID = "rbxasset://sounds/uuhhh.wav"
 -- Ordinary regeneration arrives as +1 ticks. Only deliberate bonus healing
 -- should interrupt combat with a flash/message.
 local MIN_REPORTED_HEAL = 5
@@ -387,16 +391,34 @@ local function updateHealthPanel(humanoid)
 end
 
 local feedbackSerial = 0
+local fallbackHurtSound
+
+local function getHurtSound()
+	local character = player.Character
+	local sound = (character and character:FindFirstChild("PlayerHurt", true))
+		or gui:FindFirstChild("PlayerHurt", true)
+		or playerGui:FindFirstChild("PlayerHurt", true)
+		or SoundService:FindFirstChild("PlayerHurt", true)
+	if sound and sound:IsA("Sound") then return sound end
+
+	if not fallbackHurtSound then
+		fallbackHurtSound = Instance.new("Sound")
+		fallbackHurtSound.Name = "PlayerHurtFallback"
+		fallbackHurtSound.SoundId = FALLBACK_HURT_SOUND_ID
+		fallbackHurtSound.Volume = 0.45
+		fallbackHurtSound.Parent = gui
+	end
+	return fallbackHurtSound
+end
+
 local function showDamage(lossPercent)
 	feedbackSerial += 1
 	local serial = feedbackSerial
-	damageOverlay.BackgroundTransparency = 1 - math.clamp(lossPercent / 100, 0.02, 0.30)
+	local opacity = math.clamp(lossPercent / 45, DAMAGE_FLASH_MIN_OPACITY, DAMAGE_FLASH_MAX_OPACITY)
+	damageOverlay.BackgroundTransparency = 1 - opacity
 	TweenService:Create(damageOverlay, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
-	local character = player.Character
-	local hurtSound = (character and character:FindFirstChild("PlayerHurt", true))
-		or gui:FindFirstChild("PlayerHurt", true)
-		or playerGui:FindFirstChild("PlayerHurt", true)
-	if hurtSound and hurtSound:IsA("Sound") then hurtSound:Play() end
+	local hurtSound = getHurtSound()
+	if hurtSound then hurtSound:Play() end
 	task.delay(0.4, function() if serial == feedbackSerial then damageOverlay.BackgroundTransparency = 1 end end)
 end
 

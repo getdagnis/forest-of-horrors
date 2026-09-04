@@ -5,8 +5,10 @@ local MonsterBombConfig = {}
 -- Exact model name recognised as a timed bomb monster.
 MonsterBombConfig.MODEL_NAME = "BombMonster"
 
--- Bomb monster hit points before it is destroyed by a weapon or its own timer.
-MonsterBombConfig.HEALTH = 160
+-- Leave enough health after the fourth MG1 hit for the warning to run while
+-- the Humanoid is still alive. The actual explosion owns the single death
+-- transition, which is what starts MonsterSystem's respawn timer.
+MonsterBombConfig.HEALTH = 200
 -- Player weapon damage needed to arm a bomb. MG1 deals 40 damage per hit, so
 -- this is four deliberate MG1 hits before the existing warning begins.
 MonsterBombConfig.PLAYER_ARM_DAMAGE = 160

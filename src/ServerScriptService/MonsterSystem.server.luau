@@ -90,7 +90,6 @@ local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
 local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
 local restartRoundEvent = getOrCreateRemoteEvent("RestartRound")
 local monsterMilestoneEvent = getOrCreateRemoteEvent("MonsterMilestone")
-local multikillEvent = getOrCreateRemoteEvent("MultikillAnnouncement")
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
@@ -330,7 +329,8 @@ end
 
 local DEFAULT_SCORE_POPUP_COLOR = Color3.fromRGB(255, 238, 150)
 local MULTIKILL_WINDOW_SECONDS = 5
-local MAJOR_KILL_MIN_HP = 600
+local MAJOR_KILL_MIN_HP = 520
+local MONSTER_KILL_BONUS = 1
 
 local function showScorePopup(model, awards, color)
 	if #awards == 0 then return end
@@ -339,31 +339,48 @@ local function showScorePopup(model, awards, color)
 	if not root or not root:IsA("BasePart") then return end
 
 	local lines = {}
+	local popupHeight = 0
 
 	for _, award in ipairs(awards) do
-		local player = Players:GetPlayerByUserId(award.userId)
-		local name = player and player.Name or "Player"
-		table.insert(lines, "+" .. tostring(award.points) .. " " .. name)
+		local label = award.label
+		if not label then
+			local player = Players:GetPlayerByUserId(award.userId)
+			label = player and player.Name or "Player"
+		end
+		local isMonsterKill = label == "monster kill"
+		local lineHeight = isMonsterKill and 46 or 30
+		table.insert(lines, {
+			text = "+" .. tostring(award.points) .. " " .. label,
+			height = lineHeight,
+			isMonsterKill = isMonsterKill,
+		})
+		popupHeight += lineHeight
 	end
 
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "ScorePopupGui"
-	gui.Size = UDim2.new(0, 220, 0, math.max(44, #lines * 30))
+	gui.Size = UDim2.new(0, 220, 0, math.max(44, popupHeight))
 	gui.StudsOffset = Vector3.new(0, 5.4, 0)
 	gui.AlwaysOnTop = true
 	gui.Adornee = root
 	gui.Parent = model
 
-	local label = Instance.new("TextLabel")
-	label.Name = "Label"
-	label.BackgroundTransparency = 1
-	label.Size = UDim2.new(1, 0, 1, 0)
-	label.Font = Enum.Font.GothamBold
-	label.TextScaled = true
-	label.TextColor3 = color
-	label.TextStrokeTransparency = 0
-	label.Text = table.concat(lines, "\n")
-	label.Parent = gui
+	local yOffset = 0
+	for index, line in ipairs(lines) do
+		local label = Instance.new("TextLabel")
+		label.Name = line.isMonsterKill and "MonsterKillBonus" or "Label"
+		label.BackgroundTransparency = 1
+		label.Position = UDim2.fromOffset(0, yOffset)
+		label.Size = UDim2.new(1, 0, 0, line.height)
+		label.Font = Enum.Font.GothamBold
+		label.TextScaled = true
+		label.TextColor3 = color
+		label.TextStrokeTransparency = 0
+		label.Text = line.text
+		label.LayoutOrder = index
+		label.Parent = gui
+		yOffset += line.height
+	end
 
 	task.delay(2, function()
 		if gui and gui.Parent then
@@ -399,55 +416,46 @@ local function clearMultikill(player, state, token)
 	multikillStates[player] = nil
 end
 
-local function playMonsterKillAnnouncement()
+local function playMonsterKillAnnouncement(player)
 	local source = SoundService:FindFirstChild("MonsterKill")
-	if not (source and source:IsA("Sound")) then return end
+	if not (source and source:IsA("Sound")) or not player or not player.Parent then return false end
 
 	local sound = source:Clone()
 	sound.Looped = false
 	sound.Parent = SoundService
 	sound:Play()
 	game:GetService("Debris"):AddItem(sound, math.max(3, sound.TimeLength + 1))
+
+	-- The sound and bonus are one reward: an actual announcement is always +5.
+	scores[player] = (scores[player] or 0) + MONSTER_KILL_BONUS
+	setLeaderboardStats(player, scores[player], kills[player] or 0)
+	scoreEvent:FireClient(player, scores[player], kills[player] or 0)
+	updateScoreRecords(player)
+	broadcastRecords()
+	return true
 end
 
-local function registerMultikillKill(player, points, isMajorKill)
+local function registerMultikillKill(player, isMajorKill)
 	local state = multikillStates[player]
 	if not state then
-		state = { count = 0, baseScore = 0, token = 0, awardedBonus = 0 }
+		state = { count = 0, token = 0 }
 		multikillStates[player] = state
 	end
 	state.count += 1
-	state.baseScore += points
 	state.token += 1
 
-	-- Keep the original satisfying third-kill announcement. The source sound
-	-- remains untouched in SoundService; each announcement plays on its own
-	-- temporary clone so concurrent players cannot cut one another off.
+	-- A three-kill chain announces once and earns its fixed +5. Major kills
+	-- announce below instead, even when they close a chain.
+	local announced = false
 	if state.count == 3 and not isMajorKill then
-		playMonsterKillAnnouncement()
-	end
-
-	-- A chain becomes visible and earns its current bonus immediately on its
-	-- second kill; subsequent kills update the same five-second chain.
-	if state.count >= 2 then
-		-- The chain's total bonus equals its kill count. Earlier immediate notices
-		-- may already have awarded part of that total, so later kills add only the
-		-- difference instead of double-counting a triple as +2 then +3.
-		local bonus = state.count
-		local bonusDelta = math.max(0, bonus - state.awardedBonus)
-		state.awardedBonus = bonus
-		scores[player] = (scores[player] or 0) + bonusDelta
-		setLeaderboardStats(player, scores[player], kills[player] or 0)
-		scoreEvent:FireClient(player, scores[player], kills[player] or 0)
-		updateScoreRecords(player)
-		broadcastRecords()
-		multikillEvent:FireClient(player, state.count, state.baseScore, bonus)
+		announced = playMonsterKillAnnouncement(player)
 	end
 
 	local token = state.token
 	task.delay(MULTIKILL_WINDOW_SECONDS, function()
 		clearMultikill(player, state, token)
 	end)
+	return announced
 end
 
 local function awardScore(player, points, isMajorKill)
@@ -456,7 +464,7 @@ local function awardScore(player, points, isMajorKill)
 	setLeaderboardStats(player, scores[player], kills[player])
 	scoreEvent:FireClient(player, scores[player], kills[player])
 	updateScoreRecords(player)
-	registerMultikillKill(player, points, isMajorKill)
+	return registerMultikillKill(player, isMajorKill)
 end
 
 -- Award points when a monster dies, then schedule one of its two permitted
@@ -474,6 +482,9 @@ local function onMonsterKilled(hum, model)
 		local popupColor = MonsterManager.getLastScoreColor(hum, DEFAULT_SCORE_POPUP_COLOR)
 		local isMajorKill = config.hp >= MAJOR_KILL_MIN_HP
 		local awardedAny = false
+		local monsterKillAnnounced = false
+		local lastAttackerId = hum:GetAttribute("LastAttackerId")
+		local announcementPlayer
 		local monsterAttacker = hum:GetAttribute("LastMonsterAttacker")
 		local monsterAttackCause = hum:GetAttribute("LastMonsterAttackCause")
 
@@ -481,8 +492,15 @@ local function onMonsterKilled(hum, model)
 			local attacker = Players:GetPlayerByUserId(award.userId)
 
 			if attacker then
-				awardScore(attacker, award.points, isMajorKill)
+				if awardScore(attacker, award.points, isMajorKill) then
+					monsterKillAnnounced = true
+				end
 				awardedAny = true
+				if award.userId == lastAttackerId then
+					announcementPlayer = attacker
+				elseif not announcementPlayer then
+					announcementPlayer = attacker
+				end
 				RadarEventBus.publish({ kind = "kill", actor = attacker.DisplayName, actorKind = "player", target = shortName, targetPlural = pluralShortName })
 				eventReported = true
 			end
@@ -490,7 +508,10 @@ local function onMonsterKilled(hum, model)
 
 		if awardedAny then
 			if isMajorKill then
-				playMonsterKillAnnouncement()
+				monsterKillAnnounced = playMonsterKillAnnouncement(announcementPlayer) or monsterKillAnnounced
+			end
+			if monsterKillAnnounced then
+				table.insert(awards, { points = MONSTER_KILL_BONUS, label = "monster kill" })
 			end
 			showScorePopup(model, awards, popupColor)
 			broadcastRecords()
@@ -515,6 +536,14 @@ local function onMonsterKilled(hum, model)
 			hum:GetAttribute("PermanentMonsterKill") == true
 			or hum:GetAttribute("KilledByMonsterBlaster") == true
 			or hum:GetAttribute("KilledByMonsterGun") == true
+
+		-- BombMonster is an ignitable reusable encounter, not a conventional
+		-- permanently-destroyed weapon target. This also tolerates an older live
+		-- weapon script which may still set one of the generic kill attributes.
+		-- Its finite lives are consumed only by normal bomb deaths below.
+		if model.Name == MonsterBombConfig.MODEL_NAME then
+			permanentWeaponKill = false
+		end
 
 		-- Bombs use the same finite round lives as every other monster. Each
 		-- remaining life still respawns reliably, but a round can eventually clear.
