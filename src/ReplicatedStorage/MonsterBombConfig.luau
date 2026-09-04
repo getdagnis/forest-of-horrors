@@ -25,7 +25,7 @@ MonsterBombConfig.BLAST_RADIUS = 100
 -- Maximum distance in studs at which the warning beep can be heard.
 MonsterBombConfig.WARNING_SOUND_RADIUS = 250
 -- Maximum distance in studs at which the explosion sound can be heard.
-MonsterBombConfig.EXPLOSION_SOUND_RADIUS = 120
+MonsterBombConfig.EXPLOSION_SOUND_RADIUS = 500
 -- Preferred SoundService template name. A model child remains a compatibility
 -- fallback for older bomb copies.
 MonsterBombConfig.EXPLOSION_SOUND_TEMPLATE = "MonsterBombExplosion"
@@ -50,6 +50,15 @@ MonsterBombConfig.WARNING_PULSE_SPEED = 8
 
 -- Pink colour used by the warning light and expanding explosion visual.
 MonsterBombConfig.BLAST_COLOR = Color3.fromRGB(208, 18, 90)
+-- Active-warning appearance sampled from the authored BombMonster reference.
+-- The light stays off while idle, then pulses for the spoken countdown only.
+MonsterBombConfig.WARNING_SKIN_COLOR = Color3.fromRGB(89, 34, 89) -- Mulberry
+MonsterBombConfig.WARNING_LIGHT_COLOR = Color3.fromRGB(255, 42, 148)
+MonsterBombConfig.WARNING_LIGHT_MIN_BRIGHTNESS = 1
+MonsterBombConfig.WARNING_LIGHT_MAX_BRIGHTNESS = 8
+MonsterBombConfig.WARNING_LIGHT_MIN_RANGE = 36
+MonsterBombConfig.WARNING_LIGHT_MAX_RANGE = 66
+MonsterBombConfig.WARNING_LIGHT_PULSE_HZ = 2
 -- Seconds for which the expanding explosion sphere remains visible.
 MonsterBombConfig.BLAST_VISUAL_DURATION = 4
 

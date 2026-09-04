@@ -29,6 +29,10 @@ local SHIELD_DURATION = 30
 local SHIELD_COOLDOWN = 45
 local UPDATE_INTERVAL = 0.25
 local GUARDIAN_CORPSE_DISPLAY_TIME = 60 -- battlefield remains; guardians do not respawn here
+-- Guardians are resilient living world actors: after escaping combat, they
+-- recover a Bomb hit over roughly forty seconds rather than staying crippled.
+local GUARDIAN_REGEN_DELAY = 8
+local GUARDIAN_REGEN_PER_SECOND = 3
 
 local function getOrCreateRemoteEvent(name)
 	local event = ReplicatedStorage:FindFirstChild(name)
@@ -260,6 +264,15 @@ end
 local function updateGuardian(state)
 	while state.model.Parent and state.humanoid.Parent and state.humanoid.Health > 0 do
 		local now = os.clock()
+		if now - state.lastDamagedAt >= GUARDIAN_REGEN_DELAY
+			and state.humanoid.Health < state.humanoid.MaxHealth
+		then
+			state.humanoid.Health = math.min(
+				state.humanoid.MaxHealth,
+				state.humanoid.Health + GUARDIAN_REGEN_PER_SECOND * UPDATE_INTERVAL
+			)
+		end
+
 		if state.mode == "unbonded" then
 			local playerRoot = getLivingPlayerRoot(state.helpPlayer)
 			if not playerRoot or now >= (state.helpUntil or 0) then
@@ -338,6 +351,10 @@ local function setupGuardian(model)
 	local root = getRoot(model)
 	if not humanoid or not root then return end
 
+	-- Guardians deliberately stay outside the round ledger, so MonsterSystem
+	-- never reaches MonsterManager.applyHP for them. Their own owner must apply
+	-- the intended 320 HP at registration.
+	MonsterManager.applyHP(model)
 	disablePlayerDamage(model)
 	disableLegacyGuardianScript(model)
 	local state = {
@@ -351,6 +368,7 @@ local function setupGuardian(model)
 		offerUsed = false,
 		shieldAvailableAt = 0,
 		unbondedWalkSpeed = humanoid.WalkSpeed,
+		lastDamagedAt = os.clock(),
 	}
 	guardians[model] = state
 	model:SetAttribute("WMTGuardianPet", false)
@@ -363,6 +381,7 @@ local function setupGuardian(model)
 	humanoid.HealthChanged:Connect(function(health)
 		if health >= state.lastHealth then state.lastHealth = health return end
 		state.lastHealth = health
+		state.lastDamagedAt = os.clock()
 		local attacker = state.lastContactAttacker
 		if attacker and os.clock() - (state.lastContactAt or 0) <= 5 then
 			local attackerHumanoid = MonsterManager.getMonsterHumanoid(attacker)

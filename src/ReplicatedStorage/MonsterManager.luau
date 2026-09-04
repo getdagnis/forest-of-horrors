@@ -18,7 +18,10 @@ local MONSTER_CONFIG = {
 	["creepyMonster"] = { shortName = "a creepy monster", pluralShortName = "creepy monsters", hp = 320, hpVsPlayers = 320, hpVsMonsters = 320, points = 5, damageToPlayers = 40, damageToMonsters = 10, zombieGroupTarget = true },
 	["creepyMonsterOrange"] = { shortName = "an orange creepy monster", pluralShortName = "orange creepy monsters", hp = 420, hpVsPlayers = 420, hpVsMonsters = 420, points = 10, damageToPlayers = 60, damageToMonsters = 10, zombieGroupTarget = false },
 	["creepyMonsterWhite"] = { shortName = "a white creepy monster", pluralShortName = "white creepy monsters", hp = 520, hpVsPlayers = 520, hpVsMonsters = 520, points = 15, damageToPlayers = 100, damageToMonsters = 10, zombieGroupTarget = false },
-	["BombMonster"] = { shortName = "a monsterbomb", pluralShortName = "monsterbombs", hp = 430, hpVsPlayers = 430, hpVsMonsters = 430, points = 5, damageToPlayers = 40, damageToMonsters = 40, zombieGroupTarget = false },
+	-- Keep this in lockstep with MonsterBombConfig. MonsterSystem also applies
+	-- this value during registration, so a mismatch makes startup order decide
+	-- the live health pool.
+	["BombMonster"] = { shortName = "a monsterbomb", pluralShortName = "monsterbombs", hp = 160, hpVsPlayers = 160, hpVsMonsters = 160, points = 5, damageToPlayers = 40, damageToMonsters = 40, zombieGroupTarget = false },
 	["FortressBoss"] = { shortName = "a forest boss", pluralShortName = "forest bosses", hp = 900, hpVsPlayers = 900, hpVsMonsters = 900, points = 20, damageToPlayers = 80, damageToMonsters = 10, zombieGroupTarget = true },
 	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 15, damageToPlayers = 20, damageToMonsters = 30, zombieGroupTarget = false },
 }

@@ -51,7 +51,67 @@ local function startIdleBob(model, humanoid)
 	end
 end
 
-local function playWarning(model)
+local function getOrCreateWarningLight(model, root)
+	local skin = model:FindFirstChild("Skin", true)
+	if not (skin and skin:IsA("BasePart")) then
+		skin = root
+	end
+	if not skin then return nil end
+
+	local light = skin:FindFirstChildWhichIsA("PointLight", true)
+	if light then return light end
+
+	light = Instance.new("PointLight")
+	light.Name = "PointLight"
+	light.Parent = skin
+	return light
+end
+
+local function applyWarningSkin(model)
+	for _, item in model:GetDescendants() do
+		if item:IsA("BasePart") and item.Name == "Skin" then
+			item.Color = Config.WARNING_SKIN_COLOR
+			item.Material = Enum.Material.Neon
+		end
+	end
+end
+
+local function startWarningPulse(model)
+	local root = getRoot(model)
+	local light = root and getOrCreateWarningLight(model, root)
+	if not light then
+		return function() end
+	end
+
+	applyWarningSkin(model)
+	light.Color = Config.WARNING_LIGHT_COLOR
+	light.Shadows = true
+	light.Enabled = true
+	local active = true
+	local startedAt = os.clock()
+
+	task.spawn(function()
+		while active and light.Parent and model.Parent do
+			local phase = (math.sin((os.clock() - startedAt) * math.pi * 2 * Config.WARNING_LIGHT_PULSE_HZ) + 1) * 0.5
+			light.Brightness = Config.WARNING_LIGHT_MIN_BRIGHTNESS
+				+ (Config.WARNING_LIGHT_MAX_BRIGHTNESS - Config.WARNING_LIGHT_MIN_BRIGHTNESS) * phase
+			light.Range = Config.WARNING_LIGHT_MIN_RANGE
+				+ (Config.WARNING_LIGHT_MAX_RANGE - Config.WARNING_LIGHT_MIN_RANGE) * phase
+			task.wait(0.04)
+		end
+	end)
+
+	return function()
+		active = false
+		if light.Parent then
+			light.Enabled = false
+			light.Brightness = Config.WARNING_LIGHT_MIN_BRIGHTNESS
+			light.Range = Config.WARNING_LIGHT_MAX_RANGE
+		end
+	end
+end
+
+local function playWarningSound(model)
 	local root = getRoot(model)
 	if not root or not root:IsA("BasePart") then return end
 
@@ -68,20 +128,6 @@ local function playWarning(model)
 	sound.Ended:Once(function()
 		sound:Destroy()
 	end)
-
-	local light = Instance.new("PointLight")
-	light.Name = "MonsterBombWarningLight"
-	light.Color = Config.BLAST_COLOR
-	light.Brightness = 20
-	light.Range = 36
-	light.Shadows = true
-	light.Parent = root
-
-	TweenService:Create(light, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Brightness = 0,
-		Range = 0,
-	}):Play()
-	Debris:AddItem(light, 0.4)
 end
 
 local function playExplosionSound(model, position)
@@ -236,8 +282,11 @@ local function setupBomb(model)
 	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.DisplayWhenDamaged
 
 	local stopIdleBob = startIdleBob(model, humanoid)
+	local existingWarningLight = getOrCreateWarningLight(model, getRoot(model))
+	if existingWarningLight then existingWarningLight.Enabled = false end
 	local exploded = false
 	local warningActive = false
+	local stopWarningPulse = function() end
 	local function explode()
 		if exploded then return end
 		exploded = true
@@ -247,6 +296,7 @@ local function setupBomb(model)
 		local root = getRoot(model)
 		local position = root and root.Position or model:GetPivot().Position
 		stopIdleBob()
+		stopWarningPulse()
 		makeExplosionVisual(position)
 		playExplosionSound(model, position)
 		damagePlayers(position)
@@ -267,7 +317,8 @@ local function setupBomb(model)
 		warningActive = true
 		model:SetAttribute("BombWarningActive", true)
 		stopIdleBob(true)
-		playWarning(model)
+		stopWarningPulse = startWarningPulse(model)
+		playWarningSound(model)
 		task.delay(Config.WARNING_TIME, explode)
 	end
 
@@ -304,6 +355,7 @@ local function setupBomb(model)
 
 	model.Destroying:Connect(function()
 		stopIdleBob()
+		stopWarningPulse()
 		activeBombs[model] = nil
 	end)
 end
