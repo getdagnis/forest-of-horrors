@@ -7,6 +7,7 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local monsterCountEvent = ReplicatedStorage:WaitForChild("MonsterCountUpdate")
 
 local SHOW_AT_COUNT = 50
+local MIN_DISTANCE = 50
 local MAX_DISTANCE = 200
 local UPDATE_EVERY = 0.35
 
@@ -92,10 +93,10 @@ local function updateContours()
 
 			if part then
 				local distance = (part.Position - playerRoot.Position).Magnitude
-				-- In the last fifty hostile contacts, every round monster within
-				-- 200 studs receives the locator contour, whether in sight or behind
-				-- cover. Guardians stay out because they are not round monsters.
-				local visible = distance <= MAX_DISTANCE
+				-- In the last fifty hostile contacts, use the locator contour only
+				-- for the distant 50-200 stud band. Nearby monsters remain visually
+				-- clean; guardians stay out because they are not round monsters.
+				local visible = distance >= MIN_DISTANCE and distance <= MAX_DISTANCE
 
 				getHighlight(item).Enabled = visible
 			end

@@ -6,6 +6,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 local rescueEvent = ReplicatedStorage:WaitForChild("WMTRescueOffer")
 local rescueResponseEvent = ReplicatedStorage:WaitForChild("WMTRescueResponse")
+local rescueResultEvent = ReplicatedStorage:WaitForChild("WMTRescueResult")
 local petLostEvent = ReplicatedStorage:WaitForChild("WMTGuardianPetLost")
 
 local gui = Instance.new("ScreenGui")
@@ -50,6 +51,7 @@ end
 local accept = makeButton("Accept", "accept", UDim2.fromOffset(48, 62), Color3.fromRGB(190, 255, 75))
 local decline = makeButton("NoWay", "no way", UDim2.fromOffset(222, 62), Color3.fromRGB(255, 180, 180))
 local offeredGuardian
+local waitingForAcceptance = false
 
 local lossText = Instance.new("TextLabel")
 lossText.Name = "PetLostText"
@@ -67,10 +69,18 @@ lossText.Parent = gui
 local lossToken = 0
 
 local function respond(accepted)
-	if not offeredGuardian then return end
+	if not offeredGuardian or waitingForAcceptance then return end
 	rescueResponseEvent:FireServer(offeredGuardian, accepted)
-	offeredGuardian = nil
-	panel.Visible = false
+	if accepted then
+		-- Pet conversion is server-authoritative. Keep the offer visible until its
+		-- exact guardian confirms success, rather than looking like an acceptance
+		-- succeeded when a stale or invalid offer was rejected.
+		waitingForAcceptance = true
+		accept.Active = false
+	else
+		offeredGuardian = nil
+		panel.Visible = false
+	end
 end
 
 accept.Activated:Connect(function() respond(true) end)
@@ -79,8 +89,20 @@ decline.Activated:Connect(function() respond(false) end)
 rescueEvent.OnClientEvent:Connect(function(guardian, message)
 	if not guardian or not guardian:IsA("Model") then return end
 	offeredGuardian = guardian
+	waitingForAcceptance = false
+	accept.Active = true
 	text.Text = typeof(message) == "string" and message or "It wants to be your pet."
 	panel.Visible = true
+end)
+
+rescueResultEvent.OnClientEvent:Connect(function(guardian, accepted)
+	if guardian ~= offeredGuardian then return end
+	waitingForAcceptance = false
+	accept.Active = true
+	if accepted then
+		offeredGuardian = nil
+		panel.Visible = false
+	end
 end)
 
 petLostEvent.OnClientEvent:Connect(function()

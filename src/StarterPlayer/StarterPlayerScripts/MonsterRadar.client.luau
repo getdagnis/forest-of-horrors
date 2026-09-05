@@ -21,6 +21,13 @@ local MAX_DOTS = 96
 local PRIORITY_WARNING_RANGE = 80
 local MONSTER_DOT_COLOR = Color3.fromRGB(238, 67, 70)
 local BOMB_DOT_COLOR = Color3.fromRGB(255, 174, 192)
+local PET_DOT_COLOR = Color3.fromRGB(190, 255, 75)
+local BOMB_WARNING_PULSE_SPEED = math.pi * 3
+local RADAR_CONTACT_COUNT_ATTRIBUTE = "MonsterRadarContactCount"
+
+-- Other local presentation systems may wait for a truly quiet radar window.
+-- -1 means the radar cannot currently produce a trustworthy contact count.
+player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, -1)
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "MonsterRadarHud"
@@ -125,6 +132,27 @@ for index = 1, MAX_DOTS do
 	ring.Thickness = 1.5
 	ring.Enabled = false
 	ring.Parent = dot
+
+	-- A warning bomb receives a second concentric circle. It lives inside each
+	-- pooled contact so switching marker types cannot leave an old ring behind.
+	local warningRing = Instance.new("Frame")
+	warningRing.Name = "BombWarningRing"
+	warningRing.AnchorPoint = Vector2.new(0.5, 0.5)
+	warningRing.Position = UDim2.fromScale(0.5, 0.5)
+	warningRing.Size = UDim2.fromScale(1.5, 1.5)
+	warningRing.BackgroundTransparency = 1
+	warningRing.BorderSizePixel = 0
+	warningRing.Visible = false
+	warningRing.ZIndex = 2
+	warningRing.Parent = dot
+	local warningCorner = Instance.new("UICorner")
+	warningCorner.CornerRadius = UDim.new(1, 0)
+	warningCorner.Parent = warningRing
+	local warningStroke = Instance.new("UIStroke")
+	warningStroke.Name = "WarningStroke"
+	warningStroke.Color = BOMB_DOT_COLOR
+	warningStroke.Thickness = 1.5
+	warningStroke.Parent = warningRing
 	dots[index] = dot
 end
 
@@ -195,6 +223,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local camera = workspace.CurrentCamera
 	if not root or not camera then
 		for _, dot in ipairs(dots) do dot.Visible = false end
+		player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, -1)
 		return
 	end
 
@@ -267,14 +296,28 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			local dot = dots[shown]
 			local bomb = monster.model.Name == "BombMonster"
 			local guardian = monster.model.Name == "weird monster thing"
+			local pet = guardian and monster.model:GetAttribute("WMTGuardianPet") == true
+			local warningBomb = bomb and monster.model:GetAttribute("BombWarningActive") == true
+			local pulse = (math.sin(now * BOMB_WARNING_PULSE_SPEED) + 1) * 0.5
 			local dotSize = bomb and DOT_SIZE * 2 or (monster.priority and DOT_SIZE * 2 or DOT_SIZE)
 			dot.Size = UDim2.fromOffset(dotSize, dotSize)
-			dot.BackgroundColor3 = bomb and BOMB_DOT_COLOR or MONSTER_DOT_COLOR
+			dot.BackgroundColor3 = bomb and BOMB_DOT_COLOR or (pet and PET_DOT_COLOR or MONSTER_DOT_COLOR)
 			dot.BackgroundTransparency = (bomb or guardian) and 1 or 0
 			local ring = dot:FindFirstChild("ContactRing")
 			if ring and ring:IsA("UIStroke") then
-				ring.Color = bomb and BOMB_DOT_COLOR or MONSTER_DOT_COLOR
+				ring.Color = bomb and BOMB_DOT_COLOR or (pet and PET_DOT_COLOR or MONSTER_DOT_COLOR)
+				ring.Thickness = warningBomb and (1.5 + pulse) or 1.5
+				ring.Transparency = warningBomb and (0.4 - pulse * 0.35) or 0
 				ring.Enabled = bomb or guardian
+			end
+			local warningRing = dot:FindFirstChild("BombWarningRing")
+			if warningRing and warningRing:IsA("Frame") then
+				warningRing.Size = UDim2.fromScale(1.5 + pulse * 0.7, 1.5 + pulse * 0.7)
+				warningRing.Visible = warningBomb
+				local warningStroke = warningRing:FindFirstChild("WarningStroke")
+				if warningStroke and warningStroke:IsA("UIStroke") then
+					warningStroke.Transparency = 0.8 - pulse * 0.65
+				end
 			end
 			dot.Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
 			dot.Visible = true
@@ -287,6 +330,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		end
 	end
 	for index = shown + 1, MAX_DOTS do dots[index].Visible = false end
+	player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, shown)
 
 	if radarRange == MAX_RADAR_RANGE and shown == 0 and nearestOutside then
 		local localOffset = camera.CFrame:VectorToObjectSpace(nearestOutside.offset)

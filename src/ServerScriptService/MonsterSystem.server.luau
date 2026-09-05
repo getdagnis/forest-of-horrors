@@ -36,7 +36,7 @@ local multikillStates = {}
 local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
 local CORPSE_DISPLAY_TIME = 5 -- separate from respawn time; body remains briefly visible
 local RESPAWN_LIVES = 4 -- initial life plus three server-owned replacements
-local ROUND_DURATION_SECONDS = 30 * 60 + 33
+local ROUND_DURATION_SECONDS = 33 * 60 + 33
 local DEFAULT_MONSTER_MAX_COUNT = 90
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
 local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
@@ -106,7 +106,9 @@ local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
 local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
 local restartRoundEvent = getOrCreateRemoteEvent("RestartRound")
 local monsterMilestoneEvent = getOrCreateRemoteEvent("MonsterMilestone")
+local playerKillMilestoneEvent = getOrCreateRemoteEvent("PlayerKillMilestone")
 local bestSpawnAnnouncementEvent = getOrCreateRemoteEvent("BestSpawnAnnouncement")
+local secretShaftAnnouncementEvent = getOrCreateRemoteEvent("SecretShaftAnnouncement")
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
@@ -348,6 +350,15 @@ local DEFAULT_SCORE_POPUP_COLOR = Color3.fromRGB(255, 238, 150)
 local MULTIKILL_WINDOW_SECONDS = 5
 local MAJOR_KILL_MIN_HP = 520
 local MONSTER_KILL_BONUS = 1
+local secretShaftOpened = false
+local PLAYER_KILL_MILESTONES = {
+	[50] = true,
+	[100] = true,
+	[200] = true,
+	[300] = true,
+	[500] = true,
+	[1000] = true,
+}
 
 local function showScorePopup(model, awards, color)
 	if #awards == 0 then return end
@@ -404,6 +415,34 @@ local function showScorePopup(model, awards, color)
 			gui:Destroy()
 		end
 	end)
+end
+
+-- The marked white creepy is a one-time world gate. Keep this in the central
+-- death path so weapon, bomb, and other authoritative damage sources all open
+-- the shaft consistently, while the server owns both the door removal and the
+-- all-player announcement.
+local function openSecretShaftIfGuard(model)
+	if secretShaftOpened or model:GetAttribute("SecretShaftDoorGuard") ~= true then return end
+	secretShaftOpened = true
+
+	for _, item in ipairs(ws:GetDescendants()) do
+		if item.Name == "SecretShaftDoor" and item:GetAttribute("SecretShaftDoor") == true then
+			item:Destroy()
+		end
+	end
+
+	local source = SoundService:FindFirstChild("SecretShaftGuard")
+	if source and source:IsA("Sound") then
+		local sound = source:Clone()
+		sound.Looped = false
+		sound.Parent = SoundService
+		sound:Play()
+		game:GetService("Debris"):AddItem(sound, math.max(5, sound.TimeLength + 1))
+	else
+		warn("[MonsterSystem] SecretShaftGuard sound not found in SoundService")
+	end
+
+	secretShaftAnnouncementEvent:FireAllClients()
 end
 
 local function updateScoreRecords(player)
@@ -485,6 +524,9 @@ local function awardScore(player, points, isMajorKill)
 	setLeaderboardStats(player, scores[player], kills[player])
 	scoreEvent:FireClient(player, scores[player], kills[player])
 	updateScoreRecords(player)
+	if PLAYER_KILL_MILESTONES[kills[player]] then
+		playerKillMilestoneEvent:FireClient(player, kills[player])
+	end
 	return registerMultikillKill(player, isMajorKill)
 end
 
@@ -492,6 +534,7 @@ end
 -- server-owned resurrections. Permanent weapon kills consume every remaining
 -- life, including for bomb monsters.
 local function onMonsterKilled(hum, model)
+	openSecretShaftIfGuard(model)
 	local config = MonsterManager.getConfig(model)
 	local shortName = MonsterManager.getShortName(model)
 	local pluralShortName = MonsterManager.getPluralShortName(model)

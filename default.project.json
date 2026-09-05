@@ -70,6 +70,9 @@
       "LavaPoolZombieSpawner": {
         "$path": "src/ServerScriptService/LavaPoolZombieSpawner.server.luau"
       },
+      "AppleStoreZombieSpawner": {
+        "$path": "src/ServerScriptService/AppleStoreZombieSpawner.server.luau"
+      },
       "GuardianMonsterSystem": {
         "$path": "src/ServerScriptService/GuardianMonsterSystem.server.luau"
       },
@@ -96,6 +99,9 @@
       },
       "LaserEnergySystem": {
         "$path": "src/ServerScriptService/LaserEnergySystem.server.luau"
+      },
+      "ShieldPickupSystem": {
+        "$path": "src/ServerScriptService/ShieldPickupSystem.server.luau"
       },
       "RadarTowerSystem": {
         "$path": "src/ServerScriptService/RadarTowerSystem.server.luau"
@@ -135,6 +141,9 @@
         "$ignoreUnknownInstances": true,
       "ScoreGui": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/ScoreGui.client.luau"
+      },
+      "ShieldHud": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/ShieldHud.client.luau"
       },
       "MonsterHudClient": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterHudClient.client.luau"

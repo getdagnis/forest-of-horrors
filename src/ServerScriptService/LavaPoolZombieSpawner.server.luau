@@ -7,6 +7,7 @@ local ZOMBIE_NAME = "Drooling Zombie"
 local LADDER_NAME = "Pool Ladder"
 local SPAWN_INTERVAL = 10
 local MAX_MONSTERS = 150
+local STOP_SPAWNING_AT_OR_BELOW = 20
 
 local SIDE_OFFSET = 5
 local BACK_OFFSET = 4
@@ -25,7 +26,10 @@ local function countLivingMonsters()
 	local count = 0
 
 	for _, item in Workspace:GetDescendants() do
-		if item:IsA("Model") and MonsterManager.getConfig(item) and isMonsterAlive(item) then
+		if item:IsA("Model")
+			and MonsterManager.isRoundTracked(item)
+			and isMonsterAlive(item)
+		then
 			count += 1
 		end
 	end
@@ -39,7 +43,7 @@ local function countNonLavaLivingMonsters()
 	for _, item in Workspace:GetDescendants() do
 		if item:IsA("Model")
 			and not item:GetAttribute("LavaPoolSpawned")
-			and MonsterManager.getConfig(item)
+			and MonsterManager.isRoundTracked(item)
 			and isMonsterAlive(item)
 		then
 			count += 1
@@ -77,7 +81,8 @@ local function getSpawnCFrame(ladder)
 end
 
 local function spawnZombieAtLadder(ladder)
-	if countLivingMonsters() >= MAX_MONSTERS then
+	local livingCount = countLivingMonsters()
+	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= MAX_MONSTERS then
 		return
 	end
 

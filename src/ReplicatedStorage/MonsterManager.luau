@@ -23,7 +23,7 @@ local MONSTER_CONFIG = {
 	-- the live health pool.
 	["BombMonster"] = { shortName = "a monsterbomb", pluralShortName = "monsterbombs", hp = 200, hpVsPlayers = 200, hpVsMonsters = 200, points = 2, damageToPlayers = 40, damageToMonsters = 40, zombieGroupTarget = false },
 	["FortressBoss"] = { shortName = "a forest boss", pluralShortName = "forest bosses", hp = 900, hpVsPlayers = 900, hpVsMonsters = 900, points = 7, damageToPlayers = 80, damageToMonsters = 10, zombieGroupTarget = true },
-	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 10, damageToPlayers = 7, damageToMonsters = 30, zombieGroupTarget = false },
+	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 7, damageToPlayers = 7, damageToMonsters = 30, zombieGroupTarget = false },
 }
 
 -- FortressBosses have ambiguous/empty names but contain a "Zombie" Humanoid child.

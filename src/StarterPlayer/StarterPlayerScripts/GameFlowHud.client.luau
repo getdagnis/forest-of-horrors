@@ -4,6 +4,7 @@ local StarterGui = game:GetService("StarterGui")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
+local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
 
 local roundCompleteEvent = ReplicatedStorage:WaitForChild("RoundComplete")
 local roundRestartedEvent = ReplicatedStorage:WaitForChild("RoundRestarted")
@@ -32,6 +33,10 @@ end)
 local function closeWelcome()
 	if not welcomeShade.Visible then return end
 	welcomeShade.Visible = false
+	-- This local attribute is the one-time handoff to the existing announcement
+	-- HUD. StarterPlayerScripts survive character respawns, so the introduction
+	-- cannot replay merely because the player starts another life.
+	player:SetAttribute(WELCOME_ACCEPTED_ATTRIBUTE, true)
 	pcall(function()
 		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
 	end)

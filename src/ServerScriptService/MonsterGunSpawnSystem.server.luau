@@ -14,6 +14,7 @@ local WEAPONS = {
 }
 local RESPAWN_DELAY = 12
 local RECONCILE_RADIUS = 8
+local RECONCILE_INTERVAL = 1
 local states = {}
 local observedSpawnFolders = {}
 
@@ -117,16 +118,22 @@ end
 local scheduleRespawn
 
 local function bindWorldGun(state, tool)
+	if state.activeTool == tool then return end
 	state.activeTool = tool
 	if not prepareTool(tool, false) then return end
 
 	tool.AncestryChanged:Connect(function()
 		if state.activeTool ~= tool or state.respawnScheduled then return end
-		if not isHeldByPlayer(tool) then return end
-		-- Do this immediately so RightGrip never carries the anchored pickup.
-		prepareTool(tool, true)
+		local held = isHeldByPlayer(tool)
+		if held then
+			-- Do this immediately so RightGrip never carries the anchored pickup.
+			prepareTool(tool, true)
+		end
 		task.defer(function()
-			if state.activeTool ~= tool or state.respawnScheduled or not isHeldByPlayer(tool) then return end
+			if state.activeTool ~= tool or state.respawnScheduled then return end
+			-- WeaponInventoryGuard may consume the incoming MG2 while promoting MG1
+			-- in place. Treat that destroyed pickup exactly like a normal transfer.
+			if not isHeldByPlayer(tool) and tool.Parent and tool:IsDescendantOf(workspace) then return end
 			state.activeTool = nil
 			scheduleRespawn(state)
 		end)
@@ -139,7 +146,7 @@ scheduleRespawn = function(state, delay)
 
 	task.delay(delay == nil and RESPAWN_DELAY or delay, function()
 		state.respawnScheduled = false
-		if not state.spawnPoint.Parent then
+		if not state.spawnPoint.Parent or not state.spawnPoint:IsDescendantOf(workspace) then
 			states[state.spawnPoint] = nil
 			return
 		end
@@ -184,11 +191,11 @@ end
 local function observeSpawnFolder(folder)
 	if observedSpawnFolders[folder] then return end
 	observedSpawnFolders[folder] = true
-	for _, child in folder:GetChildren() do
-		setupSpawnPoint(child)
+	for _, descendant in folder:GetDescendants() do
+		setupSpawnPoint(descendant)
 	end
-	folder.ChildAdded:Connect(function(child)
-		task.defer(setupSpawnPoint, child)
+	folder.DescendantAdded:Connect(function(descendant)
+		task.defer(setupSpawnPoint, descendant)
 	end)
 end
 
@@ -204,5 +211,34 @@ end
 workspace.DescendantAdded:Connect(function(instance)
 	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
 		observeSpawnFolder(instance)
+	end
+end)
+
+-- Default pickup transfer and in-place tier promotion can happen within one
+-- scheduler turn. This bounded watchdog repairs a missed ancestry transition
+-- without creating a second spawn owner or duplicating an available world gun.
+task.spawn(function()
+	while true do
+		task.wait(RECONCILE_INTERVAL)
+		for spawnPoint, state in pairs(states) do
+			if not spawnPoint.Parent or not spawnPoint:IsDescendantOf(workspace) then
+				states[spawnPoint] = nil
+			elseif not state.respawnScheduled then
+				local activeTool = state.activeTool
+				local available = activeTool
+					and activeTool.Parent
+					and activeTool:IsDescendantOf(workspace)
+					and not isHeldByPlayer(activeTool)
+				if not available then
+					state.activeTool = nil
+					local existing = findExistingGun(state)
+					if existing then
+						bindWorldGun(state, existing)
+					else
+						scheduleRespawn(state)
+					end
+				end
+			end
+		end
 	end
 end)

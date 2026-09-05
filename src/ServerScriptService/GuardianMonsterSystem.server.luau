@@ -31,7 +31,14 @@ local PET_COMBAT_WALK_SPEED = 14
 local OFFER_DISTANCE = 15
 local OFFER_MIN_PROGRESS = 5
 local OFFER_TIMEOUT = 20
-local OFFER_PEACE_RADIUS = 70
+local OFFER_RESPONSE_SECONDS = 15
+-- Follow MonsterRadar's close-range behaviour, but never let distant search
+-- tiers beyond 70 studs prevent the deliberately discoverable pet offer.
+local OFFER_RADAR_CLOSE_RANGE = 50
+local OFFER_RADAR_CROWD_RANGE = 30
+local OFFER_RADAR_NORMAL_RANGE = 50
+local OFFER_RADAR_SEARCH_RANGES = { 50, 70 }
+local OFFER_RADAR_CROWD_COUNT = 10
 local THREAT_RADIUS = 15
 local PET_ATTACK_RANGE = 50
 local PET_ATTACK_DISTANCE = 6
@@ -91,6 +98,7 @@ end
 
 local rescueEvent = getOrCreateRemoteEvent("WMTRescueOffer")
 local rescueResponseEvent = getOrCreateRemoteEvent("WMTRescueResponse")
+local rescueResultEvent = getOrCreateRemoteEvent("WMTRescueResult")
 local trustAimEvent = getOrCreateRemoteEvent("WMTGuardianTrustAim")
 local petLostEvent = getOrCreateRemoteEvent("WMTGuardianPetLost")
 
@@ -247,6 +255,23 @@ local function disableLegacyGuardianScript(model)
 	end
 end
 
+-- This is deliberately pet-only. Unbonded WMTs retain their authored calm
+-- behaviour; an accepted pet alone is prepared to follow through its Humanoid.
+local function preparePetMovement(model, humanoid, root)
+	for _, item in model:GetDescendants() do
+		if item:IsA("BasePart") then
+			item.Anchored = false
+		end
+	end
+	humanoid.AutoRotate = true
+	humanoid.PlatformStand = false
+	humanoid.Sit = false
+	humanoid:ChangeState(Enum.HumanoidStateType.Running)
+	pcall(function()
+		root:SetNetworkOwner(nil)
+	end)
+end
+
 local function damageMonster(state, targetModel, amount, cooldown)
 	if not isEligibleMonster(targetModel, state.model) then return end
 	local targetHumanoid = MonsterManager.getMonsterHumanoid(targetModel)
@@ -290,6 +315,35 @@ local function nearbyMonsters(position, radius, guardian)
 	return results
 end
 
+local function horizontalDistance(first, second)
+	local offset = first - second
+	return Vector3.new(offset.X, 0, offset.Z).Magnitude
+end
+
+local function getOfferRadarRange(playerPosition)
+	local hostileDistances = {}
+	local closeCount = 0
+	for _, candidate in Workspace:GetDescendants() do
+		if candidate:IsA("Model") and MonsterManager.isRoundTracked(candidate) then
+			local root = getRoot(candidate)
+			if root and getLivingMonsterHumanoid(candidate) then
+				local distance = horizontalDistance(root.Position, playerPosition)
+				table.insert(hostileDistances, distance)
+				if distance <= OFFER_RADAR_CLOSE_RANGE then closeCount += 1 end
+			end
+		end
+	end
+
+	if closeCount >= OFFER_RADAR_CROWD_COUNT then return OFFER_RADAR_CROWD_RANGE end
+	if closeCount > 0 then return OFFER_RADAR_NORMAL_RANGE end
+	for _, searchRange in ipairs(OFFER_RADAR_SEARCH_RANGES) do
+		for _, distance in ipairs(hostileDistances) do
+			if distance <= searchRange then return searchRange end
+		end
+	end
+	return OFFER_RADAR_SEARCH_RANGES[#OFFER_RADAR_SEARCH_RANGES]
+end
+
 local function hasHostileMonsterNearby(position, radius, guardian)
 	for _, candidate in Workspace:GetDescendants() do
 		if candidate:IsA("Model") and candidate ~= guardian then
@@ -302,7 +356,7 @@ local function hasHostileMonsterNearby(position, radius, guardian)
 			end
 			local root = hostile and getRoot(candidate) or nil
 			if root and getLivingMonsterHumanoid(candidate)
-				and (root.Position - position).Magnitude <= radius
+				and horizontalDistance(root.Position, position) <= radius
 			then
 				return true
 			end
@@ -311,9 +365,9 @@ local function hasHostileMonsterNearby(position, radius, guardian)
 	return false
 end
 
-local function isOfferAreaPeaceful(playerRoot, guardianRoot, guardian)
-	return not hasHostileMonsterNearby(playerRoot.Position, OFFER_PEACE_RADIUS, guardian)
-		and not hasHostileMonsterNearby(guardianRoot.Position, OFFER_PEACE_RADIUS, guardian)
+local function isOfferAreaPeaceful(playerRoot, guardian)
+	local radarRange = getOfferRadarRange(playerRoot.Position)
+	return not hasHostileMonsterNearby(playerRoot.Position, radarRange, guardian)
 end
 
 local function ownerIsAlive(state)
@@ -426,25 +480,22 @@ local function recordGuardianKill(state)
 end
 
 local function acceptOffer(state, player)
-	if state.mode ~= "offering" or state.offerPlayer ~= player then return end
+	if state.mode ~= "offering" then return false, "offer is no longer active" end
+	if state.offerPlayer ~= player then return false, "offer belongs to another player" end
 	local root = ownerIsAlive({ owner = player })
 	local guardianRoot = getRoot(state.model)
-	if not root or not guardianRoot or not state.offerReady then return end
-	if (guardianRoot.Position - root.Position).Magnitude > (state.offerArrivalDistance or OFFER_DISTANCE) then return end
+	if not root then return false, "player is no longer alive" end
+	if not guardianRoot or state.humanoid.Health <= 0 then return false, "guardian is no longer alive" end
+	if not state.offerReady then return false, "offer prompt is not ready" end
+	if not isOfferAreaPeaceful(root, state.model) then return false, "hostile monster entered the offer area" end
 
 	clearOffer(state)
 	state.owner = player
 	state.mode = "pet"
 	-- This is assembly preparation, not repositioning: the guardian still moves
-	-- exclusively through its Humanoid. Imported WMT copies occasionally retain
-	-- an anchored decorative body part which otherwise freezes the whole rig.
-	for _, item in state.model:GetDescendants() do
-		if item:IsA("BasePart") then item.Anchored = false end
-	end
+	-- exclusively through its Humanoid.
+	preparePetMovement(state.model, state.humanoid, guardianRoot)
 	state.humanoid.WalkSpeed = PET_FOLLOW_WALK_SPEED
-	state.humanoid.AutoRotate = true
-	state.humanoid.PlatformStand = false
-	state.humanoid.Sit = false
 	state.humanoid.MaxHealth = 480
 	-- Do not heal: loyalty is earned from the living guardian in front of the
 	-- player, including any wounds it survived during the witnessed battle.
@@ -454,6 +505,7 @@ local function acceptOffer(state, player)
 	state.combatTarget = nil
 	state.model:SetAttribute("WMTGuardianOwnerUserId", player.UserId)
 	state.model:SetAttribute("WMTGuardianPet", true)
+	return true
 end
 
 local function presentOffer(state, player)
@@ -476,7 +528,13 @@ local function presentOffer(state, player)
 	state.offerConnection = rescueResponseEvent.OnServerEvent:Connect(function(sender, guardian, accepted)
 		if sender ~= player or guardian ~= state.model or typeof(accepted) ~= "boolean" then return end
 		if accepted then
-			acceptOffer(state, sender)
+			local succeeded, reason = acceptOffer(state, sender)
+			if succeeded then
+				warn(string.format("[GuardianPet] accepted: %s <- %s", sender.Name, state.model:GetFullName()))
+			else
+				warn(string.format("[GuardianPet] accept rejected for %s: %s", sender.Name, reason or "unknown reason"))
+			end
+			rescueResultEvent:FireClient(sender, state.model, succeeded, reason)
 		else
 			clearOffer(state)
 			state.mode = "declined"
@@ -541,7 +599,7 @@ local function updateTrustRitual(state, now)
 		if now - record.lastAimAt <= TRUST_AIM_GRACE_SECONDS then
 			record.aimSince = record.aimSince or now
 			if now - record.aimSince >= TRUST_AIM_SECONDS
-				and isOfferAreaPeaceful(playerRoot, guardianRoot, state.model)
+				and isOfferAreaPeaceful(playerRoot, state.model)
 			then
 				presentOffer(state, player)
 				return
@@ -617,15 +675,19 @@ local function updateGuardian(state)
 			local guardianRoot = getRoot(state.model)
 			local playerRoot = ownerIsAlive({ owner = state.offerPlayer })
 			local record = state.offerPlayer and state.trust[state.offerPlayer]
-			local contourSelected = record and now - record.lastAimAt <= TRUST_AIM_GRACE_SECONDS
+			-- The exact WMT contour must remain selected through its approach and
+			-- roar. Once the prompt is visible, the player must be free to move the
+			-- pointer onto Accept without that UI action cancelling the offer.
+			local contourSelected = state.offerReady
+				or (record and now - record.lastAimAt <= TRUST_AIM_GRACE_SECONDS)
 			local peaceful = guardianRoot and playerRoot
-				and isOfferAreaPeaceful(playerRoot, guardianRoot, state.model)
+				and isOfferAreaPeaceful(playerRoot, state.model)
 			if not guardianRoot or not playerRoot or now >= state.offerDeadline
 				or not contourSelected or not peaceful
 			then
 				clearOffer(state)
-				-- Losing this exact contour or having danger enter the 70-stud calm
-				-- area cancels the attempt. The player can deliberately aim again.
+				-- Losing this exact contour or having danger enter the current battle
+				-- radar cancels the attempt. The player can deliberately aim again.
 				state.mode = "unbonded"
 				state.offerUsed = false
 				if record then record.aimSince = nil end
@@ -639,7 +701,11 @@ local function updateGuardian(state)
 					playPetRoar(state, now, 0)
 				elseif now >= state.offerPromptAt and not state.offerReady then
 					state.offerReady = true
+					-- The approach timeout has done its job. Give the visible decision
+					-- its own complete response window instead of using whatever remains.
+					state.offerDeadline = now + OFFER_RESPONSE_SECONDS
 					state.model:SetAttribute("WMTOfferReady", true)
+					warn(string.format("[GuardianPet] offer ready: %s <- %s", state.offerPlayer.Name, state.model:GetFullName()))
 					rescueEvent:FireClient(state.offerPlayer, state.model, "It wants to be your pet.")
 				end
 			end
@@ -747,6 +813,7 @@ local function setupGuardian(model)
 		helpPlayer = nil,
 		helpUntil = 0,
 		offerUsed = false,
+		shieldEndsAt = 0,
 		shieldAvailableAt = 0,
 		unbondedWalkSpeed = humanoid.WalkSpeed,
 		unbondedDisplayName = humanoid.DisplayName,

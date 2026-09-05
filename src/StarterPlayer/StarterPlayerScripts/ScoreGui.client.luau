@@ -513,14 +513,14 @@ scoreEvent.OnClientEvent:Connect(function(score, kills) currentScore, currentKil
 bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount)
 	bestSpawnAnnouncementToken += 1
 	local token = bestSpawnAnnouncementToken
-	bestSpawnText.Text = string.format("best spawn! %dp/%dk", tonumber(points) or 0, tonumber(killCount) or 0)
+	bestSpawnText.Text = string.format("best spawn! %d/%d", tonumber(points) or 0, tonumber(killCount) or 0)
 	bestSpawnText.TextTransparency = 1
 	bestSpawnText.Visible = true
 	TweenService:Create(bestSpawnText, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
 		TextTransparency = 0,
 	}):Play()
 
-	task.delay(3, function()
+	task.delay(5, function()
 		if token ~= bestSpawnAnnouncementToken or not bestSpawnText.Parent then return end
 		TweenService:Create(bestSpawnText, TweenInfo.new(0.3), {
 			TextTransparency = 1,
