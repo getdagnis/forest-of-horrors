@@ -24,6 +24,9 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "MonsterMilestoneHud"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = false
+-- Intro and milestone text deliberately sits above GameFlowHud's fading
+-- welcome shade after the player accepts the opening modal.
+gui.DisplayOrder = 20
 pcall(function() gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets end)
 gui.Parent = player:WaitForChild("PlayerGui")
 
@@ -63,7 +66,7 @@ local function playRemainingSound()
 	Debris:AddItem(clone, math.max(3, clone.TimeLength + 1))
 end
 
--- Match score announcements: restrained pale-yellow GothamBold with a firm
+-- Match score announcements: restrained white GothamBold with a firm
 -- outline. This is deliberately larger for round-level information, not pink
 -- or GothamBlack like the retired milestone presentation.
 local function showAnnouncement(message, visibleSeconds)
@@ -81,7 +84,7 @@ local function showAnnouncement(message, visibleSeconds)
 	label.BackgroundTransparency = 1
 	label.Font = Enum.Font.GothamBold
 	label.Text = message
-	label.TextColor3 = Color3.fromRGB(255, 238, 150)
+	label.TextColor3 = Color3.new(1, 1, 1)
 	label.TextStrokeTransparency = 0
 	label.TextScaled = true
 	label.TextTransparency = 1

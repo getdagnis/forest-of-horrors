@@ -1,7 +1,7 @@
 -- ShieldPickupSystem
 -- Server-authoritative temporary player protection from a world Part named
 -- "Shield". The part disappears when collected, returns after 30 seconds,
--- and each pickup grants or refreshes one 60-second ForceField.
+-- and each pickup grants or refreshes one three-minute ForceField.
 
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
@@ -9,7 +9,7 @@ local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 
 local SHIELD_PART_NAME = "Shield"
-local SHIELD_DURATION_SECONDS = 60
+local SHIELD_DURATION_SECONDS = 180
 local PICKUP_RESPAWN_SECONDS = 30
 local FORCE_FIELD_NAME = "BonusShieldForceField"
 local EXPIRES_AT_ATTRIBUTE = "ShieldExpiresAt"

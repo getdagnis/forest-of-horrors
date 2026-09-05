@@ -7,9 +7,29 @@
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local teleportFlashEvent = ReplicatedStorage:FindFirstChild("TeleportFlash")
+
+local function playTeleportSound(root)
+	local template = SoundService:FindFirstChild("Teleport")
+	if not template then return end
+	local sound = template:Clone()
+	sound.Parent = root
+	sound:Play()
+	sound.Ended:Connect(function()
+		sound:Destroy()
+	end)
+	task.delay(10, function()
+		if sound and sound.Parent then
+			sound:Destroy()
+		end
+	end)
+end
 
 local TELEPORT_OFFSET = Vector3.new(0, 6, 0)
 local CHARACTER_COOLDOWN = 1.5
+local STREAM_TIMEOUT = 5 -- seconds to wait for destination area to stream in
 
 local entrancesByRoute = {}
 local exitsByRoute = {}
@@ -112,7 +132,15 @@ local function connectEntrance(entrance, route)
 
 		characterCooldowns[character] = true
 		setRouteLights(entrance, 0)
+		local player = Players:GetPlayerFromCharacter(character)
+		if player then
+			pcall(function()
+				player:RequestStreamAroundAsync(exit.Position, STREAM_TIMEOUT)
+			end)
+		end
 		root.CFrame = exit.CFrame + TELEPORT_OFFSET
+		playTeleportSound(root)
+		if player and teleportFlashEvent then teleportFlashEvent:FireClient(player) end
 		task.delay(CHARACTER_COOLDOWN, function()
 			characterCooldowns[character] = nil
 			if entrance.Parent then setRouteLights(entrance, 10) end
@@ -120,47 +148,55 @@ local function connectEntrance(entrance, route)
 	end)
 end
 
-local function addChainedPort(source, portName, destinationName, part)
-	if not portName or not destinationName or not part:IsA("BasePart") then return end
-	local list = chainedPortsByName[portName]
-	if not list then
-		list = {}
-		chainedPortsByName[portName] = list
-	end
-	for _, existing in ipairs(list) do
-		if existing.part == part then return end
-	end
-	table.insert(list, { part = part, destinationName = destinationName, source = source })
-	if connectedChainedPorts[part] then return end
-	connectedChainedPorts[part] = true
-	part.CanTouch = true
-	part.CanQuery = true
-	part.Touched:Connect(function(hit)
-		local character, root = getPlayerCharacter(hit)
-		if not character or characterCooldowns[character] then return end
-		local destinationList = chainedPortsByName[destinationName]
-		local destination = destinationList and destinationList[1] and destinationList[1].part
-		if not destination or not destination.Parent then
-			local warningKey = source:GetFullName() .. "->" .. destinationName
-			if not warnedMissingChainedDestinations[warningKey] then
-				warnedMissingChainedDestinations[warningKey] = true
-				warn("[TeleportSystem] missing chained destination:", destinationName, "from:", source:GetFullName())
-			end
-			return
-		end
-		characterCooldowns[character] = true
-		root.CFrame = destination.CFrame + TELEPORT_OFFSET
-		task.delay(CHARACTER_COOLDOWN, function()
-			characterCooldowns[character] = nil
-		end)
-	end)
-end
-
 local function configureChainedPort(source, part)
 	local portName = routeAttribute(source, "ChainedPort")
 	local destinationName = routeAttribute(source, "ChainedPortTo")
-	if portName and destinationName then
-		addChainedPort(source, portName, destinationName, part)
+
+	-- Register as a destination (exit) if it has ChainedPort
+	if portName then
+		local list = chainedPortsByName[portName]
+		if not list then
+			list = {}
+			chainedPortsByName[portName] = list
+		end
+		for _, existing in ipairs(list) do
+			if existing.part == part then return end
+		end
+		table.insert(list, { part = part, source = source })
+	end
+
+	-- Connect as an entrance if it has ChainedPortTo
+	if destinationName and not connectedChainedPorts[part] then
+		connectedChainedPorts[part] = true
+		part.CanTouch = true
+		part.CanQuery = true
+		part.Touched:Connect(function(hit)
+			local character, root = getPlayerCharacter(hit)
+			if not character or characterCooldowns[character] then return end
+			local destinationList = chainedPortsByName[destinationName]
+			local destination = destinationList and destinationList[1] and destinationList[1].part
+			if not destination or not destination.Parent then
+				local warningKey = source:GetFullName() .. "->" .. destinationName
+				if not warnedMissingChainedDestinations[warningKey] then
+					warnedMissingChainedDestinations[warningKey] = true
+					warn("[TeleportSystem] missing chained destination:", destinationName, "from:", source:GetFullName())
+				end
+				return
+			end
+			characterCooldowns[character] = true
+			local player = Players:GetPlayerFromCharacter(character)
+			if player then
+				pcall(function()
+					player:RequestStreamAroundAsync(destination.Position, STREAM_TIMEOUT)
+				end)
+			end
+			root.CFrame = destination.CFrame + TELEPORT_OFFSET
+			playTeleportSound(root)
+			if player and teleportFlashEvent then teleportFlashEvent:FireClient(player) end
+			task.delay(CHARACTER_COOLDOWN, function()
+				characterCooldowns[character] = nil
+			end)
+		end)
 	end
 end
 

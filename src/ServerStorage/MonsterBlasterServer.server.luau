@@ -340,7 +340,7 @@ local function pushMonsterBack(model, blastOrigin)
 	Debris:AddItem(attachment, MONSTER_PUSH_SECONDS)
 end
 
-local function damageMonster(player, model, damage, blastOrigin)
+local function damageMonster(player, model, damage, blastOrigin, directBeam)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
 	-- A bonded guardian may be fighting inside either the direct beam or ground
@@ -358,12 +358,22 @@ local function damageMonster(player, model, damage, blastOrigin)
 		-- during the weapon's own charge/cooldown window.
 		humanoid:SetAttribute("BlasterRegenLockedUntil", workspace:GetServerTimeNow() + 5)
 	end
-	if willDie and (model.Name == "Drooling Zombie" or model.Name == "creepyMonster") then
+	-- A lethal direct beam is the Blaster's high-impact finish: the dead model
+	-- breaks into physical pieces and is thrown away from the shot origin.
+	-- Ground shockwaves remain area damage only, and bombs retain their own
+	-- warning/explosion lifecycle rather than becoming ordinary debris.
+	local disintegrateOnDeath = willDie and directBeam and model.Name ~= "BombMonster"
+	if disintegrateOnDeath then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
-		disintegrateMonster(model, blastOrigin)
 	end
 	humanoid:TakeDamage(effectiveDamage)
+	-- Do not break apart or launch a living NPC. Once the direct beam has
+	-- actually killed it, scatter the corpse exactly as the old CreepyMonster
+	-- Blaster finish did.
+	if disintegrateOnDeath and humanoid.Health <= 0 and model.Parent then
+		disintegrateMonster(model, blastOrigin)
+	end
 	if humanoid.Health > 0 then pushMonsterBack(model, blastOrigin) end
 
 	if humanoid.Health > 0 then
@@ -468,7 +478,7 @@ local function damageGroundShockwave(player, position, power)
 			local root = instance:FindFirstChild("HumanoidRootPart", true) or instance:FindFirstChild("Head", true)
 			local positionToTest = root and root:IsA("BasePart") and root.Position or instance:GetPivot().Position
 			if (positionToTest - position).Magnitude <= radius then
-				damageMonster(player, instance, damage, position)
+				damageMonster(player, instance, damage, position, false)
 			end
 		end
 	end
@@ -517,15 +527,15 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 		-- Preserve the forgiving Spherecast/contour target first, then continue
 		-- through every monster that the exact camera ray crosses behind it.
 		local damaged = { [target] = true }
-		damageMonster(player, target, damage, origin)
+		damageMonster(player, target, damage, origin, true)
 		for _, monster in ipairs(getPiercedMonsterHits(origin, unitDirection, player.Character)) do
 			if not damaged[monster] then
 				damaged[monster] = true
-				damageMonster(player, monster, damage, origin)
+				damageMonster(player, monster, damage, origin, true)
 			end
 		end
 	else
-		damageMonster(player, target, damage, origin)
+		damageMonster(player, target, damage, origin, true)
 	end
 end)
 

@@ -129,6 +129,7 @@ makeCard("Monsters", "MONSTERS (+0)")
 makeCard("Spawn", "BEST SPAWN")
 labels.Rank.TextColor3 = Color3.fromRGB(255, 215, 241)
 labels.Monsters.TextColor3 = Color3.fromRGB(255, 213, 218)
+labels.Monsters.RichText = true
 
 -- Local-only hit feedback. The overlay does not own health or alter damage.
 local damageOverlay = Instance.new("Frame")
@@ -157,7 +158,7 @@ healText.ZIndex = 22
 
 -- Uses the same bold, outlined, score-popup treatment as score awards; it is
 -- a short-lived celebration, never another persistent HUD card.
-local bestSpawnText = newText("BestSpawnAnnouncement", gui, Color3.fromRGB(255, 238, 150), Enum.Font.GothamBold)
+local bestSpawnText = newText("BestSpawnAnnouncement", gui, Color3.new(1, 1, 1), Enum.Font.GothamBold)
 bestSpawnText.AnchorPoint = Vector2.new(0.5, 0.5)
 bestSpawnText.Position = UDim2.fromScale(0.5, 0.54)
 bestSpawnText.Size = UDim2.fromOffset(300, 46)
@@ -300,7 +301,9 @@ scoreButton.Activated:Connect(function()
 end)
 
 local function cardWidth(key, scale)
-	local valueWidth = TextService:GetTextSize(labels[key].Text, large_font_size * scale, labels[key].Font, Vector2.new(1000, 60)).X
+	-- RichText tags are presentation markup, not part of the displayed value.
+	local displayedValue = labels[key].Text:gsub("<[^>]*>", "")
+	local valueWidth = TextService:GetTextSize(displayedValue, large_font_size * scale, labels[key].Font, Vector2.new(1000, 60)).X
 	local captionWidth = TextService:GetTextSize(captions[key].Text, details_font_size * scale, captions[key].Font, Vector2.new(1000, 40)).X
 	return math.max(64 * scale, math.ceil(math.max(valueWidth, captionWidth) + 16 * scale))
 end
@@ -562,20 +565,23 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	elapsed = 0
 	local endsAt = tonumber(workspace:GetAttribute("RoundEndsAt"))
 	labels.Time.Text = formatTime(endsAt and endsAt - workspace:GetServerTimeNow() or 0)
-	labels.Monsters.Text = tostring(monstersLeft)
 	local now = workspace:GetServerTimeNow()
-	while #monsterHistory > 0 and monsterHistory[1].time < now - 10 do table.remove(monsterHistory, 1) end
+	while #monsterHistory > 0 and monsterHistory[1].time < now - 15 do table.remove(monsterHistory, 1) end
 	local baseline = monsterHistory[1] and monsterHistory[1].count or monstersLeft
+	local change = monstersLeft - baseline
 	labels.Spawn.Text = tostring(bestSpawn)
 	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	local mobile = viewport.X < 1100 or viewport.Y < 650
+	local detailSize = details_font_size * (mobile and 1 or 2)
+	labels.Monsters.Text = string.format("%d<font size=\"%d\">(%+d)</font>", monstersLeft, detailSize, change)
 	-- Shared desktop/mobile content. The best-spawn value remains available in
 	-- the expanded scoreboard, not as a competing fifth card concept.
 	labels.Rank.Text = ordinal(getRank())
 	captions.Rank.RichText = false
 	captions.Rank.Text = tostring(currentScore) .. " SCORE"
 	captions.Monsters.Text = "MONSTERS LEFT"
-	labels.Spawn.Text = string.format("%d (%d)", currentKills, currentScore)
-	captions.Spawn.Text = "KILLS (SCORE)"
+	labels.Spawn.Text = string.format("%d / %d", currentScore, currentKills)
+	captions.Spawn.Text = "SCORE / KILLS"
 	layout()
 	renderScoreboard()
 	renderEvents(now)

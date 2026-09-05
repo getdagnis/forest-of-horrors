@@ -103,6 +103,9 @@
       "ShieldPickupSystem": {
         "$path": "src/ServerScriptService/ShieldPickupSystem.server.luau"
       },
+      "ClosestRespawnSystem": {
+        "$path": "src/ServerScriptService/ClosestRespawnSystem.server.luau"
+      },
       "RadarTowerSystem": {
         "$path": "src/ServerScriptService/RadarTowerSystem.server.luau"
       },
