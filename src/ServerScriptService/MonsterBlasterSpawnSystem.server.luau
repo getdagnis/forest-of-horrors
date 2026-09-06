@@ -135,6 +135,8 @@ scheduleRespawn = function(state, delay)
 			return
 		end
 		local tool = template:Clone()
+		-- World spawns are new pickups, so accepting one restores a full reserve.
+		tool:SetAttribute("BlasterChargeFromLoadout", false)
 		tool.CanBeDropped = false
 		if not prepareTool(tool, false) then
 			tool:Destroy()

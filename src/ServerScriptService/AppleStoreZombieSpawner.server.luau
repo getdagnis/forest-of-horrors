@@ -56,12 +56,10 @@ local function findZombieTemplate()
 end
 
 local function getSpawnCFrame(spawnPoint)
-	local halfX = math.max(0, spawnPoint.Size.X * 0.5 - 1)
-	local halfZ = math.max(0, spawnPoint.Size.Z * 0.5 - 1)
-	local offsetX = (math.random() * 2 - 1) * halfX
-	local offsetZ = (math.random() * 2 - 1) * halfZ
 	local height = tonumber(spawnPoint:GetAttribute("SpawnHeight")) or DEFAULT_HEIGHT_OFFSET
-	return spawnPoint.CFrame * CFrame.new(offsetX, spawnPoint.Size.Y * 0.5 + height, offsetZ)
+	-- The marker is deliberately the exact authored interior point. A random
+	-- offset across its old footprint could put a new zombie beyond a shop wall.
+	return spawnPoint.CFrame * CFrame.new(0, spawnPoint.Size.Y * 0.5 + height, 0)
 end
 
 local function spawnZombie(spawnPoint)
@@ -81,8 +79,7 @@ local function spawnZombie(spawnPoint)
 	-- Continuous generator output receives one life. It must not enlarge the
 	-- round-restart template list or recursively enter the normal respawn pool.
 	zombie:SetAttribute("AppleStoreSpawned", true)
-	zombie:SetAttribute("RoundRespawned", true)
-	zombie:SetAttribute("RoundLivesRemaining", 1)
+	zombie:SetAttribute("NoAutoRespawn", true)
 	zombie:PivotTo(getSpawnCFrame(spawnPoint))
 	zombie.Parent = Workspace
 end

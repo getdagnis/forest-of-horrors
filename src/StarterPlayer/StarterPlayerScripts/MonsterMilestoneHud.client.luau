@@ -14,6 +14,7 @@ local player = Players.LocalPlayer
 local milestoneEvent = ReplicatedStorage:WaitForChild("MonsterMilestone")
 local playerKillMilestoneEvent = ReplicatedStorage:WaitForChild("PlayerKillMilestone")
 local secretShaftAnnouncementEvent = ReplicatedStorage:WaitForChild("SecretShaftAnnouncement")
+local nightmareEscapeStartedEvent = ReplicatedStorage:WaitForChild("NightmareEscapeStarted")
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
 local RADAR_CONTACT_COUNT_ATTRIBUTE = "MonsterRadarContactCount"
 local DEEPER_MESSAGE_REMAINING_SECONDS = 21 * 60 + 30
@@ -24,9 +25,10 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "MonsterMilestoneHud"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = false
--- Intro and milestone text deliberately sits above GameFlowHud's fading
--- welcome shade after the player accepts the opening modal.
-gui.DisplayOrder = 20
+-- This is a sibling ScreenGui to GameFlowHud, so a label ZIndex cannot place
+-- it over GameFlowHud's WelcomePanel. A deliberately higher DisplayOrder
+-- keeps the two opening lines readable during the 15-second shade fade.
+gui.DisplayOrder = 10000
 pcall(function() gui.ScreenInsets = Enum.ScreenInsets.CoreUISafeInsets end)
 gui.Parent = player:WaitForChild("PlayerGui")
 
@@ -98,6 +100,11 @@ local function showAnnouncement(message, visibleSeconds)
 	end)
 end
 
+local function formatClock(seconds)
+	seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
 local function startNightmareIntroduction()
 	if introductionStarted or player:GetAttribute(WELCOME_ACCEPTED_ATTRIBUTE) ~= true then return end
 	introductionStarted = true
@@ -131,6 +138,14 @@ secretShaftAnnouncementEvent.OnClientEvent:Connect(function()
 	end)
 end)
 
+nightmareEscapeStartedEvent.OnClientEvent:Connect(function(data)
+	task.spawn(function()
+		showAnnouncement("You got rid of all your monsters\nTime: " .. formatClock(data and data.clearedInSeconds), LONG_ANNOUNCEMENT_SECONDS)
+		task.wait(LONG_ANNOUNCEMENT_SECONDS + ANNOUNCEMENT_FADE_SECONDS + 0.5)
+		showAnnouncement("Now get to your bedroom fast...", LONG_ANNOUNCEMENT_SECONDS)
+	end)
+end)
+
 local activeRoundEndsAt
 local lastRemainingSeconds
 local announcedTimeThresholds = {}
@@ -145,6 +160,13 @@ RunService.RenderStepped:Connect(function()
 		announcedTimeThresholds = {}
 		deeperMessagePending = false
 		deeperMessageShown = false
+		return
+	end
+
+	-- The escape clock is a navigation deadline, not another combat warning
+	-- sequence. Its story announcement arrives through NightmareEscapeStarted.
+	if workspace:GetAttribute("RoundPhase") == "Escape" then
+		lastRemainingSeconds = remainingSeconds
 		return
 	end
 

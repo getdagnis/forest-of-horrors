@@ -159,7 +159,14 @@ end
 local trackedMonsters = {}
 local radarEntries = {}
 local function track(instance)
-	if instance:IsA("Model") and MonsterManager.getConfig(instance) then trackedMonsters[instance] = true end
+	-- Guardians are never hostile contacts, but a bonded guardian remains a
+	-- useful friendly reference: it is drawn as a green ring below.
+	if instance:IsA("Model") and (
+		MonsterManager.isRoundTracked(instance)
+		or instance.Name == "weird monster thing"
+	) then
+		trackedMonsters[instance] = true
+	end
 end
 for _, instance in ipairs(workspace:GetDescendants()) do track(instance) end
 workspace.DescendantAdded:Connect(track)
@@ -184,6 +191,12 @@ local function isPriorityMonster(model)
 		or model.Name == "creepyMonsterWhite"
 		or model.Name == "Smiler"
 		or (model:FindFirstChild("Zombie") and model:FindFirstChild("Zombie"):IsA("Humanoid"))
+end
+
+local function isHostileRadarMonster(model)
+	-- WMTs remain visible contacts, but they are neutral for the directional
+	-- hostile search. A nearby guardian must never hide the real enemy cue.
+	return MonsterManager.isRoundTracked(model) and model.Name ~= "weird monster thing"
 end
 
 local function playPriorityWarning()
@@ -251,7 +264,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		-- WMTs remain visible as outlined red contacts, but they are calm world
 		-- actors rather than battle contacts and must not stop the search from
 		-- expanding toward actual round monsters.
-		if MonsterManager.isRoundTracked(monster.model) and monster.distance <= CLOSE_CROWD_RANGE then
+		if isHostileRadarMonster(monster.model) and monster.distance <= CLOSE_CROWD_RANGE then
 			closeCount += 1
 			normalCount += 1
 		end
@@ -264,7 +277,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			radarRange = searchRange
 			local found = false
 			for _, monster in ipairs(livingMonsters) do
-				if MonsterManager.isRoundTracked(monster.model) and monster.distance <= searchRange then
+				if isHostileRadarMonster(monster.model) and monster.distance <= searchRange then
 					found = true
 					break
 				end
@@ -274,6 +287,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 
 	local shown = 0
+	local hostileShown = 0
 	local nearestOutside
 	local now = os.clock()
 	for _, monster in ipairs(livingMonsters) do
@@ -291,6 +305,9 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
 		if inRange and shown < MAX_DOTS then
 			shown += 1
+			if isHostileRadarMonster(monster.model) then
+				hostileShown += 1
+			end
 			local localOffset = camera.CFrame:VectorToObjectSpace(monster.offset)
 			local scale = 0.43 / radarRange
 			local dot = dots[shown]
@@ -321,7 +338,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 			end
 			dot.Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
 			dot.Visible = true
-		elseif MonsterManager.isRoundTracked(monster.model)
+		elseif isHostileRadarMonster(monster.model)
 			and radarRange == MAX_RADAR_RANGE
 			and monster.distance > MAX_RADAR_RANGE
 			and (not nearestOutside or monster.distance < nearestOutside.distance)
@@ -332,7 +349,9 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	for index = shown + 1, MAX_DOTS do dots[index].Visible = false end
 	player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, shown)
 
-	if radarRange == MAX_RADAR_RANGE and shown == 0 and nearestOutside then
+	-- Friendly/neutral guardian rings must not hide the directional cue for the
+	-- nearest real hostile beyond the maximum radar range.
+	if radarRange == MAX_RADAR_RANGE and hostileShown == 0 and nearestOutside then
 		local localOffset = camera.CFrame:VectorToObjectSpace(nearestOutside.offset)
 		local direction = Vector2.new(localOffset.X, localOffset.Z).Unit
 		outsideCue.Position = UDim2.fromScale(0.5 + direction.X * 0.45, 0.5 + direction.Y * 0.45)

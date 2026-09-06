@@ -516,7 +516,7 @@ scoreEvent.OnClientEvent:Connect(function(score, kills) currentScore, currentKil
 bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount)
 	bestSpawnAnnouncementToken += 1
 	local token = bestSpawnAnnouncementToken
-	bestSpawnText.Text = string.format("best spawn! %d/%d", tonumber(points) or 0, tonumber(killCount) or 0)
+	bestSpawnText.Text = string.format("that was your best spawn! %d / %d", tonumber(points) or 0, tonumber(killCount) or 0)
 	bestSpawnText.TextTransparency = 1
 	bestSpawnText.Visible = true
 	TweenService:Create(bestSpawnText, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
@@ -565,6 +565,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	elapsed = 0
 	local endsAt = tonumber(workspace:GetAttribute("RoundEndsAt"))
 	labels.Time.Text = formatTime(endsAt and endsAt - workspace:GetServerTimeNow() or 0)
+	captions.Time.Text = workspace:GetAttribute("RoundPhase") == "Escape" and "ESCAPE" or "REMAINING"
 	local now = workspace:GetServerTimeNow()
 	while #monsterHistory > 0 and monsterHistory[1].time < now - 15 do table.remove(monsterHistory, 1) end
 	local baseline = monsterHistory[1] and monsterHistory[1].count or monstersLeft

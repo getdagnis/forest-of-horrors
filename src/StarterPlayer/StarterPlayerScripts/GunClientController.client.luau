@@ -42,8 +42,7 @@ local fireGun
 
 local function getGunName(tool)
 	if not tool or not tool:IsA("Tool") then return nil end
-	local weaponName = tool:GetAttribute("WeaponName")
-	if type(weaponName) ~= "string" then weaponName = tool.Name end
+	local weaponName = DEFAULT_COLORS[tool.Name] and tool.Name or tool:GetAttribute("WeaponName")
 	return DEFAULT_COLORS[weaponName] and weaponName or nil
 end
 
@@ -173,6 +172,15 @@ local function destroyHud()
 	end
 end
 
+local function applyWeaponCrosshairColor(hud, color)
+	local crosshair = hud and hud:FindFirstChild("Crosshair", true)
+	if not crosshair or not crosshair:IsA("GuiObject") then return end
+	if crosshair:IsA("Frame") then crosshair.BorderColor3 = color end
+	for _, item in crosshair:GetDescendants() do
+		if item:IsA("Frame") then item.BorderColor3 = color end
+	end
+end
+
 local function setEquippedTool(tool)
 	if equippedTool == tool then return end
 	if activationConnection then
@@ -188,6 +196,12 @@ local function setEquippedTool(tool)
 		UserInputService.MouseIconEnabled = true
 		return
 	end
+	-- Only a newly equipped MonsterGun may remove a stale Blaster HUD.  On a
+	-- MonsterGun -> MonsterBlaster swap this controller receives `nil`; doing
+	-- the cleanup there raced the Blaster's Equipped handler and erased its
+	-- freshly rebuilt HUD.
+	local staleBlasterHud = player:WaitForChild("PlayerGui"):FindFirstChild("MonsterBlasterWeaponHud")
+	if staleBlasterHud then staleBlasterHud:Destroy() end
 	activationConnection = tool.Activated:Connect(function()
 		if equippedTool == tool and tool.Parent == player.Character then
 			fireGun(tool)
@@ -204,6 +218,7 @@ local function setEquippedTool(tool)
 		activeHud.Parent = player.PlayerGui
 		local ammoHud = activeHud:FindFirstChild("AmmoHud", true)
 		if ammoHud and ammoHud:IsA("GuiObject") then ammoHud.Visible = false end
+		applyWeaponCrosshairColor(activeHud, DEFAULT_COLORS[tool.Name] or DEFAULT_COLORS.MonsterGun)
 	end
 	UserInputService.MouseIconEnabled = false
 end
@@ -231,19 +246,29 @@ local function playShotSound(tool)
 	if sound and sound:IsA("Sound") then sound:Play() end
 end
 
+local function getVisibleBeamStart(tool, barrel)
+	local muzzle = tool:FindFirstChild("Muzzle", true)
+	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
+		-- Legacy MG templates put this attachment at the Barrel's centre. It is
+		-- not a visible muzzle, so using it makes rapid MG3 bursts look sideways.
+		local minimumTipDistance = math.max(0.15, barrel.Size.Z * 0.25)
+		if (muzzle.WorldPosition - barrel.Position).Magnitude >= minimumTipDistance then
+			return muzzle, false
+		end
+	end
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "VisualMuzzle"
+	-- Existing MonsterGun barrels use their local -Z face as the visible front.
+	attachment.Position = Vector3.new(0, 0, -barrel.Size.Z * 0.5)
+	attachment.Parent = barrel
+	return attachment, true
+end
+
 local function renderShot(tool, origin, endPosition, color, hitModel)
 	local barrel = tool and (tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true))
 	if not barrel or not barrel:IsA("BasePart") then return end
 	playShotSound(tool)
-
-	local muzzleLight = Instance.new("PointLight")
-	muzzleLight.Name = "GunMuzzleLight"
-	muzzleLight.Color = color
-	muzzleLight.Brightness = 12
-	muzzleLight.Range = 16
-	muzzleLight.Shadows = true
-	muzzleLight.Parent = barrel
-	Debris:AddItem(muzzleLight, GUN_MUZZLE_LIGHT_LIFETIME)
 
 	local endPart = Instance.new("Part")
 	endPart.Name = "GunBeamEnd"
@@ -263,15 +288,15 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	hitLight.Shadows = true
 	hitLight.Parent = endPart
 
-	local muzzle = tool:FindFirstChild("Muzzle", true)
-	local startAttachment
-	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
-		startAttachment = muzzle
-	else
-		startAttachment = Instance.new("Attachment")
-		startAttachment.Position = barrel.CFrame:PointToObjectSpace(origin)
-		startAttachment.Parent = barrel
-	end
+	local startAttachment, isTemporary = getVisibleBeamStart(tool, barrel)
+	local muzzleLight = Instance.new("PointLight")
+	muzzleLight.Name = "GunMuzzleLight"
+	muzzleLight.Color = color
+	muzzleLight.Brightness = 12
+	muzzleLight.Range = 16
+	muzzleLight.Shadows = true
+	muzzleLight.Parent = startAttachment
+	Debris:AddItem(muzzleLight, GUN_MUZZLE_LIGHT_LIFETIME)
 	local endAttachment = Instance.new("Attachment")
 	endAttachment.Parent = endPart
 	local beam = Instance.new("Beam")
@@ -286,7 +311,7 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	beam.Transparency = NumberSequence.new(0.08)
 	beam.Parent = barrel
 	Debris:AddItem(beam, GUN_BEAM_LIFETIME)
-	if startAttachment ~= muzzle then Debris:AddItem(startAttachment, GUN_BEAM_LIFETIME) end
+	if isTemporary then Debris:AddItem(startAttachment, GUN_BEAM_LIFETIME) end
 	Debris:AddItem(endPart, GUN_IMPACT_LIGHT_LIFETIME)
 
 	if hitModel then

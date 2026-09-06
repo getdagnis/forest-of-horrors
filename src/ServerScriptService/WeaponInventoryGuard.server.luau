@@ -13,15 +13,18 @@ local UNIQUE_WEAPONS = {
 	["MonsterGun3"] = true,
 	["MonsterBlaster"] = true,
 	["LightSaber"] = true,
+	["SpeedCoil"] = true,
 }
 local MONSTER_GUN_TIERS = {
 	MonsterGun = 1,
 	MonsterGun2 = 2,
 	MonsterGun3 = 3,
 }
+local SPEED_COIL_DURATION_SECONDS = 60
 
 local incumbentByPlayer = {}
 local boundTools = {}
+local equippedByPlayer = {}
 
 local function isUniqueWeapon(tool)
 	if not tool:IsA("Tool") then return false end
@@ -33,8 +36,7 @@ end
 
 local function getMonsterGunTier(tool)
 	if not tool or not tool:IsA("Tool") then return nil end
-	local weaponName = tool:GetAttribute("WeaponName")
-	if type(weaponName) ~= "string" then weaponName = tool.Name end
+	local weaponName = MONSTER_GUN_TIERS[tool.Name] and tool.Name or tool:GetAttribute("WeaponName")
 	return MONSTER_GUN_TIERS[weaponName]
 end
 
@@ -60,10 +62,77 @@ local function restoreEquippedWeapon(player, tool)
 	end
 end
 
+local function reconcileSpeedCoils(player)
+	local backpack = player:FindFirstChild("Backpack")
+	local character = player.Character
+	local candidates = {}
+	for _, container in ipairs({ backpack, character }) do
+		if container then
+			for _, candidate in ipairs(container:GetChildren()) do
+				if candidate:IsA("Tool") and candidate.Name == "SpeedCoil" then
+					table.insert(candidates, candidate)
+				end
+			end
+		end
+	end
+	if #candidates == 0 then return nil end
+
+	local weapons = getPlayerWeaponTable(player)
+	local keep = weapons.SpeedCoil
+	if not keep or not table.find(candidates, keep) then
+		keep = equippedByPlayer[player]
+		if not keep or not table.find(candidates, keep) then
+			keep = nil
+			for _, candidate in ipairs(candidates) do
+				if character and candidate.Parent == character then
+					keep = candidate
+					break
+				end
+			end
+		end
+		keep = keep or candidates[1]
+	end
+
+	local wasEquipped = equippedByPlayer[player] == keep or (character and keep.Parent == character)
+	weapons.SpeedCoil = keep
+	if wasEquipped then equippedByPlayer[player] = keep end
+
+	if #candidates > 1 then
+		keep:SetAttribute("SpeedCoilRemaining", SPEED_COIL_DURATION_SECONDS)
+		local nonce = (tonumber(keep:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
+		keep:SetAttribute("SpeedCoilRechargeNonce", nonce)
+		for _, candidate in ipairs(candidates) do
+			if candidate ~= keep then candidate:Destroy() end
+		end
+		if wasEquipped and keep.Parent == backpack then
+			task.delay(0.1, restoreEquippedWeapon, player, keep)
+		end
+	end
+	return keep
+end
+
 local function rejectIncomingDuplicate(player, incoming, incumbent)
 	if incoming == incumbent or not incoming.Parent then return end
+	local wasEquipped = equippedByPlayer[player] == incumbent
+	if not wasEquipped and player.Character and incumbent.Parent == player.Character then
+		wasEquipped = true
+	end
+	if incoming.Name == "SpeedCoil" and incumbent.Name == "SpeedCoil" then
+		incumbent:SetAttribute("SpeedCoilRemaining", SPEED_COIL_DURATION_SECONDS)
+		local nonce = (tonumber(incumbent:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
+		incumbent:SetAttribute("SpeedCoilRechargeNonce", nonce)
+		incoming:Destroy()
+		-- A duplicate coil is a recharge, not a new equip. Only restore the
+		-- incumbent when Roblox had actually been holding it before the pickup.
+		if wasEquipped then
+			task.delay(0.1, restoreEquippedWeapon, player, incumbent)
+		end
+		return
+	end
 	incoming:Destroy()
-	task.defer(restoreEquippedWeapon, player, incumbent)
+	if wasEquipped then
+		task.delay(0.1, restoreEquippedWeapon, player, incumbent)
+	end
 end
 
 local function copyToolProperty(target, source, propertyName)
@@ -87,6 +156,7 @@ local function promoteToolInPlace(target, incoming)
 		copyToolProperty(target, incoming, propertyName)
 	end
 	target.Name = incoming.Name
+	target:SetAttribute("WeaponName", incoming.Name)
 	for _, child in ipairs(target:GetChildren()) do
 		if child ~= preservedShootEvent then child:Destroy() end
 	end
@@ -100,6 +170,10 @@ end
 
 local function resolveToolAdded(player, tool)
 	if not isUniqueWeapon(tool) or not isHeldByPlayer(player, tool) then return end
+	if tool.Name == "SpeedCoil" then
+		reconcileSpeedCoils(player)
+		return
+	end
 
 	local weapons = getPlayerWeaponTable(player)
 	local tier = getMonsterGunTier(tool)
@@ -161,6 +235,11 @@ local function bindTool(player, tool)
 	boundTools[tool] = true
 
 	tool.Equipped:Connect(function()
+		if tool.Name == "SpeedCoil" then
+			reconcileSpeedCoils(player)
+			return
+		end
+		equippedByPlayer[player] = tool
 		if getMonsterGunTier(tool) then
 			resolveToolAdded(player, tool)
 			return
@@ -173,8 +252,16 @@ local function bindTool(player, tool)
 		end
 		weapons[tool.Name] = tool
 	end)
+	tool.Unequipped:Connect(function()
+		if equippedByPlayer[player] == tool then
+			equippedByPlayer[player] = nil
+		end
+	end)
 
 	tool.AncestryChanged:Connect(function(_, parent)
+		if not parent and equippedByPlayer[player] == tool then
+			equippedByPlayer[player] = nil
+		end
 		if parent then return end
 		local weapons = incumbentByPlayer[player]
 		if weapons then
@@ -228,6 +315,7 @@ end
 Players.PlayerAdded:Connect(bindPlayer)
 Players.PlayerRemoving:Connect(function(player)
 	incumbentByPlayer[player] = nil
+	equippedByPlayer[player] = nil
 end)
 
 for _, player in Players:GetPlayers() do

@@ -11,6 +11,7 @@ local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
 local roundCompleteEvent = ReplicatedStorage:WaitForChild("RoundComplete")
 local roundRestartedEvent = ReplicatedStorage:WaitForChild("RoundRestarted")
 local restartRoundEvent = ReplicatedStorage:WaitForChild("RestartRound")
+local nightmareEscapedEvent = ReplicatedStorage:WaitForChild("NightmareEscaped")
 
 -- Wait for the instance-based GameFlowHud ScreenGui that gets cloned from StarterGui into PlayerGui
 local playerGui = player:WaitForChild("PlayerGui")
@@ -28,6 +29,92 @@ local endTitle = endPanel:WaitForChild("EndTitle")
 local endMessage = endPanel:WaitForChild("EndMessage")
 local leaderboard = endPanel:WaitForChild("Leaderboard")
 local restartButton = endPanel:WaitForChild("RestartButton")
+
+-- The portal exit is intentionally independent of the old round-results
+-- panel. It is a private, dark ending for the player who made it home.
+local escapeShade = Instance.new("Frame")
+escapeShade.Name = "NightmareEscapeShade"
+escapeShade.Size = UDim2.fromScale(1, 1)
+escapeShade.BackgroundColor3 = Color3.fromRGB(2, 0, 7)
+escapeShade.BackgroundTransparency = 0.08
+escapeShade.BorderSizePixel = 0
+escapeShade.Visible = false
+escapeShade.ZIndex = 200
+escapeShade.Parent = gui
+
+local escapePanel = Instance.new("Frame")
+escapePanel.Name = "EscapePanel"
+escapePanel.AnchorPoint = Vector2.new(0.5, 0.5)
+escapePanel.Position = UDim2.fromScale(0.5, 0.5)
+escapePanel.Size = UDim2.fromOffset(620, 280)
+escapePanel.BackgroundColor3 = Color3.fromRGB(12, 4, 25)
+escapePanel.BackgroundTransparency = 0.08
+escapePanel.BorderSizePixel = 0
+escapePanel.ZIndex = 201
+escapePanel.Parent = escapeShade
+Instance.new("UICorner", escapePanel).CornerRadius = UDim.new(0, 12)
+local escapeStroke = Instance.new("UIStroke")
+escapeStroke.Color = Color3.fromRGB(134, 70, 201)
+escapeStroke.Transparency = 0.18
+escapeStroke.Thickness = 2
+escapeStroke.Parent = escapePanel
+
+local escapeTitle = Instance.new("TextLabel")
+escapeTitle.Name = "Title"
+escapeTitle.BackgroundTransparency = 1
+escapeTitle.Position = UDim2.fromOffset(28, 46)
+escapeTitle.Size = UDim2.new(1, -56, 0, 102)
+escapeTitle.Font = Enum.Font.GothamBlack
+escapeTitle.Text = "You escaped the nightmare.\nThis time."
+escapeTitle.TextColor3 = Color3.fromRGB(246, 235, 255)
+escapeTitle.TextStrokeColor3 = Color3.fromRGB(44, 15, 77)
+escapeTitle.TextStrokeTransparency = 0.1
+escapeTitle.TextSize = 38
+escapeTitle.TextWrapped = true
+escapeTitle.TextXAlignment = Enum.TextXAlignment.Center
+escapeTitle.TextYAlignment = Enum.TextYAlignment.Center
+escapeTitle.ZIndex = 202
+escapeTitle.Parent = escapePanel
+
+local escapeDetail = Instance.new("TextLabel")
+escapeDetail.Name = "Detail"
+escapeDetail.BackgroundTransparency = 1
+escapeDetail.Position = UDim2.fromOffset(28, 154)
+escapeDetail.Size = UDim2.new(1, -56, 0, 28)
+escapeDetail.Font = Enum.Font.Gotham
+escapeDetail.Text = "For now, the forest is quiet."
+escapeDetail.TextColor3 = Color3.fromRGB(173, 224, 255)
+escapeDetail.TextSize = 16
+escapeDetail.TextXAlignment = Enum.TextXAlignment.Center
+escapeDetail.ZIndex = 202
+escapeDetail.Parent = escapePanel
+
+local escapeRestartButton = Instance.new("TextButton")
+escapeRestartButton.Name = "WakeUpAgain"
+escapeRestartButton.AnchorPoint = Vector2.new(0.5, 0)
+escapeRestartButton.Position = UDim2.new(0.5, 0, 1, -65)
+escapeRestartButton.Size = UDim2.fromOffset(180, 42)
+escapeRestartButton.BackgroundColor3 = Color3.fromRGB(80, 19, 107)
+escapeRestartButton.BorderSizePixel = 0
+escapeRestartButton.Font = Enum.Font.GothamBold
+escapeRestartButton.Text = "WAKE UP AGAIN"
+escapeRestartButton.TextColor3 = Color3.fromRGB(255, 245, 255)
+escapeRestartButton.TextSize = 14
+escapeRestartButton.ZIndex = 202
+escapeRestartButton.Parent = escapePanel
+Instance.new("UICorner", escapeRestartButton).CornerRadius = UDim.new(0, 7)
+
+local escapedNightmare = false
+
+local function resizeEscapePanel()
+	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	local mobile = viewport.X < 700 or viewport.Y < 520
+	escapePanel.Size = mobile and UDim2.new(0.88, 0, 0, 245) or UDim2.fromOffset(620, 280)
+	escapeTitle.TextSize = mobile and 26 or 38
+	escapeDetail.TextSize = mobile and 13 or 16
+end
+
+resizeEscapePanel()
 
 local function styleLeaderboard()
 	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
@@ -174,6 +261,7 @@ local function formatLeaderboard(list)
 end
 
 local function showRoundFailure(data)
+	if escapedNightmare then return end
 	styleLeaderboard()
 	endTitle.Text = "The nightmare won"
 	endMessage.Text = (data and data.message) or "Time ran out. The forest is still hunting."
@@ -191,6 +279,13 @@ roundCompleteEvent.OnClientEvent:Connect(function(data)
 	endShade.Visible = true
 end)
 
+nightmareEscapedEvent.OnClientEvent:Connect(function()
+	escapedNightmare = true
+	endShade.Visible = false
+	resizeEscapePanel()
+	escapeShade.Visible = true
+end)
+
 -- RoundFailed is created by the server round controller in newer places. Do not
 -- block the existing completion HUD in older places where it does not exist yet.
 local roundFailedBound = false
@@ -203,11 +298,18 @@ bindRoundFailed(ReplicatedStorage:FindFirstChild("RoundFailed"))
 ReplicatedStorage.ChildAdded:Connect(bindRoundFailed)
 
 roundRestartedEvent.OnClientEvent:Connect(function()
+	escapedNightmare = false
+	escapeShade.Visible = false
 	restartButton.Text = "Continue / Restart"
 	endShade.Visible = false
 end)
 
 restartButton.MouseButton1Click:Connect(function()
 	restartButton.Text = "Restarting..."
+	restartRoundEvent:FireServer()
+end)
+
+escapeRestartButton.MouseButton1Click:Connect(function()
+	escapeRestartButton.Text = "WAKING..."
 	restartRoundEvent:FireServer()
 end)

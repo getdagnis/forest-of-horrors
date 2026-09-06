@@ -8,7 +8,9 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
 local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 local MonsterBlasterConfig = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
-local trustAimEvent = ReplicatedStorage:WaitForChild("WMTGuardianTrustAim")
+-- Guardian trust is optional to weapon targeting. Do not block the contour
+-- loop if the guardian server script is disabled or still creating its remote.
+local trustAimEvent = ReplicatedStorage:FindFirstChild("WMTGuardianTrustAim")
 
 local WEAPON_COLORS = {
 	MonsterGun = Color3.fromRGB(255, 105, 180),
@@ -53,6 +55,10 @@ end
 
 local function reportGuardianTrustAim(weapon, target)
 	if target.Name ~= "weird monster thing" or target:GetAttribute("WMTGuardianPet") == true then return end
+	if not trustAimEvent or not trustAimEvent.Parent then
+		trustAimEvent = ReplicatedStorage:FindFirstChild("WMTGuardianTrustAim")
+	end
+	if not trustAimEvent or not trustAimEvent:IsA("RemoteEvent") then return end
 	local now = os.clock()
 	if target == lastTrustAimTarget and now - lastTrustAimAt < TRUST_AIM_UPDATE_INTERVAL then return end
 

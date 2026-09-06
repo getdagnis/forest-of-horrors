@@ -28,6 +28,7 @@ local serverBest = { score = 0, playerName = "-", spawn = 0 }
 local pendingRespawns = 0
 local roundComplete = false
 local roundFailed = false
+local escapeActive = false
 local roundGeneration = 0
 local announcedMonsterMilestones = {}
 local lastBroadcastMonsterCount = nil
@@ -36,19 +37,29 @@ local multikillStates = {}
 local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
 local CORPSE_DISPLAY_TIME = 5 -- separate from respawn time; body remains briefly visible
 local RESPAWN_LIVES = 4 -- initial life plus three server-owned replacements
-local ROUND_DURATION_SECONDS = 33 * 60 + 33
+local ROUND_DURATION_SECONDS = 44 * 60 + 45
+local ESCAPE_DURATION_SECONDS = 5 * 60
 local DEFAULT_MONSTER_MAX_COUNT = 90
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
 local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
 local MONSTER_MAX_COUNT_ATTRIBUTE = "MonsterMaxCount"
 local MANAGED_MONSTER_ATTRIBUTE = "RoundManagedMonster"
 local LIVES_REMAINING_ATTRIBUTE = "RoundLivesRemaining"
+local RESPAWN_LEVEL_ATTRIBUTE = "MonsterRespawnLevel"
 
 local function getRespawnTime(model)
 	if model.Name == MonsterBombConfig.MODEL_NAME then
 		return MonsterBombConfig.RESPAWN_TIME
 	end
 	return RESPAWN_TIME
+end
+
+-- Spawner-owned monsters remain normal killable/countable monsters during the
+-- current round, but they never enter the finite round-template or individual
+-- respawn pools. This keeps a local generator from multiplying the next round
+-- or changing the ordinary population's lifecycle.
+local function isSpawnerOwnedMonster(model)
+	return model:GetAttribute("NoAutoRespawn") == true
 end
 
 -- A kill should matter much more in a small server. Roll once, immediately
@@ -77,6 +88,10 @@ local function resetRoundClock()
 	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, now)
 	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, now + ROUND_DURATION_SECONDS)
 	ws:SetAttribute("RoundActive", true)
+	ws:SetAttribute("RoundPhase", "Hunt")
+	ws:SetAttribute("NightmareEscapeActive", false)
+	ws:SetAttribute("NightmareEscapeEndsAt", nil)
+	ws:SetAttribute("NightmareClearElapsedSeconds", nil)
 end
 
 getMonsterMaxCount()
@@ -102,6 +117,7 @@ local scoreEvent = getOrCreateRemoteEvent("ScoreUpdate")
 local monsterCountEvent = getOrCreateRemoteEvent("MonsterCountUpdate")
 local recordsEvent = getOrCreateRemoteEvent("RecordsUpdate")
 local roundCompleteEvent = getOrCreateRemoteEvent("RoundComplete")
+local nightmareEscapeStartedEvent = getOrCreateRemoteEvent("NightmareEscapeStarted")
 local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
 local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
 local restartRoundEvent = getOrCreateRemoteEvent("RestartRound")
@@ -311,12 +327,25 @@ local function checkRoundComplete(count)
 	if pendingRespawns > 0 then return end
 	if count ~= 0 then return end
 
+	-- Clearing the hostile population is the end of combat, not the end of the
+	-- nightmare. Freeze the successful hunt timer and give players one final,
+	-- short escape phase to reach the bedroom portal.
 	roundComplete = true
+	escapeActive = true
 	ws:SetAttribute("RoundActive", false)
-	roundCompleteEvent:FireAllClients({
-		scoreboard = getScoreboard(),
-		serverBest = serverBest,
-		bestEver = bestEver,
+	ws:SetAttribute("RoundPhase", "Escape")
+	ws:SetAttribute("NightmareEscapeActive", true)
+	local now = ws:GetServerTimeNow()
+	local clearedInSeconds = math.max(0, math.floor(now - (tonumber(ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE)) or now)))
+	local escapeEndsAt = now + ESCAPE_DURATION_SECONDS
+	ws:SetAttribute("NightmareClearElapsedSeconds", clearedInSeconds)
+	ws:SetAttribute("NightmareEscapeEndsAt", escapeEndsAt)
+	-- ScoreGui reads RoundEndsAt, so this replaces its original hunt timer with
+	-- the visible sixty-second escape countdown instead of leaving it at zero.
+	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, escapeEndsAt)
+	nightmareEscapeStartedEvent:FireAllClients({
+		clearedInSeconds = clearedInSeconds,
+		escapeEndsAt = escapeEndsAt,
 	})
 end
 
@@ -594,6 +623,18 @@ local function onMonsterKilled(hum, model)
 	end
 
 	local data = spawns[model]
+	-- Spawner-owned families own their own return cycle.  This must win even if
+	-- this script registered the model a fraction of a second before the
+	-- spawner set NoAutoRespawn, otherwise both systems can create a clone.
+	if isSpawnerOwnedMonster(model) then
+		spawns[model] = nil
+		task.delay(CORPSE_DISPLAY_TIME, function()
+			if model.Parent then model:Destroy() end
+			broadcastMonsterCount()
+			broadcastRecords()
+		end)
+		return
+	end
 	if data then
 		spawns[model] = nil
 		local permanentWeaponKill =
@@ -657,6 +698,14 @@ local function onMonsterKilled(hum, model)
 			-- This is a replacement for a managed monster that just died, not a new
 			-- spawn. The cap must not silently consume one of its remaining lives.
 			local clone = data.template:Clone()
+			if model.Name ~= MonsterBombConfig.MODEL_NAME then
+				local level = math.max(0, math.floor(tonumber(model:GetAttribute(RESPAWN_LEVEL_ATTRIBUTE)) or tonumber(model:GetAttribute("CreepyRespawnLevel")) or 0))
+				clone:SetAttribute(RESPAWN_LEVEL_ATTRIBUTE, level + 1)
+				if string.sub(model.Name, 1, #"creepyMonster") == "creepyMonster" then
+					-- Preserve the legacy per-creepy marker for existing AI/UI code.
+					clone:SetAttribute("CreepyRespawnLevel", level + 1)
+				end
+			end
 			clone:SetAttribute("RoundRespawned", true)
 			clone:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
 			clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesAfterDeath)
@@ -691,6 +740,26 @@ local function setupMonster(model)
 	if not hum then return end
 
 	MonsterManager.applyHP(model)
+	if model.Name ~= MonsterBombConfig.MODEL_NAME then
+		-- Respawn level 1 is generation 2: base HP + one more base HP.
+		-- Keep bombs on their own fixed finite-lives health lifecycle.
+		local respawnLevel = math.max(0, math.floor(tonumber(model:GetAttribute(RESPAWN_LEVEL_ATTRIBUTE)) or 0))
+		if respawnLevel == 0 and string.sub(model.Name, 1, #"creepyMonster") == "creepyMonster" then
+			respawnLevel = math.max(0, math.floor(tonumber(model:GetAttribute("CreepyRespawnLevel")) or 0))
+		end
+		if respawnLevel > 0 then
+			hum.MaxHealth = hum.MaxHealth * (respawnLevel + 1)
+			hum.Health = hum.MaxHealth
+		end
+	end
+	if string.sub(model.Name, 1, #"creepyMonster") == "creepyMonster" then
+		local baseSpeed = tonumber(model:GetAttribute("CreepyBaseWalkSpeed")) or hum.WalkSpeed
+		model:SetAttribute("CreepyBaseWalkSpeed", baseSpeed)
+		local respawnLevel = math.max(0, math.floor(tonumber(model:GetAttribute(RESPAWN_LEVEL_ATTRIBUTE)) or tonumber(model:GetAttribute("CreepyRespawnLevel")) or 0))
+		if respawnLevel > 0 then
+			hum.WalkSpeed = baseSpeed + respawnLevel
+		end
+	end
 	disableSelfRespawn(model)
 	managedMonsters[model] = true
 	model:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
@@ -699,7 +768,8 @@ local function setupMonster(model)
 	livesRemaining = math.clamp(math.floor(livesRemaining), 1, RESPAWN_LIVES)
 	model:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesRemaining)
 
-	if not model:GetAttribute("RoundRespawned") then
+	local spawnerOwned = isSpawnerOwnedMonster(model)
+	if not spawnerOwned and not model:GetAttribute("RoundRespawned") then
 		table.insert(roundTemplates, {
 			template = model:Clone(),
 			cframe = model:GetPivot(),
@@ -707,7 +777,7 @@ local function setupMonster(model)
 		model:SetAttribute("RoundRespawned", true)
 	end
 
-	if not spawns[model] then
+	if not spawnerOwned and not spawns[model] then
 		spawns[model] = {
 			template = model:Clone(),
 			cframe = model:GetPivot(),
@@ -742,6 +812,7 @@ end
 
 local function resetScores()
 	for _, player in Players:GetPlayers() do
+		player:SetAttribute("EscapedNightmare", false)
 		scores[player] = 0
 		kills[player] = 0
 		spawnScores[player] = 0
@@ -758,6 +829,7 @@ local function restartRound()
 	pendingRespawns = 0
 	roundComplete = false
 	roundFailed = false
+	escapeActive = false
 	announcedMonsterMilestones = {}
 	lastBroadcastMonsterCount = nil
 	resetRoundClock()
@@ -791,8 +863,12 @@ local function restartRound()
 	roundRestartedEvent:FireAllClients()
 end
 
-restartRoundEvent.OnServerEvent:Connect(function()
+restartRoundEvent.OnServerEvent:Connect(function(player)
 	if not roundComplete and not roundFailed then return end
+	-- During the escape phase only somebody who has actually entered the portal
+	-- may restart the shared round. It prevents an uninvolved player from
+	-- cancelling another survivor's escape.
+	if escapeActive and player:GetAttribute("EscapedNightmare") ~= true then return end
 	restartRound()
 end)
 
@@ -819,11 +895,28 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(1)
-		if not roundComplete and not roundFailed then
+		if escapeActive then
+			local escapeEndsAt = tonumber(ws:GetAttribute("NightmareEscapeEndsAt")) or 0
+			if ws:GetServerTimeNow() >= escapeEndsAt then
+				escapeActive = false
+				roundFailed = true
+				ws:SetAttribute("NightmareEscapeActive", false)
+				ws:SetAttribute("RoundPhase", "Failed")
+				roundFailedEvent:FireAllClients({
+					message = "You were too late. The nightmare kept you.",
+					scoreboard = getScoreboard(),
+					serverBest = serverBest,
+					bestEver = bestEver,
+				})
+				broadcastMonsterCount()
+				broadcastRecords()
+			end
+		elseif not roundComplete and not roundFailed then
 			local endsAt = tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) or 0
 			if ws:GetServerTimeNow() >= endsAt then
 				roundFailed = true
 				ws:SetAttribute("RoundActive", false)
+				ws:SetAttribute("RoundPhase", "Failed")
 				roundFailedEvent:FireAllClients({
 					roundEndsAt = endsAt,
 					scoreboard = getScoreboard(),
@@ -864,6 +957,7 @@ end)
 -- Initialize round totals once; a character respawn starts a new life without
 -- erasing the player's score or kill total for the current game.
 local function onPlayerAdded(player)
+	player:SetAttribute("EscapedNightmare", false)
 	scores[player] = 0
 	kills[player] = 0
 	spawnScores[player] = 0

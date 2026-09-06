@@ -23,6 +23,7 @@ local AMBIENT_UPDATE_INTERVAL = 0.4
 local TOP_THREAT_TYPES = 4
 local RADAR_VALUE_FONT_SIZE = 16
 local RADAR_DETAIL_FONT_SIZE = 8
+local RADAR_CONTOUR_ROOT_NAME = "RadarContours"
 
 local COLORS = {
 	background = Color3.fromRGB(8, 3, 18),
@@ -32,6 +33,7 @@ local COLORS = {
 	cyan = Color3.fromRGB(157, 129, 255),
 	threat = Color3.fromRGB(255, 52, 117),
 	friendly = Color3.fromRGB(186, 180, 203),
+	guardian = Color3.fromRGB(190, 255, 75),
 	text = Color3.fromRGB(244, 235, 255),
 	muted = Color3.fromRGB(181, 153, 213),
 }
@@ -213,15 +215,21 @@ local playerLayer = Instance.new("Folder")
 playerLayer.Name = "OtherPlayers"
 playerLayer.Parent = plot
 
-local selfMarker = makeFrame("You", plot, COLORS.text, 0)
+local selfMarker = makeFrame("You", plot, COLORS.cyan, 0.82)
 selfMarker.AnchorPoint = Vector2.new(0.5, 0.5)
-selfMarker.Size = UDim2.fromOffset(14, 14)
+selfMarker.Size = UDim2.fromOffset(18, 18)
 Instance.new("UICorner", selfMarker).CornerRadius = UDim.new(1, 0)
 local selfStroke = Instance.new("UIStroke")
-selfStroke.Color = COLORS.phosphor
+selfStroke.Color = COLORS.cyan
 selfStroke.Thickness = 2
 selfStroke.Parent = selfMarker
-local selfLabel = makeText("PlayerName", plot, "YOU", RADAR_DETAIL_FONT_SIZE, COLORS.friendly, Enum.Font.Montserrat)
+-- A small map-facing wedge makes heading readable without competing with contacts.
+local selfFacing = makeText("Facing", plot, "▲", 15, COLORS.cyan, Enum.Font.MontserratBold)
+selfFacing.AnchorPoint = Vector2.new(0.5, 0.5)
+selfFacing.Size = UDim2.fromOffset(22, 22)
+selfFacing.TextXAlignment = Enum.TextXAlignment.Center
+selfFacing.ZIndex = 5
+local selfLabel = makeText("PlayerName", plot, "YOU", 20, COLORS.cyan, Enum.Font.MontserratBold)
 selfLabel.AnchorPoint = Vector2.new(0, 0.5)
 selfLabel.Size = UDim2.fromOffset(90, 16)
 selfLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -341,11 +349,13 @@ if Workspace.CurrentCamera then
 end
 
 local monsterDots = {}
+local guardianDots = {}
 local playerDots = {}
 local playerLabels = {}
 local landmarkMarkers = {}
 local landmarkLabels = {}
 local contourSegments = {}
+local roadSegments = {}
 local activeRadarLoop
 local backpackWasEnabled
 
@@ -391,10 +401,10 @@ end
 local function mapPosition(worldPosition, min, max)
 	local width = math.max(1, max.X - min.X)
 	local depth = math.max(1, max.Z - min.Z)
-	-- The world map is intentionally presented with south at the top, matching
-	-- the player's familiar hand-drawn/Studio orientation. Flip both axes so
-	-- every live contact and beacon rotates together by 180 degrees.
-	local x = 1 - math.clamp((worldPosition.X - min.X) / width, 0, 1)
+	-- Keep the familiar south-at-top vertical orientation, but restore normal
+	-- west-to-east left/right ordering. The prior 180-degree rotation placed a
+	-- player in the horizontally opposite corner of the map.
+	local x = math.clamp((worldPosition.X - min.X) / width, 0, 1)
 	local y = math.clamp((worldPosition.Z - min.Z) / depth, 0, 1)
 	return UDim2.fromScale(
 		x,
@@ -403,11 +413,9 @@ local function mapPosition(worldPosition, min, max)
 end
 
 local function updateCornerCoordinates(min, max)
-	-- mapPosition is rotated 180 degrees: visual top-right is world min X/min Z,
-	-- while visual bottom-left is max X/max Z.
-	cornerCoordinates.CoordTopRight.Text = string.format("X %.0f  /  Z %.0f", min.X, min.Z)
-	cornerCoordinates.CoordBottomLeft.Text = string.format("X %.0f  /  Z %.0f", max.X, max.Z)
-	cornerCoordinates.CoordBottomRight.Text = string.format("X %.0f  /  Z %.0f", min.X, max.Z)
+	cornerCoordinates.CoordTopRight.Text = string.format("X %.0f  /  Z %.0f", max.X, min.Z)
+	cornerCoordinates.CoordBottomLeft.Text = string.format("X %.0f  /  Z %.0f", min.X, max.Z)
+	cornerCoordinates.CoordBottomRight.Text = string.format("X %.0f  /  Z %.0f", max.X, max.Z)
 end
 
 local function getMonsterDot(index)
@@ -422,6 +430,22 @@ local function getMonsterDot(index)
 	stroke.Transparency = 0.15
 	stroke.Parent = dot
 	monsterDots[index] = dot
+	return dot
+end
+
+local function getGuardianDot(index)
+	local dot = guardianDots[index]
+	if dot then return dot end
+	dot = makeFrame("GuardianPet", monsterLayer, COLORS.guardian, 1)
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(10, 10)
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = COLORS.guardian
+	stroke.Thickness = 1
+	stroke.Transparency = 0.55
+	stroke.Parent = dot
+	guardianDots[index] = dot
 	return dot
 end
 
@@ -493,6 +517,19 @@ local function getContourSegment(index)
 	return segment
 end
 
+local function getRoadSegment(index)
+	local segment = roadSegments[index]
+	if segment then return segment end
+	-- A road is a centre line, not an outlined rectangle. This keeps adjacent
+	-- curve pieces visually continuous instead of drawing cross-lines at joins.
+	segment = makeFrame("Road", contourLayer, COLORS.cyan, 0.16)
+	segment.AnchorPoint = Vector2.new(0.5, 0.5)
+	segment.BorderSizePixel = 0
+	segment.ZIndex = 1
+	roadSegments[index] = segment
+	return segment
+end
+
 local function markerPosition(instance)
 	if instance:IsA("BasePart") then return instance.Position end
 	if instance:IsA("Model") then
@@ -518,29 +555,6 @@ local function isRadarDetect(instance)
 	return value == true or value == "true" or value == 1
 end
 
-local function isRadarLandmark(instance)
-	if CollectionService:HasTag(instance, "RadarLandmark")
-		or CollectionService:HasTag(instance, "RadarContour")
-	then
-		return true
-	end
-	local value = instance:GetAttribute("RadarLandmark")
-	if value == true or value == "true" or value == 1 then return true end
-	-- Transitional support for the earlier contour name while Studio objects
-	-- are being migrated by the command-bar conversion.
-	local legacy = instance:GetAttribute("RadarContour")
-	return legacy == true or legacy == "true" or legacy == 1
-end
-
-local function hasLandmarkAncestor(instance)
-	local ancestor = instance.Parent
-	while ancestor and ancestor ~= Workspace do
-		if isRadarLandmark(ancestor) then return true end
-		ancestor = ancestor.Parent
-	end
-	return false
-end
-
 local function setContourSegment(segment, part, min, max)
 	local width = math.max(1, max.X - min.X)
 	local depth = math.max(1, max.Z - min.Z)
@@ -549,13 +563,51 @@ local function setContourSegment(segment, part, min, max)
 	local look = part.CFrame.LookVector
 	local rightLength = math.max(0.002, math.sqrt((right.X * part.Size.X / width) ^ 2 + (right.Z * part.Size.X / depth) ^ 2))
 	local lookLength = math.max(0.002, math.sqrt((look.X * part.Size.Z / width) ^ 2 + (look.Z * part.Size.Z / depth) ^ 2))
-	local screenRightX = -right.X / width
+	local screenRightX = right.X / width
 	local screenRightY = right.Z / depth
 	local angle = math.deg(math.atan2(screenRightY, screenRightX))
 	segment.Position = position
 	segment.Size = UDim2.fromScale(rightLength, lookLength)
 	segment.Rotation = angle
 	segment.Visible = true
+end
+
+local function setRoadSegment(segment, part, min, max)
+	local width = math.max(1, max.X - min.X)
+	local depth = math.max(1, max.Z - min.Z)
+	local position = mapPosition(part.Position, min, max)
+	local right = part.CFrame.RightVector
+	local length = math.max(0.002, math.sqrt((right.X * part.Size.X / width) ^ 2 + (right.Z * part.Size.X / depth) ^ 2))
+	segment.Position = position
+	segment.Size = UDim2.new(length, 0, 0, 1)
+	segment.Rotation = math.deg(math.atan2(right.Z / depth, right.X / width))
+	segment.Visible = true
+end
+
+local function isRoadContour(part)
+	return part:GetAttribute("RadarContourStyle") == "Road"
+		or string.match(string.lower(part.Name), "^roadcontour") ~= nil
+end
+
+local function renderAuthoredContours(min, max)
+	local contourRoot = Workspace:FindFirstChild(RADAR_CONTOUR_ROOT_NAME)
+	local contourCount = 0
+	local roadCount = 0
+	if contourRoot then
+		for _, part in ipairs(contourRoot:GetDescendants()) do
+			if part:IsA("BasePart") then
+				if isRoadContour(part) then
+					roadCount += 1
+					setRoadSegment(getRoadSegment(roadCount), part, min, max)
+				else
+					contourCount += 1
+					setContourSegment(getContourSegment(contourCount), part, min, max)
+				end
+			end
+		end
+	end
+	for index = contourCount + 1, #contourSegments do contourSegments[index].Visible = false end
+	for index = roadCount + 1, #roadSegments do roadSegments[index].Visible = false end
 end
 
 local function displayName(instance)
@@ -634,11 +686,11 @@ local function refreshRadarContacts()
 	local min, max = mapBounds()
 	updateCornerCoordinates(min, max)
 	local monsterCount = 0
+	local guardianCount = 0
 	local playerCount = 0
 	local otherPlayerDotCount = 0
 	local landmarkCount = 0
 	local typeCounts = {}
-	local contourCount = 0
 	for _, instance in ipairs(Workspace:GetDescendants()) do
 		local beacon = isRadarDetect(instance)
 		if instance:IsA("Model")
@@ -646,12 +698,27 @@ local function refreshRadarContacts()
 			and instance:GetAttribute("RoundManagedMonster") == true
 		then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
-			local monsterRoot = instance:FindFirstChild("HumanoidRootPart", true)
-			if humanoid and humanoid.Health > 0 and monsterRoot and monsterRoot:IsA("BasePart") then
+			-- Match the round counter's legacy-rig fallback (torso/head/primary part),
+			-- rather than hiding every monster without a HumanoidRootPart.
+			local monsterRoot = MonsterManager.getMonsterRoot(instance)
+			if humanoid and humanoid.Health > 0 and monsterRoot then
 				monsterCount += 1
 				typeCounts[instance.Name] = (typeCounts[instance.Name] or 0) + 1
 				local dot = getMonsterDot(monsterCount)
 				dot.Position = mapPosition(monsterRoot.Position, min, max)
+				dot.Visible = true
+			end
+		end
+		if instance:IsA("Model")
+			and instance.Name == "weird monster thing"
+			and instance:GetAttribute("WMTGuardianPet") == true
+		then
+			local humanoid = MonsterManager.getMonsterHumanoid(instance)
+			local guardianRoot = instance:FindFirstChild("HumanoidRootPart", true)
+			if humanoid and humanoid.Health > 0 and guardianRoot and guardianRoot:IsA("BasePart") then
+				guardianCount += 1
+				local dot = getGuardianDot(guardianCount)
+				dot.Position = mapPosition(guardianRoot.Position, min, max)
 				dot.Visible = true
 			end
 		end
@@ -666,20 +733,8 @@ local function refreshRadarContacts()
 				placeLabel(getLandmarkLabel(landmarkCount), mapped, displayName(instance))
 			end
 		end
-		if isRadarLandmark(instance) and not hasLandmarkAncestor(instance) then
-			if instance:IsA("BasePart") then
-				contourCount += 1
-				setContourSegment(getContourSegment(contourCount), instance, min, max)
-			elseif instance:IsA("Model") then
-				for _, part in ipairs(instance:GetDescendants()) do
-					if part:IsA("BasePart") then
-						contourCount += 1
-						setContourSegment(getContourSegment(contourCount), part, min, max)
-					end
-				end
-			end
-		end
 	end
+	renderAuthoredContours(min, max)
 	for _, candidate in ipairs(Players:GetPlayers()) do
 		local character = candidate.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
@@ -697,11 +752,11 @@ local function refreshRadarContacts()
 		end
 	end
 	for index = monsterCount + 1, #monsterDots do monsterDots[index].Visible = false end
+	for index = guardianCount + 1, #guardianDots do guardianDots[index].Visible = false end
 	for index = otherPlayerDotCount + 1, #playerDots do playerDots[index].Visible = false end
 	for index = otherPlayerDotCount + 1, #playerLabels do playerLabels[index].Visible = false end
 	for index = landmarkCount + 1, #landmarkMarkers do landmarkMarkers[index].Visible = false end
 	for index = landmarkCount + 1, #landmarkLabels do landmarkLabels[index].Visible = false end
-	for index = contourCount + 1, #contourSegments do contourSegments[index].Visible = false end
 	if lastReportedBeaconCount ~= landmarkCount then
 		lastReportedBeaconCount = landmarkCount
 		warn("[RadarTowerHud] radar_detect beacons:", landmarkCount)
@@ -725,11 +780,21 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	selfMarker.Visible = root ~= nil
+	selfFacing.Visible = root ~= nil
 	selfLabel.Visible = root ~= nil
 	if root then
 		local min, max = mapBounds()
 		local mapped = mapPosition(root.Position, min, max)
 		selfMarker.Position = mapped
+		local forward = root.CFrame.LookVector
+		local width = math.max(1, max.X - min.X)
+		local depth = math.max(1, max.Z - min.Z)
+		local mapForward = Vector2.new(forward.X / width, forward.Z / depth)
+		if mapForward.Magnitude > 0 then
+			mapForward = mapForward.Unit
+			selfFacing.Position = UDim2.new(mapped.X.Scale + mapForward.X * 0.022, 0, mapped.Y.Scale + mapForward.Y * 0.022, 0)
+			selfFacing.Rotation = math.deg(math.atan2(mapForward.Y, mapForward.X)) + 90
+		end
 		placeLabel(selfLabel, mapped, "YOU")
 	end
 

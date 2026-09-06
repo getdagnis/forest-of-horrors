@@ -81,6 +81,7 @@ local function getSpawnCFrame(ladder)
 end
 
 local function spawnZombieAtLadder(ladder)
+	if Workspace:GetAttribute("RoundActive") == false then return end
 	local livingCount = countLivingMonsters()
 	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= MAX_MONSTERS then
 		return

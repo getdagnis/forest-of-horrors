@@ -8,9 +8,9 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 -- Experiment controls. Keep this Script enabled as an optional global pull,
 -- but leave zombies to ZombieAISystem by default so they retain varied goals.
 -- Set ENABLED false to park this system without deleting it; set LURE_ZOMBIES
--- true only when deliberately testing the old all-zombies-to-player effect.	
-local ENABLED = false
-local LURE_ZOMBIES = false
+-- true only when deliberately testing the old all-zombies-to-player effect.
+local ENABLED = true
+local LURE_ZOMBIES = true
 local LURE_GUARDIANS = false
 
 
@@ -20,10 +20,11 @@ local LURE_GUARDIANS = false
 -- at the trade-off of slower re-engagement by remote inactive monsters.
 local UPDATE_EVERY = 16
 
--- Only monsters already within this broad radius of a living player receive a
--- small nudge. The current radius keeps the pull local enough to preserve
--- variety; increasing it produces larger, more uniform player-facing crowds.
-local LURE_RADIUS = 250
+-- The opening minutes stay local and exploratory. Each completed round minute
+-- adds a little more pull, so the lure becomes more noticeable as pressure
+-- rises without abruptly changing any monster's movement owner.
+local INITIAL_LURE_RADIUS = 100
+local LURE_RADIUS_PER_MINUTE = 20
 
 -- Do not override close-range combat/navigation. Within this distance, the
 -- monster's own AI should own movement; a larger value leaves more breathing
@@ -35,13 +36,19 @@ local MIN_DISTANCE = 50
 -- pathfinding; increasing it can make obstacles and crowding worse.
 local MOVE_OFFSET = 12
 
+local function getLureRadius()
+	local startedAt = tonumber(Workspace:GetAttribute("RoundStartedAt"))
+	local elapsed = startedAt and math.max(0, Workspace:GetServerTimeNow() - startedAt) or 0
+	return INITIAL_LURE_RADIUS + math.floor(elapsed / 60) * LURE_RADIUS_PER_MINUTE
+end
+
 local function getRoot(model)
 	return model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChild("Torso", true)
 end
 
 local function getNearestPlayerRoot(monsterRoot)
 	local nearestRoot = nil
-	local nearestDistance = LURE_RADIUS
+	local nearestDistance = getLureRadius()
 
 	for _, player in Players:GetPlayers() do
 		local character = player.Character

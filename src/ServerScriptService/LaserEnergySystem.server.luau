@@ -16,7 +16,7 @@ local PICKUP_RESPAWN_SECONDS = 60
 -- An empty reserve reaches full in exactly this long. A partly charged reserve
 -- finishes sooner at the same 600/9 energy-per-second rate.
 local STATION_FULL_CHARGE_SECONDS = 9
-local STATION_MAX_DISTANCE = 12
+local STATION_MAX_DISTANCE = 6
 local ENERGY_TYPES = {
 	SmallEnergy = 100,
 	LargeEnergy = 300,

@@ -2,10 +2,12 @@
 -- Tool.Activated/Deactivated handles a short charge on mouse, touch, and gamepad.
 
 local Debris = game:GetService("Debris")
+local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local tool = script.Parent
@@ -17,6 +19,8 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local GUNSHOT_SOUND = "rbxassetid://131794614393147"
 local CHARGE_SOUND = "rbxassetid://140102991925260"
 local COOLDOWN_SOUND = "rbxassetid://124307033081669"
+local DEPLETED_SOUND = "rbxassetid://137787508848769"
+local PICKUP_SOUND = "rbxassetid://139730692334768"
 
 -- Client presentation and feel tuning.
 local SHOT_VOLUME_MIN = 0.5
@@ -25,6 +29,7 @@ local SHOT_PITCH_MIN_PERCENT = 95
 local SHOT_PITCH_MAX_PERCENT = 105
 local DEFAULT_SOUND_VOLUME = 1
 local CHARGE_SOUND_VOLUME = 1.4
+local COOLDOWN_SOUND_DURATION = 2.9
 
 local SCREEN_CENTER = 0.5
 -- The legacy Crosshair in this marketplace HUD has an old absolute position.
@@ -34,6 +39,25 @@ local CROSSHAIR_LINE_LENGTH = 12
 local CROSSHAIR_LINE_THICKNESS = 2
 local CROSSHAIR_GAP = 3
 local CROSSHAIR_Z_INDEX = 10
+local CHARGE_HUD_Z_INDEX = 11
+local CHARGE_HUD_WIDTH = 382
+local CHARGE_HUD_HEIGHT = 58
+local CHARGE_HUD_MARGIN = 24
+local CHARGE_HUD_BOTTOM_MARGIN = 72
+-- ScoreGui uses half-sized cards in its compact/mobile layout. Keep the two
+-- weapon meters in that same visual scale rather than letting them dominate
+-- a phone screen.
+local MOBILE_HUD_SCALE = 0.5
+local CHARGE_CELL_GAP = 4
+local CHARGE_FULL_COLOR = Color3.fromRGB(94, 220, 255)
+local CHARGE_EMPTY_COLOR = Color3.fromRGB(28, 63, 82)
+-- The charge cells are deliberately never opaque: a full cell is a quiet
+-- cyan glow, with partly charged and empty cells becoming progressively more
+-- solid/dark so their state remains readable at a glance.
+local CHARGE_FULL_TRANSPARENCY = 0.1
+local CHARGE_HALF_TRANSPARENCY = 0.5
+local CHARGE_EMPTY_TRANSPARENCY = 0.9
+local DEPLETED_MESSAGE_DURATION = 1.6
 local GROUND_SURFACE_NORMAL_MIN = 0.45
 local GROUND_PREVIEW_THICKNESS = 0.2
 local GROUND_PREVIEW_LIFT = 0.06
@@ -69,9 +93,36 @@ local chargeSound
 local ambientLoop
 local activeHud
 local aimCrosshair
+local chargeLevelTitle
+local chargeCells = {}
+local chargeHudScale
+local chargeHudViewportConnection
+local depletedMessage
+local depletedMessageToken = 0
+local depletedSoundToken = 0
+local lastChargeUnits
+local pickupSoundPlayed = false
 local groundPreview
 local didWarnMissingHud = false
 local didWarnMissingAmbient = false
+local fireShot
+
+local function updateChargeHudScale()
+	if not chargeHudScale then return end
+	local viewport = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	local compactHud = viewport.X < 1100 or viewport.Y < 650
+	chargeHudScale.Scale = compactHud and MOBILE_HUD_SCALE or 1
+end
+
+local function bindChargeHudScale()
+	if chargeHudViewportConnection then chargeHudViewportConnection:Disconnect() end
+	chargeHudViewportConnection = nil
+	local camera = Workspace.CurrentCamera
+	if camera then
+		chargeHudViewportConnection = camera:GetPropertyChangedSignal("ViewportSize"):Connect(updateChargeHudScale)
+	end
+	updateChargeHudScale()
+end
 
 local function isEquipped()
 	return player.Character and tool.Parent == player.Character
@@ -136,6 +187,32 @@ local function playCooldownSound()
 	end
 end
 
+local function playPickupSound()
+	local sound = getOrCreateSound("PickupSound", PICKUP_SOUND, DEFAULT_SOUND_VOLUME)
+	if not sound then return end
+	sound.SoundId = PICKUP_SOUND
+	sound:Stop()
+	sound.TimePosition = 0
+	sound:Play()
+end
+
+local function playDepletedFeedback()
+	playCooldownSound()
+	-- Preserve the familiar cooldown cue first; the distinct depleted sound
+	-- follows only after it has finished.
+	depletedSoundToken += 1
+	local token = depletedSoundToken
+	task.delay(COOLDOWN_SOUND_DURATION, function()
+		if token ~= depletedSoundToken or not isEquipped() then return end
+		local sound = getOrCreateSound("DepletedSound", DEPLETED_SOUND, DEFAULT_SOUND_VOLUME)
+		if not sound then return end
+		sound.SoundId = DEPLETED_SOUND
+		sound:Stop()
+		sound.TimePosition = 0
+		sound:Play()
+	end)
+end
+
 local function startChargeSound()
 	chargeSound = getOrCreateSound("ChargeSound", CHARGE_SOUND, CHARGE_SOUND_VOLUME)
 	if chargeSound then
@@ -166,11 +243,23 @@ local function cloneWeaponHud()
 	activeHud.ResetOnSpawn = false
 	activeHud.Parent = playerGui
 
+	-- The marketplace HUD contains the old green-digit readout.  This Tool now
+	-- owns its small reticle and charge panel, so none of that legacy layout is
+	-- allowed to compete with the replacement.
 	for _, item in activeHud:GetDescendants() do
-		if item.Name == "Crosshair" and item:IsA("GuiObject") then
-			item.Visible = false
-		end
+		if item:IsA("GuiObject") then item.Visible = false end
 	end
+	-- A ScreenGui can have a platform-specific origin even when it does not
+	-- ignore the Roblox top-bar inset. Measure that real origin instead of
+	-- guessing an inset, so cursor aim and the reticle use identical pixels.
+	local hudOrigin = Instance.new("Frame")
+	hudOrigin.Name = "BlasterHudOrigin"
+	hudOrigin.Position = UDim2.fromOffset(0, 0)
+	hudOrigin.Size = UDim2.fromOffset(0, 0)
+	hudOrigin.BackgroundTransparency = 1
+	hudOrigin.BorderSizePixel = 0
+	hudOrigin.Active = false
+	hudOrigin.Parent = activeHud
 
 	aimCrosshair = Instance.new("Frame")
 	aimCrosshair.Name = "SimpleBlasterCrosshair"
@@ -196,12 +285,173 @@ local function cloneWeaponHud()
 	addLine("Left", UDim2.new(0.5, -CROSSHAIR_GAP - CROSSHAIR_LINE_LENGTH, 0.5, -CROSSHAIR_LINE_THICKNESS / 2), UDim2.fromOffset(CROSSHAIR_LINE_LENGTH, CROSSHAIR_LINE_THICKNESS))
 	addLine("Right", UDim2.new(0.5, CROSSHAIR_GAP, 0.5, -CROSSHAIR_LINE_THICKNESS / 2), UDim2.fromOffset(CROSSHAIR_LINE_LENGTH, CROSSHAIR_LINE_THICKNESS))
 
+	local chargePanel = Instance.new("Frame")
+	chargePanel.Name = "BlasterChargeLevel"
+	chargePanel.AnchorPoint = Vector2.new(1, 1)
+	chargePanel.Position = UDim2.new(1, -CHARGE_HUD_MARGIN, 1, -CHARGE_HUD_BOTTOM_MARGIN)
+	chargePanel.Size = UDim2.fromOffset(CHARGE_HUD_WIDTH, CHARGE_HUD_HEIGHT)
+	chargePanel.BackgroundTransparency = 1
+	chargePanel.BorderSizePixel = 0
+	chargePanel.ZIndex = CHARGE_HUD_Z_INDEX
+	chargePanel.Parent = activeHud
+	chargeHudScale = Instance.new("UIScale")
+	chargeHudScale.Name = "ResponsiveScale"
+	chargeHudScale.Parent = chargePanel
+	bindChargeHudScale()
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.fromOffset(0, 0)
+	title.Size = UDim2.new(1, 0, 0, 24)
+	title.Font = Enum.Font.GothamBold
+	title.Text = "CHARGE LEVEL"
+	title.TextColor3 = Color3.fromRGB(198, 239, 255)
+	title.TextSize = 19
+	title.TextXAlignment = Enum.TextXAlignment.Right
+	title.ZIndex = CHARGE_HUD_Z_INDEX + 1
+	title.Parent = chargePanel
+	chargeLevelTitle = title
+
+	local cells = Instance.new("Frame")
+	cells.Name = "Cells"
+	cells.BackgroundTransparency = 1
+	cells.Position = UDim2.fromOffset(0, 30)
+	cells.Size = UDim2.new(1, 0, 0, 24)
+	cells.ZIndex = CHARGE_HUD_Z_INDEX + 1
+	cells.Parent = chargePanel
+	local cellWidth = (CHARGE_HUD_WIDTH - (CHARGE_CELL_GAP * 9)) / 10
+	for index = 1, 10 do
+		local cell = Instance.new("Frame")
+		cell.Name = "Cell" .. index
+		cell.Position = UDim2.fromOffset((index - 1) * (cellWidth + CHARGE_CELL_GAP), 0)
+		cell.Size = UDim2.fromOffset(cellWidth, 24)
+		cell.BackgroundColor3 = CHARGE_EMPTY_COLOR
+		cell.BackgroundTransparency = CHARGE_EMPTY_TRANSPARENCY
+		cell.BorderSizePixel = 0
+		cell.ZIndex = CHARGE_HUD_Z_INDEX + 1
+		cell.Parent = cells
+		local outline = Instance.new("UIStroke")
+		outline.Name = "EmptyOutline"
+		outline.Color = CHARGE_FULL_COLOR
+		outline.Thickness = 1
+		outline.Transparency = 0.8
+		outline.Enabled = false
+		outline.Parent = cell
+		chargeCells[index] = cell
+	end
+
+end
+
+local function getChargeUnits()
+	local value = tonumber(tool:GetAttribute(Config.CHARGE_ATTRIBUTE))
+	return math.clamp(math.floor(value or Config.MAX_CHARGE_UNITS), 0, Config.MAX_CHARGE_UNITS)
+end
+
+local function updateChargeHud()
+	local units = getChargeUnits()
+	if chargeLevelTitle then
+		chargeLevelTitle.Text = units == 0 and "BLASTER DEPLETED" or "BLASTER CHARGE LEVEL"
+	end
+	for index, cell in ipairs(chargeCells) do
+		-- Drain from the left, leaving the rightmost segments bright beside the
+		-- screen edge until the reserve is nearly empty.
+		local unitsInCell = math.clamp(units - ((10 - index) * 2), 0, 2)
+		cell.BackgroundColor3 = unitsInCell > 0 and CHARGE_FULL_COLOR or CHARGE_EMPTY_COLOR
+		cell.BackgroundTransparency = unitsInCell == 2 and CHARGE_FULL_TRANSPARENCY
+			or (unitsInCell == 1 and CHARGE_HALF_TRANSPARENCY or CHARGE_EMPTY_TRANSPARENCY)
+		local outline = cell:FindFirstChild("EmptyOutline")
+		if outline and outline:IsA("UIStroke") then outline.Enabled = unitsInCell < 2 end
+	end
+end
+
+local function onChargeChanged()
+	local units = getChargeUnits()
+	if lastChargeUnits and units > lastChargeUnits and isEquipped() then
+		playPickupSound()
+		pickupSoundPlayed = true
+	end
+	lastChargeUnits = units
+	updateChargeHud()
+end
+
+local function showDepletedMessage()
+	if not activeHud then return end
+	if not depletedMessage then
+		depletedMessage = Instance.new("TextLabel")
+		depletedMessage.Name = "BlasterDepletedMessage"
+		depletedMessage.AnchorPoint = Vector2.new(0.5, 0.5)
+		depletedMessage.Position = UDim2.fromScale(0.5, 0.39)
+		depletedMessage.Size = UDim2.fromOffset(420, 42)
+		depletedMessage.BackgroundTransparency = 1
+		depletedMessage.Font = Enum.Font.GothamBold
+		depletedMessage.Text = "VISIT A CHARGING STATION"
+		depletedMessage.TextColor3 = CHARGE_FULL_COLOR
+		depletedMessage.TextSize = 23
+		depletedMessage.TextStrokeColor3 = Color3.fromRGB(0, 12, 22)
+		depletedMessage.TextStrokeTransparency = 0.25
+		depletedMessage.ZIndex = CHARGE_HUD_Z_INDEX + 2
+		depletedMessage.Parent = activeHud
+	end
+	depletedMessageToken += 1
+	local token = depletedMessageToken
+	depletedMessage.Visible = true
+	task.delay(DEPLETED_MESSAGE_DURATION, function()
+		if depletedMessage and token == depletedMessageToken then depletedMessage.Visible = false end
+	end)
 end
 
 local function destroyWeaponHud()
+	if chargeHudViewportConnection then chargeHudViewportConnection:Disconnect() end
+	chargeHudViewportConnection = nil
+	chargeHudScale = nil
 	if activeHud then activeHud:Destroy() end
 	activeHud = nil
 	aimCrosshair = nil
+	chargeLevelTitle = nil
+	table.clear(chargeCells)
+	depletedMessage = nil
+end
+
+local function startCharge()
+	if not isEquipped() or charging then return end
+	if coolingDown then playCooldownSound() return end
+	if getChargeUnits() < Config.DIRECT_SHOT_CHARGE_UNITS then
+		playDepletedFeedback()
+		showDepletedMessage()
+		return
+	end
+	charging = true
+	chargeStartedAt = os.clock()
+	startChargeSound()
+end
+
+local function releaseCharge()
+	if not charging then return end
+	local heldSeconds = os.clock() - chargeStartedAt
+	charging = false
+	chargeStartedAt = 0
+	stopChargeSound()
+	if heldSeconds < Config.CHARGE_TIME then return end
+	fireShot()
+end
+
+local function bindMobileChargeControl()
+	if not UserInputService.TouchEnabled then return end
+	ContextActionService:BindAction("MonsterBlasterCharge", function(_, inputState)
+		if inputState == Enum.UserInputState.Begin then
+			startCharge()
+		elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
+			releaseCharge()
+		end
+		return Enum.ContextActionResult.Sink
+	end, true, Enum.UserInputType.Touch)
+	ContextActionService:SetTitle("MonsterBlasterCharge", "HOLD CHARGE")
+	ContextActionService:SetPosition("MonsterBlasterCharge", UDim2.new(1, -118, 1, -190))
+end
+
+local function unbindMobileChargeControl()
+	ContextActionService:UnbindAction("MonsterBlasterCharge")
 end
 
 local function clearLegacyChargeHud()
@@ -228,6 +478,17 @@ local function getMonsterModelFromHit(instance)
 		current = current.Parent
 	end
 	return nil
+end
+
+local function predictedChargeCost(direction)
+	local result = raycastFromCamera(direction)
+	if result and result.Normal.Y >= GROUND_SURFACE_NORMAL_MIN and not getMonsterModelFromHit(result.Instance) then
+		local model = result.Instance:FindFirstAncestorOfClass("Model")
+		if not (model and Players:GetPlayerFromCharacter(model)) then
+			return Config.SHOCKWAVE_CHARGE_UNITS
+		end
+	end
+	return Config.DIRECT_SHOT_CHARGE_UNITS
 end
 
 local function getPiercingBeamEnd(origin, direction)
@@ -308,7 +569,9 @@ local function updateCrosshair()
 	if space == "viewport" then
 		aimCrosshair.Position = UDim2.fromScale(SCREEN_CENTER, SCREEN_CENTER)
 	else
-		aimCrosshair.Position = UDim2.fromOffset(point.X, point.Y)
+		local hudOrigin = activeHud and activeHud:FindFirstChild("BlasterHudOrigin")
+		local offset = hudOrigin and hudOrigin.AbsolutePosition or Vector2.zero
+		aimCrosshair.Position = UDim2.fromOffset(point.X - offset.X, point.Y - offset.Y)
 	end
 	for _, line in ipairs(aimCrosshair:GetChildren()) do
 		if line:IsA("Frame") then line.BackgroundTransparency = coolingDown and 0.7 or 0 end
@@ -393,10 +656,19 @@ local function showShotBeam(barrel, endPosition, power)
 	Debris:AddItem(endPart, BEAM_LIFETIME)
 end
 
-local function fireShot()
-	if not isEquipped() or coolingDown then return end
+fireShot = function()
+	if not isEquipped() then return end
+	if coolingDown then
+		playCooldownSound()
+		return
+	end
 	local originOffset, direction, target = getAimPayload()
 	if not originOffset or not direction then return end
+	if getChargeUnits() < predictedChargeCost(direction) then
+		playDepletedFeedback()
+		showDepletedMessage()
+		return
+	end
 	local power = getPower()
 
 	local barrel = getBarrel()
@@ -427,27 +699,35 @@ local function resetState()
 	destroyGroundPreview()
 end
 
+local function cleanupWeaponState()
+	if ambientLoop then ambientLoop:Stop() end
+	ambientLoop = nil
+	resetState()
+	unbindMobileChargeControl()
+	depletedSoundToken += 1
+	destroyWeaponHud()
+	clearLegacyChargeHud()
+	UserInputService.MouseIconEnabled = true
+end
+
 tool.Activated:Connect(function()
-	if not isEquipped() or charging then return end
-	if coolingDown then playCooldownSound() return end
-	charging = true
-	chargeStartedAt = os.clock()
-	startChargeSound()
+	startCharge()
 end)
 
 tool.Deactivated:Connect(function()
-	if not charging then return end
-	local heldSeconds = os.clock() - chargeStartedAt
-	charging = false
-	chargeStartedAt = 0
-	stopChargeSound()
-	if heldSeconds < Config.CHARGE_TIME then return end
-	fireShot()
+	releaseCharge()
 end)
 
 tool.Equipped:Connect(function()
 	clearLegacyChargeHud()
 	cloneWeaponHud()
+	lastChargeUnits = getChargeUnits()
+	updateChargeHud()
+	bindMobileChargeControl()
+	if not pickupSoundPlayed and tool:GetAttribute(Config.LOADOUT_CHARGE_ATTRIBUTE) ~= true then
+		playPickupSound()
+		pickupSoundPlayed = true
+	end
 	-- GunClientController owns this for the MonsterGun family.  The Blaster has
 	-- its own HUD, so it must hide Roblox's native arrow itself; otherwise the
 	-- arrow plus SimpleBlasterCrosshair looks like two competing aim pointers.
@@ -464,28 +744,35 @@ tool.Equipped:Connect(function()
 	end
 end)
 
+tool:GetAttributeChangedSignal(Config.CHARGE_ATTRIBUTE):Connect(onChargeChanged)
+
 tool.Unequipped:Connect(function()
-	if ambientLoop then ambientLoop:Stop() end
-	ambientLoop = nil
-	resetState()
-	destroyWeaponHud()
-	clearLegacyChargeHud()
-	UserInputService.MouseIconEnabled = true
+	cleanupWeaponState()
 end)
 
 player.CharacterAdded:Connect(function()
 	task.defer(function()
-		if ambientLoop then ambientLoop:Stop() end
-		ambientLoop = nil
-		resetState()
-		destroyWeaponHud()
-		clearLegacyChargeHud()
-		UserInputService.MouseIconEnabled = true
+		cleanupWeaponState()
 	end)
 end)
 
+-- Roblox can remove a Tool during respawn without firing Unequipped. The
+-- ContextActionService button is client-global, so explicitly clean it when
+-- this Tool leaves both the Character and Backpack.
+tool.AncestryChanged:Connect(function(_, parent)
+	local backpack = player:FindFirstChildOfClass("Backpack")
+	if parent ~= player.Character and parent ~= backpack then
+		cleanupWeaponState()
+	end
+end)
+
+tool.Destroying:Connect(cleanupWeaponState)
+
 RunService.RenderStepped:Connect(function()
 	if not isEquipped() then return end
+	-- Other legacy UI can restore this property after Equipped fires. Keep the
+	-- native pointer hidden so the Blaster has one unambiguous aim indicator.
+	UserInputService.MouseIconEnabled = false
 	updateCrosshair()
 	updateGroundPreview(getChargeProgress())
 end)

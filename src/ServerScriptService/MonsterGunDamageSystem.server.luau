@@ -43,10 +43,7 @@ local warnedMissingMuzzle = {}
 
 local function getGunConfig(tool)
 	if not tool:IsA("Tool") then return nil end
-	local weaponName = tool:GetAttribute("WeaponName")
-	if type(weaponName) ~= "string" then
-		weaponName = tool.Name
-	end
+	local weaponName = GUNS[tool.Name] and tool.Name or tool:GetAttribute("WeaponName")
 
 	local defaults = GUNS[weaponName]
 	if not defaults then return nil end

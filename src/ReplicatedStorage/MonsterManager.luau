@@ -254,6 +254,7 @@ function MonsterManager.recordPlayerDamage(humanoid, player, requestedDamage, sc
 	log.players[userId] = (log.players[userId] or 0) + actualDamage
 
 	humanoid:SetAttribute("LastAttackerId", userId)
+	humanoid:SetAttribute("LastPlayerDamageAt", workspace:GetServerTimeNow())
 	humanoid:SetAttribute("LastMonsterAttacker", nil)
 
 	if typeof(scoreColor) == "Color3" then

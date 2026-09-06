@@ -69,6 +69,47 @@ local function isEquippedBy(player)
 	return tool.Parent == player.Character
 end
 
+local function getEquippedPlayer()
+	local character = tool.Parent
+	return character and character:IsA("Model") and Players:GetPlayerFromCharacter(character) or nil
+end
+
+local function getChargeUnits(player)
+	local configuredMaximum = Config.MAX_CHARGE_UNITS
+	local isRespawnLoadout = player and tool:GetAttribute(Config.LOADOUT_CHARGE_ATTRIBUTE) == true
+	local isNewWorldPickup = player
+		and not isRespawnLoadout
+		and tool:GetAttribute(Config.CHARGE_OWNER_ATTRIBUTE) ~= player.UserId
+	local current
+	if isNewWorldPickup then
+		-- A world pickup is a real recharge event.  Do not reuse a depleted value
+		-- left on the player by a previous loadout Tool.
+		current = configuredMaximum
+	else
+		current = tonumber(player and player:GetAttribute(Config.PLAYER_CHARGE_ATTRIBUTE) or tool:GetAttribute(Config.CHARGE_ATTRIBUTE))
+		if current == nil then
+			current = tonumber(tool:GetAttribute(Config.CHARGE_ATTRIBUTE)) or configuredMaximum
+		end
+	end
+	current = math.clamp(math.floor(current), 0, configuredMaximum)
+	if player then
+		player:SetAttribute(Config.PLAYER_CHARGE_ATTRIBUTE, current)
+		tool:SetAttribute(Config.CHARGE_OWNER_ATTRIBUTE, player.UserId)
+	end
+	tool:SetAttribute(Config.CHARGE_ATTRIBUTE, current)
+	return current
+end
+
+local function consumeChargeUnits(player, cost)
+	cost = math.max(0, math.floor(tonumber(cost) or 0))
+	local current = getChargeUnits(player)
+	if current < cost then return false end
+	current -= cost
+	if player then player:SetAttribute(Config.PLAYER_CHARGE_ATTRIBUTE, current) end
+	tool:SetAttribute(Config.CHARGE_ATTRIBUTE, current)
+	return true
+end
+
 local function isInPlayerInventory()
 	local parent = tool.Parent
 	return parent and (
@@ -366,14 +407,12 @@ local function damageMonster(player, model, damage, blastOrigin, directBeam)
 	if disintegrateOnDeath then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
-	end
-	humanoid:TakeDamage(effectiveDamage)
-	-- Do not break apart or launch a living NPC. Once the direct beam has
-	-- actually killed it, scatter the corpse exactly as the old CreepyMonster
-	-- Blaster finish did.
-	if disintegrateOnDeath and humanoid.Health <= 0 and model.Parent then
+		-- Death listeners run synchronously from TakeDamage. Break and launch a
+		-- confirmed-lethal direct-beam target first, before corpse safety can
+		-- neutralise the dead rig's scripts and physics.
 		disintegrateMonster(model, blastOrigin)
 	end
+	humanoid:TakeDamage(effectiveDamage)
 	if humanoid.Health > 0 then pushMonsterBack(model, blastOrigin) end
 
 	if humanoid.Health > 0 then
@@ -471,16 +510,39 @@ end
 local function damageGroundShockwave(player, position, power)
 	local radius = Config.shockwaveRadiusForPower(power)
 	local damage = Config.shockwaveDamageForPower(power)
-	local damaged = {}
+	local candidates = {}
+	local seen = {}
 	for _, instance in workspace:GetDescendants() do
-		if instance:IsA("Model") and not damaged[instance] and MonsterManager.getConfig(instance) then
-			damaged[instance] = true
+		-- A ground shockwave is indiscriminate emergency crowd control for
+		-- hostile round contacts, never an accidental way to hurt a calm WMT.
+		-- Direct WMT hits retain their separate guardian/trust consequences.
+		if instance:IsA("Model")
+			and instance.Name ~= "weird monster thing"
+			and not seen[instance]
+			and MonsterManager.getConfig(instance)
+		then
+			seen[instance] = true
 			local root = instance:FindFirstChild("HumanoidRootPart", true) or instance:FindFirstChild("Head", true)
 			local positionToTest = root and root:IsA("BasePart") and root.Position or instance:GetPivot().Position
-			if (positionToTest - position).Magnitude <= radius then
-				damageMonster(player, instance, damage, position, false)
+			local distance = (positionToTest - position).Magnitude
+			if distance <= radius then
+				table.insert(candidates, {
+					model = instance,
+					distance = distance,
+				})
 			end
 		end
+	end
+
+	-- Resolve the cap deterministically by taking the closest hostile contacts.
+	-- This keeps a blast useful in a crowd while requiring additional blasts for
+	-- monsters outside the first twelve selected targets.
+	table.sort(candidates, function(a, b)
+		return a.distance < b.distance
+	end)
+	local targetCount = math.min(Config.MAX_SHOCKWAVE_TARGETS, #candidates)
+	for index = 1, targetCount do
+		damageMonster(player, candidates[index].model, damage, position, false)
 	end
 end
 
@@ -496,8 +558,6 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	local state = playerState[player] or {}
 	local now = os.clock()
 	if now - (state.lastShotAt or -math.huge) < Config.COOLDOWN then return end
-	state.lastShotAt = now
-	playerState[player] = state
 
 	local power = Config.SHOT_POWER
 	-- Keep hit validation on the camera-selected ray.  Barrel direction can be
@@ -510,9 +570,16 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 	local graceTarget = getGraceTarget(player, cameraOrigin, unitDirection)
 	local serverResult, origin, muzzleBlocked = getServerShotResult(player, cameraOrigin, unitDirection)
 	if not origin then return end
+	local isShockwave = shouldGroundShockwave(serverResult)
+	local chargeCost = isShockwave and Config.SHOCKWAVE_CHARGE_UNITS or Config.DIRECT_SHOT_CHARGE_UNITS
+	-- Charge is spent only after the server has accepted an equipped, valid shot
+	-- and classified it.  The client HUD is presentation; it cannot grant shots.
+	if not consumeChargeUnits(player, chargeCost) then return end
+	state.lastShotAt = now
+	playerState[player] = state
 	pushShooterBack(player, unitDirection)
 
-	if shouldGroundShockwave(serverResult) then
+	if isShockwave then
 		makeGroundShockwave(serverResult.Position, power)
 		playShockwaveSound(serverResult.Position)
 		damageGroundShockwave(player, serverResult.Position, power)
@@ -545,8 +612,10 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 disableLegacyToolScripts()
+getChargeUnits()
 stabilizeToolAssembly()
 tool.Equipped:Connect(function()
+	getChargeUnits(getEquippedPlayer())
 	stabilizeToolAssembly()
 	task.defer(stabilizeToolAssembly)
 end)

@@ -9,6 +9,18 @@ MonsterBlasterConfig.RANGE = 450
 MonsterBlasterConfig.CHARGE_TIME = 0.45
 -- A completed short charge fires at the configured 600 beam / 300 ground max.
 MonsterBlasterConfig.SHOT_POWER = 1
+-- The Blaster has ten cells.  Charge is stored in half-cell units so a direct
+-- beam costs 0.5 cells while a ground shockwave costs a full cell.
+MonsterBlasterConfig.CHARGE_ATTRIBUTE = "BlasterChargeUnits"
+MonsterBlasterConfig.PLAYER_CHARGE_ATTRIBUTE = "MonsterBlasterChargeUnits"
+MonsterBlasterConfig.LOADOUT_CHARGE_ATTRIBUTE = "BlasterChargeFromLoadout"
+MonsterBlasterConfig.CHARGE_OWNER_ATTRIBUTE = "BlasterChargeOwnerUserId"
+MonsterBlasterConfig.MAX_CHARGE_UNITS = 20
+MonsterBlasterConfig.DIRECT_SHOT_CHARGE_UNITS = 1
+MonsterBlasterConfig.SHOCKWAVE_CHARGE_UNITS = 2
+-- A single ground blast can affect only a limited crowd. Larger groups need
+-- multiple blasts instead of being cleared by one shockwave.
+MonsterBlasterConfig.MAX_SHOCKWAVE_TARGETS = 12
 -- Charged shots pass through monsters but still stop at solid map geometry.
 MonsterBlasterConfig.PIERCES_MONSTERS = true
 

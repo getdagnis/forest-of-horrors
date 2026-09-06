@@ -67,6 +67,9 @@
       "MonsterBombSystem": {
         "$path": "src/ServerScriptService/MonsterBombSystem.server.luau"
       },
+      "BombRespawnSystem": {
+        "$path": "src/ServerScriptService/BombRespawnSystem.server.luau"
+      },
       "LavaPoolZombieSpawner": {
         "$path": "src/ServerScriptService/LavaPoolZombieSpawner.server.luau"
       },
@@ -75,6 +78,12 @@
       },
       "GuardianMonsterSystem": {
         "$path": "src/ServerScriptService/GuardianMonsterSystem.server.luau"
+      },
+      "GuardianNavigation": {
+        "$path": "src/ServerScriptService/GuardianNavigation.luau"
+      },
+      "GuardianTactics": {
+        "$path": "src/ServerScriptService/GuardianTactics.luau"
       },
       "CreepyMonsterSystem": {
         "$path": "src/ServerScriptService/CreepyMonsterSystem.server.luau"
@@ -91,6 +100,9 @@
       "GunLoadoutSystem": {
         "$path": "src/ServerScriptService/GunLoadoutSystem.server.luau"
       },
+      "MonsterGunUpgradeSystem": {
+        "$path": "src/ServerScriptService/MonsterGunUpgradeSystem.server.luau"
+      },
       "MonsterGunSpawnSystem": {
         "$path": "src/ServerScriptService/MonsterGunSpawnSystem.server.luau"
       },
@@ -100,11 +112,23 @@
       "LaserEnergySystem": {
         "$path": "src/ServerScriptService/LaserEnergySystem.server.luau"
       },
+      "PowerSwitchSystem": {
+        "$path": "src/ServerScriptService/PowerSwitchSystem.server.luau"
+      },
+      "PowerBoxSystem": {
+		"$path": "src/ServerScriptService/PowerBoxSystem.server.luau"
+      },
       "ShieldPickupSystem": {
         "$path": "src/ServerScriptService/ShieldPickupSystem.server.luau"
       },
       "ClosestRespawnSystem": {
         "$path": "src/ServerScriptService/ClosestRespawnSystem.server.luau"
+      },
+      "NightLightingSystem": {
+        "$path": "src/ServerScriptService/NightLightingSystem.server.luau"
+      },
+      "NightmareExitSystem": {
+        "$path": "src/ServerScriptService/NightmareExitSystem.server.luau"
       },
       "RadarTowerSystem": {
         "$path": "src/ServerScriptService/RadarTowerSystem.server.luau"
@@ -130,6 +154,9 @@
       "WeaponInventoryGuard": {
         "$path": "src/ServerScriptService/WeaponInventoryGuard.server.luau"
       },
+      "SpeedCoilPickupSystem": {
+        "$path": "src/ServerScriptService/SpeedCoilPickupSystem.server.luau"
+      },
       "WeaponSpawnSystem": {
         "$path": "src/ServerScriptService/WeaponSpawnSystem.luau"
       },
@@ -143,7 +170,10 @@
       "StarterPlayerScripts": {
         "$ignoreUnknownInstances": true,
       "ScoreGui": {
-        "$path": "src/StarterPlayer/StarterPlayerScripts/ScoreGui.client.luau"
+		"$path": "src/StarterPlayer/StarterPlayerScripts/ScoreGui.client.luau"
+      },
+      "MonsterGunUpgradeHud": {
+		"$path": "src/StarterPlayer/StarterPlayerScripts/MonsterGunUpgradeHud.client.luau"
       },
       "ShieldHud": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/ShieldHud.client.luau"
