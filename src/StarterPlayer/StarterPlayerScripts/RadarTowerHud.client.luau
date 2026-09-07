@@ -17,7 +17,9 @@ local useEvent = ReplicatedStorage:WaitForChild("RadarTowerUse")
 
 -- Tune this to the loop's real beep interval if its audio is trimmed later.
 local PULSE_INTERVAL = 2.0
-local REFRESH_INTERVAL = 0.5
+-- The tower is a tactical snapshot, not a live GPS feed.  Keeping this at
+-- ten seconds avoids turning the radar into another per-frame monster system.
+local REFRESH_INTERVAL = 10.0
 local AMBIENT_RANGE = 30
 local AMBIENT_UPDATE_INTERVAL = 0.4
 local TOP_THREAT_TYPES = 4
@@ -358,6 +360,81 @@ local contourSegments = {}
 local roadSegments = {}
 local activeRadarLoop
 local backpackWasEnabled
+local isRadarDetect
+
+-- Workspace:GetDescendants() is intentionally not used while the radar is
+-- open.  Large imported NPCs contain hundreds of parts/scripts each, so a
+-- fresh whole-map traversal at every scan can stall the client long enough
+-- for Roblox's content-loading pause to appear.  Build a small model registry
+-- once, in yielded batches, then maintain it as models enter/leave Workspace.
+local roundMonsterModels = {}
+local roundMonsterModelSet = {}
+local radarDetectInstances = {}
+local radarDetectSet = {}
+
+local function cacheRadarInstance(instance)
+	if not radarDetectSet[instance] and isRadarDetect(instance) then
+		radarDetectSet[instance] = true
+		table.insert(radarDetectInstances, instance)
+	end
+end
+
+local function cacheRoundMonster(instance)
+	if instance:IsA("Model")
+		and not roundMonsterModelSet[instance]
+		and MonsterManager.isRoundTracked(instance)
+	then
+		roundMonsterModelSet[instance] = true
+		table.insert(roundMonsterModels, instance)
+	end
+end
+
+local function buildRadarRegistry()
+	local descendants = Workspace:GetDescendants()
+	for index, instance in ipairs(descendants) do
+		cacheRadarInstance(instance)
+		cacheRoundMonster(instance)
+		if index % 150 == 0 then
+			task.wait()
+		end
+	end
+	-- Models can be cloned while the yielded initial pass is running. The
+	-- DescendantAdded connection below catches those; this second pass only
+	-- covers a model whose attributes were applied during the first pass.
+	for index = #roundMonsterModels, 1, -1 do
+		local model = roundMonsterModels[index]
+		if model.Parent == nil then
+			roundMonsterModelSet[model] = nil
+			table.remove(roundMonsterModels, index)
+		end
+	end
+end
+
+Workspace.DescendantAdded:Connect(function(instance)
+	cacheRadarInstance(instance)
+	cacheRoundMonster(instance)
+end)
+
+Workspace.DescendantRemoving:Connect(function(instance)
+	if radarDetectSet[instance] then
+		radarDetectSet[instance] = nil
+		for index = #radarDetectInstances, 1, -1 do
+			if radarDetectInstances[index] == instance then
+				table.remove(radarDetectInstances, index)
+				break
+			end
+		end
+	end
+	if roundMonsterModelSet[instance] then
+		roundMonsterModelSet[instance] = nil
+		for index = #roundMonsterModels, 1, -1 do
+			if roundMonsterModels[index] == instance then
+				table.remove(roundMonsterModels, index)
+				break
+			end
+		end
+	end
+end)
 
 local function setRadarInventoryHidden(hidden)
 	if hidden then
@@ -541,7 +618,7 @@ local function markerPosition(instance)
 	return nil
 end
 
-local function isRadarDetect(instance)
+isRadarDetect = function(instance)
 	-- Support both the Studio Tags editor and the older Attribute workflow.
 	if CollectionService:HasTag(instance, "radar_detect")
 		or CollectionService:HasTag(instance, "RadarDetect")
@@ -554,6 +631,8 @@ local function isRadarDetect(instance)
 	-- an accidental Studio attribute visible rather than silently dropping it.
 	return value == true or value == "true" or value == 1
 end
+
+task.spawn(buildRadarRegistry)
 
 local function setContourSegment(segment, part, min, max)
 	local width = math.max(1, max.X - min.X)
@@ -691,10 +770,8 @@ local function refreshRadarContacts()
 	local otherPlayerDotCount = 0
 	local landmarkCount = 0
 	local typeCounts = {}
-	for _, instance in ipairs(Workspace:GetDescendants()) do
-		local beacon = isRadarDetect(instance)
-		if instance:IsA("Model")
-			and MonsterManager.isRoundTracked(instance)
+	for _, instance in ipairs(roundMonsterModels) do
+		if instance.Parent ~= nil
 			and instance:GetAttribute("RoundManagedMonster") == true
 		then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
@@ -709,6 +786,8 @@ local function refreshRadarContacts()
 				dot.Visible = true
 			end
 		end
+	end
+	for _, instance in ipairs(roundMonsterModels) do
 		if instance:IsA("Model")
 			and instance.Name == "weird monster thing"
 			and instance:GetAttribute("WMTGuardianPet") == true
@@ -722,7 +801,9 @@ local function refreshRadarContacts()
 				dot.Visible = true
 			end
 		end
-		if beacon then
+	end
+	for _, instance in ipairs(radarDetectInstances) do
+		if instance.Parent ~= nil and isRadarDetect(instance) then
 			local position = markerPosition(instance)
 			if position then
 				landmarkCount += 1
@@ -765,16 +846,16 @@ local function refreshRadarContacts()
 	statValues.CONTACTS.Text = string.format("%02d", monsterCount)
 	statValues.SURVIVORS.Text = string.format("%02d", playerCount)
 	statValues.BEACONS.Text = string.format("%02d", landmarkCount)
-	statValues["SCAN RATE"].Text = string.format("%.2fs", PULSE_INTERVAL)
+	statValues["SCAN RATE"].Text = string.format("%.2fs", REFRESH_INTERVAL)
 	footer.Text = string.format(
-		"LIVE UPLINK  //  PULSE %.2fs  //  CONTACTS = LIVE DOTS  /  SCOREBAR = ROUND LEDGER  /  SURVIVOR = GREY  /  BEACON = LAVENDER",
-		PULSE_INTERVAL
+		"LIVE UPLINK  //  SNAPSHOT %.2fs  //  CONTACTS = SNAPSHOT DOTS  /  SCOREBAR = ROUND LEDGER  /  SURVIVOR = GREY  /  BEACON = LAVENDER",
+		REFRESH_INTERVAL
 	)
 	updateThreatRows(typeCounts)
 end
 
 local pulseElapsed = PULSE_INTERVAL
-local scanCaptured = false
+local refreshElapsed = REFRESH_INTERVAL - 0.5
 RunService.Heartbeat:Connect(function(deltaTime)
 	if not gui.Enabled then return end
 	local character = player.Character
@@ -801,13 +882,11 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	pulseElapsed += deltaTime
 	if pulseElapsed >= PULSE_INTERVAL then
 		pulseElapsed %= PULSE_INTERVAL
-		scanCaptured = false
 		pulseRadar()
 	end
-	-- Contacts are a radar snapshot, not a real-time GPS feed. With the current
-	-- two-second loop, the scan lands as the sweep passes the map midpoint.
-	if not scanCaptured and pulseElapsed >= PULSE_INTERVAL * 0.5 then
-		scanCaptured = true
+	refreshElapsed += deltaTime
+	if refreshElapsed >= REFRESH_INTERVAL then
+		refreshElapsed %= REFRESH_INTERVAL
 		refreshRadarContacts()
 	end
 end)
@@ -864,6 +943,7 @@ useEvent.OnClientEvent:Connect(function(enabled, tower)
 	setRadarLoop(tower, enabled == true)
 	setRadarInventoryHidden(enabled == true)
 	pulseElapsed = PULSE_INTERVAL
+	refreshElapsed = REFRESH_INTERVAL - 0.5
 	warn("[RadarTowerHud]", enabled == true and "opened" or "closed")
 end)
 

@@ -41,8 +41,7 @@ local function getTier(tool)
 	-- The visible Tool name is the identity we assign during promotion. Prefer it
 	-- over a marketplace template's stale WeaponName attribute: otherwise an
 	-- item named MonsterGun3 can be repeatedly mistaken for MG2 after swapping.
-	local name = TIER_NAMES[1] == tool.Name or TIER_NAMES[2] == tool.Name or TIER_NAMES[3] == tool.Name
-		and tool.Name or tool:GetAttribute("WeaponName")
+	local name = TIER_NAMES[tool.Name] and tool.Name or tool:GetAttribute("WeaponName")
 	for tier, tierName in pairs(TIER_NAMES) do
 		if name == tierName then return tier end
 	end
@@ -55,6 +54,32 @@ local function getHighestTier(player)
 		if container then
 			for _, child in ipairs(container:GetChildren()) do
 				highest = math.max(highest, getTier(child) or 0)
+			end
+		end
+	end
+	return highest
+end
+
+-- A failed legacy upgrade may have already produced several copies. Keep the
+-- equipped highest-tier gun when possible, otherwise the first one found, and
+-- remove only the duplicate MonsterGun-family tools.
+local function reconcileMonsterGunCopies(player)
+	local highest = getHighestTier(player)
+	if highest <= 0 then return 0 end
+	local keeper
+	for _, container in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+		if container then
+			for _, child in ipairs(container:GetChildren()) do
+				if getTier(child) == highest then
+					keeper = keeper or child
+				end
+			end
+		end
+	end
+	for _, container in ipairs({ player.Character, player:FindFirstChildOfClass("Backpack") }) do
+		if container then
+			for _, child in ipairs(container:GetChildren()) do
+				if child ~= keeper and getTier(child) then child:Destroy() end
 			end
 		end
 	end
@@ -142,7 +167,7 @@ end
 local function refreshPlayer(player)
 	local scoreValue = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Score")
 	local score = scoreValue and scoreValue.Value or 0
-	local detectedTier = getHighestTier(player)
+	local detectedTier = reconcileMonsterGunCopies(player)
 	local savedTier = tonumber(player:GetAttribute("MonsterGunTier")) or 0
 	if player:GetAttribute(MG3_RESET_PENDING_ATTRIBUTE) == true then
 		-- CharacterAdded owns MG3's intentional one-life reset. Do not let an
