@@ -5,6 +5,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local ACTIVATION_DISTANCE = 16
 local event = ReplicatedStorage:FindFirstChild("RadarTowerUse")
@@ -13,10 +14,100 @@ if not event then
 	event.Name = "RadarTowerUse"
 	event.Parent = ReplicatedStorage
 end
+local snapshotEvent = ReplicatedStorage:FindFirstChild("RadarTowerSnapshot")
+if not snapshotEvent then
+	snapshotEvent = Instance.new("RemoteEvent")
+	snapshotEvent.Name = "RadarTowerSnapshot"
+	snapshotEvent.Parent = ReplicatedStorage
+end
 
 local activeSources = {}
 local boundTowers = {}
 local boundSeats = {}
+-- Keep the radar's contact source bounded to round monster models.  The old
+-- snapshot path walked every descendant in Workspace on activation and every
+-- ten seconds; this place contains tens of thousands of imported parts.
+local trackedMonsters = {}
+local trackedMonsterConnections = {}
+
+local function isTrackedMonster(instance)
+	return instance:IsA("Model")
+		and MonsterManager.isRoundTracked(instance)
+		and instance:GetAttribute("RoundManagedMonster") == true
+end
+
+local function refreshTrackedMonster(instance)
+	if not instance:IsA("Model") then return end
+	if isTrackedMonster(instance) then
+		trackedMonsters[instance] = true
+	else
+		trackedMonsters[instance] = nil
+	end
+end
+
+local function registerTrackedMonster(instance)
+	if not instance:IsA("Model") or trackedMonsterConnections[instance] then
+		refreshTrackedMonster(instance)
+		return
+	end
+	-- Ignore ordinary map models; only configured monster models can ever
+	-- become radar contacts.  This keeps the registry itself small.
+	if not MonsterManager.getConfig(instance) then return end
+	trackedMonsterConnections[instance] = {
+		instance:GetAttributeChangedSignal("RoundManagedMonster"):Connect(function()
+			refreshTrackedMonster(instance)
+		end),
+		instance:GetAttributeChangedSignal("RoundTracked"):Connect(function()
+			refreshTrackedMonster(instance)
+		end),
+	}
+	refreshTrackedMonster(instance)
+end
+
+local function unregisterTrackedMonster(instance)
+	trackedMonsters[instance] = nil
+	local connections = trackedMonsterConnections[instance]
+	if connections then
+		for _, connection in ipairs(connections) do connection:Disconnect() end
+		trackedMonsterConnections[instance] = nil
+	end
+end
+
+for _, instance in ipairs(Workspace:GetDescendants()) do
+	if instance:IsA("Model") then registerTrackedMonster(instance) end
+end
+
+Workspace.DescendantAdded:Connect(function(instance)
+	if instance:IsA("Model") then
+		task.defer(registerTrackedMonster, instance)
+	end
+end)
+Workspace.DescendantRemoving:Connect(function(instance)
+	if instance:IsA("Model") then unregisterTrackedMonster(instance) end
+end)
+
+local function buildSnapshot()
+	local records = {}
+	for instance in pairs(trackedMonsters) do
+		if instance.Parent ~= nil and isTrackedMonster(instance) then
+			local humanoid = MonsterManager.getMonsterHumanoid(instance)
+			local root = MonsterManager.getMonsterRoot(instance)
+			if humanoid and humanoid.Health > 0 and root then
+				table.insert(records, {
+					name = instance.Name,
+					position = root.Position,
+					guardian = instance.Name == "weird monster thing"
+						and instance:GetAttribute("WMTGuardianPet") == true,
+				})
+			end
+		end
+	end
+	return records
+end
+
+local function sendSnapshot(player)
+	snapshotEvent:FireClient(player, buildSnapshot())
+end
 
 local function isMarked(instance, attribute)
 	return instance:GetAttribute(attribute) == true
@@ -71,6 +162,7 @@ local function showRadar(player, source, tower, kind)
 	if not root or (root.Position - source.Position).Magnitude > ACTIVATION_DISTANCE then return end
 	activeSources[player] = { source = source, tower = tower, kind = kind }
 	event:FireClient(player, true, tower)
+	sendSnapshot(player)
 	warn("[RadarTower] opened for", player.Name, "at", tower:GetFullName(), "via", kind)
 end
 
@@ -195,6 +287,15 @@ task.spawn(function()
 			then
 				hideRadar(player, source)
 			end
+		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(10)
+		for player in pairs(activeSources) do
+			sendSnapshot(player)
 		end
 	end
 end)

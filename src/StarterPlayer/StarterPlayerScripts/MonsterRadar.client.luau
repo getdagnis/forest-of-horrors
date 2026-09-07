@@ -6,6 +6,9 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
+AudioPreloader.Start()
 
 local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
@@ -95,6 +98,49 @@ selfDot.Parent = radar
 local selfCorner = Instance.new("UICorner")
 selfCorner.CornerRadius = UDim.new(1, 0)
 selfCorner.Parent = selfDot
+
+-- McDonald's is the map's practical center. Keep a quiet landmark bearing on
+-- the radar edge so players can orient themselves without adding another dot
+-- to the monster contact field.
+local mcdonaldsMarker = Instance.new("Frame")
+mcdonaldsMarker.Name = "McDonaldsBearing"
+mcdonaldsMarker.AnchorPoint = Vector2.new(0.5, 0.5)
+mcdonaldsMarker.Size = UDim2.fromOffset(16, 16)
+mcdonaldsMarker.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
+mcdonaldsMarker.BackgroundTransparency = 0.25
+mcdonaldsMarker.BorderSizePixel = 0
+mcdonaldsMarker.Visible = false
+mcdonaldsMarker.ZIndex = 4
+mcdonaldsMarker.Parent = radar
+local mcdonaldsCorner = Instance.new("UICorner")
+mcdonaldsCorner.CornerRadius = UDim.new(1, 0)
+mcdonaldsCorner.Parent = mcdonaldsMarker
+local mcdonaldsStroke = Instance.new("UIStroke")
+mcdonaldsStroke.Color = Color3.fromRGB(151, 221, 255)
+mcdonaldsStroke.Thickness = 1
+mcdonaldsStroke.Transparency = 0.15
+mcdonaldsStroke.Parent = mcdonaldsMarker
+local mcdonaldsText = Instance.new("TextLabel")
+mcdonaldsText.BackgroundTransparency = 1
+mcdonaldsText.Size = UDim2.fromScale(1, 1)
+mcdonaldsText.Font = Enum.Font.GothamBold
+mcdonaldsText.Text = "M"
+mcdonaldsText.TextColor3 = Color3.fromRGB(151, 221, 255)
+mcdonaldsText.TextSize = 11
+mcdonaldsText.TextXAlignment = Enum.TextXAlignment.Center
+mcdonaldsText.TextYAlignment = Enum.TextYAlignment.Center
+mcdonaldsText.ZIndex = 5
+mcdonaldsText.Parent = mcdonaldsMarker
+
+local function getMcDonaldsPosition()
+	local landmark = workspace:FindFirstChild("McDonald's")
+		or workspace:FindFirstChild("McDonalds")
+		or workspace:FindFirstChild("McDonaldsModel")
+	if not landmark then return nil end
+	if landmark:IsA("BasePart") then return landmark.Position end
+	if landmark:IsA("Model") then return landmark:GetPivot().Position end
+	return nil
+end
 
 -- Only appears when the adaptive search reaches 200 studs without finding a
 -- monster. It points to the nearest monster that is still beyond radar range.
@@ -200,6 +246,7 @@ local function isHostileRadarMonster(model)
 end
 
 local function playPriorityWarning()
+	AudioPreloader.WaitUntilReady(2)
 	-- Audio is optional: accept a directly placed sound or a named warning inside
 	-- a RadarSounds folder, without creating/depending on a new shared asset.
 	local sound = SoundService:FindFirstChild("MonsterRadarWarning")
@@ -236,8 +283,28 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local camera = workspace.CurrentCamera
 	if not root or not camera then
 		for _, dot in ipairs(dots) do dot.Visible = false end
+		mcdonaldsMarker.Visible = false
 		player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, -1)
 		return
+	end
+
+	local mcdonaldsPosition = getMcDonaldsPosition()
+	if mcdonaldsPosition then
+		local landmarkOffset = mcdonaldsPosition - root.Position
+		local landmarkFlatOffset = Vector3.new(landmarkOffset.X, 0, landmarkOffset.Z)
+		if landmarkFlatOffset.Magnitude <= 70 then
+			mcdonaldsMarker.Visible = false
+		elseif landmarkFlatOffset.Magnitude > 0.01 then
+			local localOffset = camera.CFrame:VectorToObjectSpace(landmarkFlatOffset)
+			local direction = Vector2.new(localOffset.X, localOffset.Z)
+			if direction.Magnitude > 0.01 then
+				direction = direction.Unit
+				mcdonaldsMarker.Position = UDim2.fromScale(0.5 + direction.X * 0.44, 0.5 + direction.Y * 0.44)
+				mcdonaldsMarker.Visible = true
+			end
+		end
+	else
+		mcdonaldsMarker.Visible = false
 	end
 
 	local livingMonsters = {}
@@ -303,11 +370,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		entry.inRange = inRange
 		radarEntries[monster.model] = entry
 
+		-- Count hostile contacts independently of the pooled dot limit. Friendly
+		-- WMT/guardian rings must never consume the hostile-search signal.
+		if inRange and isHostileRadarMonster(monster.model) then
+			hostileShown += 1
+		end
 		if inRange and shown < MAX_DOTS then
 			shown += 1
-			if isHostileRadarMonster(monster.model) then
-				hostileShown += 1
-			end
 			local localOffset = camera.CFrame:VectorToObjectSpace(monster.offset)
 			local scale = 0.43 / radarRange
 			local dot = dots[shown]

@@ -11,6 +11,8 @@ local SoundService = game:GetService("SoundService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
+local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
+AudioPreloader.Start()
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
 local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
@@ -239,6 +241,7 @@ end
 
 
 local function playShotSound(tool)
+	AudioPreloader.WaitUntilReady(2)
 	local sound = tool:FindFirstChild("ShotSound", true)
 	if not sound or not sound:IsA("Sound") then
 		sound = SoundService:FindFirstChild("FallbackShotSound")

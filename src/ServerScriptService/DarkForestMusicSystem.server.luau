@@ -8,6 +8,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local function findTrack(index)
 	local candidates = {
 		SoundService,
+		SoundService:FindFirstChild("Music"),
 		SoundService:FindFirstChild("SoundManager"),
 		ServerStorage:FindFirstChild("SoundManager"),
 	}

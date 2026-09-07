@@ -74,6 +74,7 @@ local function fail(nav, now, reason)
 	nav.retryAt = now + 0.6
 	nav.lastProgressAt = now
 	nav.reason = reason
+	nav.forcePathUntil = now + 4
 	if nav.failures >= 2 then nav.failed = true end
 end
 
@@ -92,6 +93,11 @@ function Navigation.move(state, root, destination, key, now)
 	local floorParams = RaycastParams.new()
 	floorParams.FilterType = Enum.RaycastFilterType.Exclude
 	floorParams.FilterDescendantsInstances = { state.model }
+	-- Do not project an intercept/escort goal onto the target character itself.
+	if typeof(key) == "Instance" then
+		local ignored = key:IsA("Model") and key or key:FindFirstAncestorOfClass("Model")
+		if ignored then floorParams.FilterDescendantsInstances = { state.model, ignored } end
+	end
 	floorParams.RespectCanCollide = true
 	local ground = Workspace:Raycast(destination + Vector3.new(0, 2, 0), Vector3.new(0, -25, 0), floorParams)
 	if ground then destination = ground.Position end
@@ -111,6 +117,7 @@ function Navigation.move(state, root, destination, key, now)
 	if flat(root.Position - nav.lastPosition).Magnitude > 1.5 then
 		nav.lastPosition = root.Position
 		nav.lastProgressAt = now
+		nav.failures = 0
 	end
 	if nav.command and (nav.moveFailed or now - nav.lastProgressAt > 2.5 or now - (nav.waypointAt or now) > 6) then
 		fail(nav, now, "no movement progress")
@@ -119,7 +126,7 @@ function Navigation.move(state, root, destination, key, now)
 	end
 	if now < nav.retryAt then return "retry" end
 
-	if canWalkDirect(state, root, destination) then
+	if now >= (nav.forcePathUntil or 0) and canWalkDirect(state, root, destination) then
 		-- Keep failure history even if a moving destination changes every tick.
 		if nav.path then disconnectRoute(nav) end
 		command(state, nav, destination, now, false)

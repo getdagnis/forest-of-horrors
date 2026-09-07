@@ -1,4 +1,5 @@
 local Players = game:GetService("Players")
+local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
@@ -6,6 +7,8 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
+local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
+AudioPreloader.Start()
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
 
 local roundCompleteEvent = ReplicatedStorage:WaitForChild("RoundComplete")
@@ -151,6 +154,16 @@ end
 local function playSound(soundName)
 	local source = SoundService:FindFirstChild(soundName, true)
 	if not (source and source:IsA("Sound")) then return end
+	-- GameIntro is the first critical sound after the welcome modal. Give its
+	-- template an explicit preload/loaded check before cloning it; this avoids
+	-- the published-client cold-cache race that Studio usually masks.
+	if soundName == "GameIntro" then
+		pcall(function() ContentProvider:PreloadAsync({ source }) end)
+		local deadline = os.clock() + 5
+		while not source.IsLoaded and os.clock() < deadline do task.wait() end
+	else
+		AudioPreloader.WaitUntilReady(5)
+	end
 	local sound = source:Clone()
 	sound.Parent = SoundService
 	sound:Play()

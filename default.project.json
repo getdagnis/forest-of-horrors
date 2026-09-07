@@ -20,6 +20,9 @@
       "MonsterBlasterConfig": {
         "$path": "src/ReplicatedStorage/MonsterBlasterConfig.luau"
       },
+      "AudioPreloader": {
+        "$path": "src/ReplicatedStorage/AudioPreloader.luau"
+      },
       "GunAimConfig": {
         "$path": "src/ReplicatedStorage/GunAimConfig.luau"
       },
@@ -145,6 +148,9 @@
       "PlayerHealthSystem": {
         "$path": "src/ServerScriptService/PlayerHealthSystem.luau"
       },
+      "HealthBonusPickupSystem": {
+        "$path": "src/ServerScriptService/HealthBonusPickupSystem.server.luau"
+      },
       "MonsterDeathSafetySystem": {
         "$path": "src/ServerScriptService/MonsterDeathSafetySystem.server.luau"
       },
@@ -171,6 +177,9 @@
         "$ignoreUnknownInstances": true,
       "ScoreGui": {
 		"$path": "src/StarterPlayer/StarterPlayerScripts/ScoreGui.client.luau"
+      },
+      "AudioPreloader": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/AudioPreloader.client.luau"
       },
       "MonsterGunUpgradeHud": {
 		"$path": "src/StarterPlayer/StarterPlayerScripts/MonsterGunUpgradeHud.client.luau"

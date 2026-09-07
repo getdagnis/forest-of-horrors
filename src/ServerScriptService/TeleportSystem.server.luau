@@ -29,7 +29,7 @@ end
 
 local TELEPORT_OFFSET = Vector3.new(0, 6, 0)
 local CHARACTER_COOLDOWN = 1.5
-local STREAM_TIMEOUT = 5 -- seconds to wait for destination area to stream in
+local STREAM_TIMEOUT = 15 -- McDonald's is a large streamed model; load it before moving the character
 
 local entrancesByRoute = {}
 local exitsByRoute = {}

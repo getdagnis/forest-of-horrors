@@ -361,9 +361,10 @@ local function layout()
 	scorePanel.Visible = not compactScoreboard or scoreboardExpanded
 	scorePanel.Position = UDim2.fromOffset(panelOffset.X, panelOffset.Y + (compactScoreboard and 38 or 0))
 	scorePanel.Size = UDim2.fromOffset(mobile and 210 or 280, mobile and 110 or 150)
-	scoreboardTitle.TextSize = details_font_size * scale
-	scoreboardTitle.Size = UDim2.new(1, -20, 0, details_font_size * scale)
-	scoreboardText.TextSize = details_font_size * scale
+	local scoreboardScale = mobile and 1.3 or 2
+	scoreboardTitle.TextSize = details_font_size * scoreboardScale
+	scoreboardTitle.Size = UDim2.new(1, -20, 0, details_font_size * scoreboardScale)
+	scoreboardText.TextSize = details_font_size * scoreboardScale
 	healText.TextSize = large_font_size * scale
 	local eventX = panelOffset.X
 	local eventY = panelOffset.Y + scorePanel.Size.Y.Offset + 24
@@ -399,7 +400,12 @@ local function getRank()
 end
 
 local function updateHealthPanel(humanoid)
-	local percent = humanoid.MaxHealth > 0 and math.clamp(humanoid.Health / humanoid.MaxHealth * 100, 0, 999) or 0
+	-- Health bonuses extend the temporary pool, but the HUD percentage is
+	-- intentionally measured against the normal 100 HP life: full bonus health
+	-- therefore reads 200%, and damage above the base pool remains visible.
+	local bonus = tonumber(humanoid:GetAttribute("TemporaryHealthBonusHP")) or 0
+	local baseMaxHealth = math.max(1, humanoid.MaxHealth - bonus)
+	local percent = math.clamp(humanoid.Health / baseMaxHealth * 100, 0, 999)
 	labels.Health.Text = percent >= 999 and "999+" or string.format("%d%%", math.floor(percent + 0.5))
 	if percent >= 86 then panels.Health.BackgroundColor3 = Color3.fromRGB(0, 69, 11)
 	elseif percent >= 56 then panels.Health.BackgroundColor3 = Color3.fromRGB(159, 161, 41)
@@ -479,7 +485,7 @@ local function normalizeRows(data)
 	local result = {}
 	for _, row in ipairs(list) do
 		if type(row) == "table" then
-			table.insert(result, { name = tostring(row.name or row.playerName or row.player or "-"), score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, bestSpawn = tonumber(row.bestSpawn or row.personalBestSpawn or row.spawn) or 0 })
+			table.insert(result, { name = tostring(row.name or row.playerName or row.player or "-"), score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, deaths = tonumber(row.deaths) or 0, bestSpawn = tonumber(row.bestSpawn or row.personalBestSpawn or row.spawn) or 0 })
 		end
 	end
 	return result
@@ -497,7 +503,7 @@ local function renderScoreboard()
 			local stats = other:FindFirstChild("leaderstats")
 			local score = stats and stats:FindFirstChild("Score")
 			local kills = stats and stats:FindFirstChild("Kills")
-			table.insert(rows, { name = other.Name, score = score and score.Value or 0, kills = kills and kills.Value or 0, bestSpawn = 0 })
+			table.insert(rows, { name = other.Name, score = score and score.Value or 0, kills = kills and kills.Value or 0, deaths = 0, bestSpawn = 0 })
 		end
 		table.sort(rows, function(a, b) return a.score == b.score and a.name < b.name or a.score > b.score end)
 	end
@@ -506,7 +512,7 @@ local function renderScoreboard()
 	for index, row in ipairs(rows) do
 		if index > 8 then break end
 		local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. row.name .. "</font>" or row.name
-		table.insert(lines, string.format("<b>%d. %s — %d/%d (%d)</b>", index, name, row.score, row.kills, row.bestSpawn))
+		table.insert(lines, string.format("<b>%d. %s — %d/%d (%d deaths)</b>", index, name, row.score, row.kills, row.deaths or 0))
 	end
 	if allTimeBest then table.insert(lines, string.format("\nALL-TIME: %s — %d/%d (%s)", allTimeBest.name, allTimeBest.score, allTimeBest.kills, formatElapsed(allTimeBest.elapsedSeconds))) end
 	scoreboardText.Text = table.concat(lines, "\n")

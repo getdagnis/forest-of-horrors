@@ -125,6 +125,7 @@ local monsterMilestoneEvent = getOrCreateRemoteEvent("MonsterMilestone")
 local playerKillMilestoneEvent = getOrCreateRemoteEvent("PlayerKillMilestone")
 local bestSpawnAnnouncementEvent = getOrCreateRemoteEvent("BestSpawnAnnouncement")
 local secretShaftAnnouncementEvent = getOrCreateRemoteEvent("SecretShaftAnnouncement")
+local secretShaftLockedEvent = getOrCreateRemoteEvent("SecretShaftDoorLocked")
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
@@ -246,6 +247,7 @@ getScoreboard = function()
 			score = scores[player] or 0,
 			kills = kills[player] or 0,
 			bestSpawn = best.score or 0,
+			deaths = math.max(0, (spawnCounts[player] or 0) - 1),
 		})
 	end
 
@@ -474,6 +476,27 @@ local function openSecretShaftIfGuard(model)
 	secretShaftAnnouncementEvent:FireAllClients()
 end
 
+local function bindSecretShaftDoor()
+	for _, item in ipairs(ws:GetDescendants()) do
+		if item:IsA("BasePart") and item.Name == "SecretShaftDoor" and item:GetAttribute("SecretShaftDoor") == true then
+			local prompt = item:FindFirstChildOfClass("ProximityPrompt") or Instance.new("ProximityPrompt")
+			prompt.ActionText = "Open"
+			prompt.ObjectText = "Secret Shaft"
+			prompt.HoldDuration = 0.2
+			prompt.MaxActivationDistance = 10
+			prompt.RequiresLineOfSight = false
+			prompt.Parent = item
+			prompt.Triggered:Connect(function(player)
+				if not secretShaftOpened then
+					secretShaftLockedEvent:FireClient(player)
+				end
+			end)
+		end
+	end
+end
+
+bindSecretShaftDoor()
+
 local function updateScoreRecords(player)
 	local currentScore = scores[player] or 0
 	local currentSpawnScore = spawnScores[player] or 0
@@ -585,6 +608,14 @@ local function onMonsterKilled(hum, model)
 			local attacker = Players:GetPlayerByUserId(award.userId)
 
 			if attacker then
+				for weaponName, weaponPoints in pairs(award.weaponPoints or {}) do
+					if weaponName == "MonsterGun" or weaponName == "MonsterGun2" or weaponName == "MonsterGun3" then
+						local progressAttribute = weaponName == "MonsterGun" and "MonsterGun1Points"
+							or weaponName == "MonsterGun2" and "MonsterGun2Points"
+							or "MonsterGun3Points"
+						attacker:SetAttribute(progressAttribute, (tonumber(attacker:GetAttribute(progressAttribute)) or 0) + weaponPoints)
+					end
+				end
 				if awardScore(attacker, award.points, isMajorKill) then
 					monsterKillAnnounced = true
 				end

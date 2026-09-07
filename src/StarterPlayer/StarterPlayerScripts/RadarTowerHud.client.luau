@@ -14,6 +14,7 @@ local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local useEvent = ReplicatedStorage:WaitForChild("RadarTowerUse")
+local snapshotEvent = ReplicatedStorage:WaitForChild("RadarTowerSnapshot")
 
 -- Tune this to the loop's real beep interval if its audio is trimmed later.
 local PULSE_INTERVAL = 2.0
@@ -361,6 +362,7 @@ local roadSegments = {}
 local activeRadarLoop
 local backpackWasEnabled
 local isRadarDetect
+local latestServerSnapshot
 
 -- Workspace:GetDescendants() is intentionally not used while the radar is
 -- open.  Large imported NPCs contain hundreds of parts/scripts each, so a
@@ -770,6 +772,22 @@ local function refreshRadarContacts()
 	local otherPlayerDotCount = 0
 	local landmarkCount = 0
 	local typeCounts = {}
+	if latestServerSnapshot then
+		for _, record in ipairs(latestServerSnapshot) do
+			local dot = getMonsterDot(monsterCount + 1)
+			monsterCount += 1
+			typeCounts[record.name] = (typeCounts[record.name] or 0) + 1
+			dot.Position = mapPosition(record.position, min, max)
+			dot.Visible = true
+			if record.guardian then
+				guardianCount += 1
+				local guardianDot = getGuardianDot(guardianCount)
+				guardianDot.Position = dot.Position
+				guardianDot.Visible = true
+			end
+		end
+	else
+	if not latestServerSnapshot then
 	for _, instance in ipairs(roundMonsterModels) do
 		if instance.Parent ~= nil
 			and instance:GetAttribute("RoundManagedMonster") == true
@@ -786,6 +804,8 @@ local function refreshRadarContacts()
 				dot.Visible = true
 			end
 		end
+	end
+	end
 	end
 	for _, instance in ipairs(roundMonsterModels) do
 		if instance:IsA("Model")
@@ -945,6 +965,13 @@ useEvent.OnClientEvent:Connect(function(enabled, tower)
 	pulseElapsed = PULSE_INTERVAL
 	refreshElapsed = REFRESH_INTERVAL - 0.5
 	warn("[RadarTowerHud]", enabled == true and "opened" or "closed")
+end)
+
+snapshotEvent.OnClientEvent:Connect(function(records)
+	latestServerSnapshot = typeof(records) == "table" and records or nil
+	if gui.Enabled then
+		refreshRadarContacts()
+	end
 end)
 
 player.CharacterAdded:Connect(function()

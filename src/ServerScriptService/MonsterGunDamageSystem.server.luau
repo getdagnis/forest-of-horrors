@@ -237,7 +237,7 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 	local damage = MonsterManager.getPlayerWeaponDamage(monsterModel, config.damage)
 	if damage <= 0 then return end
 	local willDie = humanoid.Health <= damage
-	MonsterManager.recordPlayerDamage(humanoid, player, damage, config.color)
+	MonsterManager.recordPlayerDamage(humanoid, player, damage, config.color, config.weaponName)
 	if willDie then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false

@@ -11,6 +11,8 @@ local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local tool = script.Parent
+local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
+AudioPreloader.Start()
 local shootEvent = tool:WaitForChild("ShootEvent")
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
@@ -167,6 +169,7 @@ local function getChargeProgress()
 end
 
 local function playShotSound(power)
+	AudioPreloader.WaitUntilReady(2)
 	local sound = getOrCreateSound("GunshotSound", GUNSHOT_SOUND, DEFAULT_SOUND_VOLUME)
 	if not sound then return end
 	-- A reused Sound keeps its first SoundId unless it is updated explicitly.
@@ -177,6 +180,7 @@ local function playShotSound(power)
 end
 
 local function playCooldownSound()
+	AudioPreloader.WaitUntilReady(2)
 	local sound = getOrCreateSound("CooldownSound", COOLDOWN_SOUND, DEFAULT_SOUND_VOLUME)
 	if sound then
 		-- Repeated clicks during cooldown must give repeated feedback, rather than

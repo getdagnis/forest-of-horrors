@@ -5,16 +5,16 @@ local Tactics = {}
 Tactics.Config = {
 	FollowDistance = 14, FollowSpeed = 10, CatchupSpeed = 26,
 	CombatWalkSpeed = 15, CombatSprintSpeed = 28, SprintCatchupDistance = 50,
-	RejoinRange = 200, DefenseRadius = 30, AssistRange = 65, HuntRadius = 80,
+	RejoinRange = 200, DefenseRadius = 35, AssistRange = 50,
 	AttackRange = 9, AttackHeight = 8, AttackCooldown = 0.65, Damage = 150,
 	TargetLock = 2, FailedTargetCooldown = 20, NoHitTimeout = 10,
-	OwnerRetrySeconds = 8, GangLimit = 3,
+	OwnerRetrySeconds = 3, GangLimit = 3,
 }
 local C = Tactics.Config
 local phrases = {
 	Follow = "I'm with you.", Cover = "I'm covering you.", Engage = "Protecting you.",
-	Recruit = "Gathering help.", Regroup = "Target lost. Regrouping.",
-	HoldAndHunt = "I'll hold this ground.", Recover = "Finding another way.",
+	Recruit = "Gathering help.", Regroup = "Coming back to you.",
+	HoldAndHunt = "I'll wait for you.", Recover = "Finding another way.",
 }
 
 local function flat(v) return Vector3.new(v.X, 0, v.Z) end
@@ -22,12 +22,14 @@ local function distance(a, b) return flat(a - b).Magnitude end
 
 local function announce(state, label, now, api)
 	state.model:SetAttribute("GuardianState", label)
-	if state.tacticalState == label then return end
+	-- Retry a suppressed announcement after the global cooldown expires.
+	if state.tacticalState == label and state.spokenState == label then return end
 	state.tacticalState = label
 	-- Only bonded leaders speak; failed routes/target switches cannot flood the HUD.
 	state.lastStatus = state.lastStatus or {}
 	if state.mode == "pet" and state.owner and state.owner.Parent
 		and now >= (state.nextStatusAt or 0) and now - (state.lastStatus[label] or -math.huge) >= 30 then
+		state.spokenState = label
 		state.nextStatusAt = now + 8
 		state.lastStatus[label] = now
 		local message = label == "Engage" and state.holdOrigin and "Clearing this area." or phrases[label]
@@ -44,6 +46,9 @@ function Tactics.reset(state)
 	state.holdOrigin = nil
 	state.recoverUntil = 0
 	state.tacticalState = nil
+	state.spokenState = nil
+	state.escortMoving = false
+	state.failedOwnerPosition = nil
 	state.model:SetAttribute("GuardianTarget", nil)
 	state.model:SetAttribute("GuardianState", nil)
 end
@@ -69,43 +74,29 @@ local function needsCombatSprint(target, api)
 	return config and config.hp >= 320
 end
 
-local function chooseTarget(state, root, ownerRoot, holding, now, api)
-	local origin = holding and state.holdOrigin or ownerRoot.Position
-	local radius = holding and C.HuntRadius or C.AssistRange
+local function chooseTarget(state, root, ownerRoot, now, api)
 	local best, priority, bestDistance
-	for _, target in ipairs(api.nearby(origin, radius, state.model)) do
+	for _, target in ipairs(api.nearby(ownerRoot.Position, C.AssistRange, state.model)) do
 		local tr = api.root(target)
 		if tr and not avoidFailed(state, target, now) then
-			local fromOwner = distance(tr.Position, origin)
-			local p = 3
-			if not holding then
-				local hum = api.humanoid(target)
-				local attackedAt = hum and hum:GetAttribute("LastPlayerDamageAt")
-				if fromOwner <= 10 then
-					p = 0 -- A monster already on the owner overrides a distant assist.
-				elseif hum and hum:GetAttribute("LastAttackerId") == state.owner.UserId
-					and type(attackedAt) == "number" and Workspace:GetServerTimeNow() - attackedAt <= 4 then
-					p = 1
-				elseif fromOwner <= C.DefenseRadius then
-					p = 2
-				elseif fromOwner > 45 then
-					continue
-				end
+			local fromOwner = distance(tr.Position, ownerRoot.Position)
+			local hum = api.humanoid(target)
+			local attackedAt = hum and hum:GetAttribute("LastPlayerDamageAt")
+			local p
+			-- Protect before contact, including zombies approaching from behind.
+			if fromOwner <= 12 then
+				p = 0
+			elseif fromOwner <= C.DefenseRadius then
+				p = 1
+			elseif hum and hum:GetAttribute("LastAttackerId") == state.owner.UserId
+				and type(attackedAt) == "number" and Workspace:GetServerTimeNow() - attackedAt <= 4 then
+				p = 2
 			end
-			local d = distance(root.Position, tr.Position)
-			if not best or p < priority or (p == priority and d < bestDistance) then
+			-- No independent clearing: only nearby threats or the owner's recent target.
+			local d = fromOwner + distance(root.Position, tr.Position) * 0.2
+			if p and (not best or p < priority or (p == priority and d < bestDistance)) then
 				best, priority, bestDistance = target, p, d
 			end
-		end
-	end
-	local current = state.combatTarget
-	if current and api.eligible(current, state.model) and not avoidFailed(state, current, now) then
-		local tr = api.root(current)
-		local inLeash = tr and distance(tr.Position, origin) <= radius
-		-- Immediate danger always interrupts a faraway assist; it cannot drag the pet away.
-		if inLeash and now < (state.targetLockUntil or 0)
-			and (not best or priority >= (state.targetPriority or 3)) then
-			return current, state.targetPriority
 		end
 	end
 	return best, priority
@@ -158,12 +149,12 @@ local function engage(state, target, priority, root, now, api)
 			end
 		end
 	else
-		state.humanoid.WalkSpeed = needsCombatSprint(target, api)
+		state.humanoid.WalkSpeed = (priority == 0 or priority == 1 or needsCombatSprint(target, api))
 			and C.CombatSprintSpeed or C.CombatWalkSpeed
 		-- Predict a short intercept, then choose a distinct side of the attack ring.
 		local velocity = flat(targetRoot.AssemblyLinearVelocity)
 		if velocity.Magnitude > 30 then velocity = velocity.Unit * 30 end
-		local lead = velocity * math.min(0.65, flat(offset).Magnitude / C.CombatSpeed)
+		local lead = velocity * math.min(0.65, flat(offset).Magnitude / math.max(1, state.humanoid.WalkSpeed))
 		local side = flat(root.Position - targetRoot.Position)
 		if side.Magnitude < 0.1 then side = Vector3.xAxis end
 		if state.gangSlot then
@@ -253,30 +244,21 @@ function Tactics.step(state, now, api)
 		state.ownerRetryAt = 0
 		state.failedOwnerPosition = nil
 	end
-	local holding = ownerDistance > C.RejoinRange or now < (state.ownerRetryAt or 0)
-	if holding then state.holdOrigin = state.holdOrigin or root.Position else state.holdOrigin = nil end
-	local urgent = not holding and #api.nearby(ownerRoot.Position, C.DefenseRadius, state.model) > 0
-	if urgent then state.recoverUntil = 0 end
+	-- Distance never cancels the bond or starts an independent hunt.
+	state.holdOrigin = nil
+	local target, priority = chooseTarget(state, root, ownerRoot, now, api)
+	if target then state.recoverUntil = 0 end
 	if recover(state, root, now, api) then return end
-
-	-- A pet outside escort range must close the gap before starting another chase.
-	if not holding and ownerDistance > C.SprintCatchupDistance and not urgent then
-		if state.combatTarget then dropTarget(state, now, false) end
-	else
-		local target, priority = chooseTarget(state, root, ownerRoot, holding, now, api)
-		if target then
-			-- Recruiting is a bounded local invitation; no movement detour.
-			if urgent then api.invite(state, now) end
-			engage(state, target, priority, root, now, api)
-			return
-		elseif state.combatTarget then
-			dropTarget(state, now, false)
-		end
-	end
-	if holding then
-		Navigation.stop(state)
-		announce(state, "HoldAndHunt", now, api)
+	if target and ownerDistance <= C.RejoinRange then
 		api.invite(state, now)
+		engage(state, target, priority, root, now, api)
+		return
+	elseif state.combatTarget then
+		dropTarget(state, now, false)
+	end
+	if now < (state.ownerRetryAt or 0) then
+		Navigation.stop(state)
+		announce(state, "Recover", now, api)
 		return
 	end
 	local count = api.invite(state, now) or 0
@@ -284,7 +266,11 @@ function Tactics.step(state, now, api)
 	local goal = ownerRoot.Position - ownerRoot.CFrame.LookVector * C.FollowDistance + ownerRoot.CFrame.RightVector * 7
 	state.humanoid.WalkSpeed = ownerDistance > C.SprintCatchupDistance
 		and C.CatchupSpeed or C.FollowSpeed
-	if distance(root.Position, goal) < 5 and math.abs(root.Position.Y - goal.Y) < 8 then
+	-- Stand comfortably nearby instead of orbiting whenever the player turns.
+	local sameLevel = math.abs(root.Position.Y - ownerRoot.Position.Y) < 8
+	if ownerDistance > 24 or not sameLevel then state.escortMoving = true end
+	if ownerDistance < 18 and sameLevel then state.escortMoving = false end
+	if not state.escortMoving then
 		Navigation.stop(state)
 		announce(state, "Cover", now, api)
 		return
@@ -295,9 +281,8 @@ function Tactics.step(state, now, api)
 		Navigation.stop(state)
 		state.ownerRetryAt = now + C.OwnerRetrySeconds
 		state.failedOwnerPosition = ownerRoot.Position
-		state.holdOrigin = root.Position
 		beginRecovery(state, root, now)
-		announce(state, "HoldAndHunt", now, api)
+		announce(state, "Recover", now, api)
 	end
 end
 

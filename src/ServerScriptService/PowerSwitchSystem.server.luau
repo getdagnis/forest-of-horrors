@@ -88,6 +88,12 @@ end
 
 local function bindPowerSwitch(powerSwitch)
 	if bound[powerSwitch] or not isPowerSwitch(powerSwitch) then return end
+	-- Switches are gameplay controls, not map decoration. Keep the whole model
+	-- streamed to clients so the lever and ProximityPrompt cannot disappear
+	-- when the player moves just outside the streaming radius.
+	if powerSwitch:IsA("Model") then
+		powerSwitch.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
+	end
 	local lever = findLeverModel(powerSwitch)
 	local promptPart = lever and findLeverPart(lever)
 	if not (lever and promptPart) then

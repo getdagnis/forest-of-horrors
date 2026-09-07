@@ -9,6 +9,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local POINTS_PER_TIER = 100
 local MG3_PROGRESS_BASELINE_ATTRIBUTE = "MonsterGun3ProgressBaseline"
 local MG3_RESET_PENDING_ATTRIBUTE = "MonsterGun3ResetPending"
+local PROGRESS_ATTRIBUTES = { [1] = "MonsterGun1Points", [2] = "MonsterGun2Points" }
 local TIER_NAMES = {
 	[1] = "MonsterGun",
 	[2] = "MonsterGun2",
@@ -38,12 +39,16 @@ local unlockedEvent = getOrCreateEvent("MonsterGunUpgradeUnlocked")
 
 local function getTier(tool)
 	if not tool or not tool:IsA("Tool") then return nil end
-	-- The visible Tool name is the identity we assign during promotion. Prefer it
-	-- over a marketplace template's stale WeaponName attribute: otherwise an
-	-- item named MonsterGun3 can be repeatedly mistaken for MG2 after swapping.
-	local name = TIER_NAMES[tool.Name] and tool.Name or tool:GetAttribute("WeaponName")
+	-- The visible Tool name is the identity assigned during promotion. Do not
+	-- index TIER_NAMES with the name (its keys are numeric); compare explicitly,
+	-- then use WeaponName only for legacy tools whose name was not promoted.
+	local name = tool.Name
 	for tier, tierName in pairs(TIER_NAMES) do
 		if name == tierName then return tier end
+	end
+	local legacyName = tool:GetAttribute("WeaponName")
+	for tier, tierName in pairs(TIER_NAMES) do
+		if legacyName == tierName then return tier end
 	end
 	return nil
 end
@@ -156,8 +161,10 @@ local function grantTier(player, tier)
 	end
 	player:SetAttribute("MonsterGunTier", tier)
 	if tier == 2 then
-		player:SetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE, POINTS_PER_TIER)
+		player:SetAttribute("MonsterGun2Points", 0)
+		player:SetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE, nil)
 	else
+		player:SetAttribute("MonsterGun3Points", 0)
 		player:SetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE, nil)
 	end
 	unlockedEvent:FireClient(player, tier)
@@ -165,8 +172,6 @@ local function grantTier(player, tier)
 end
 
 local function refreshPlayer(player)
-	local scoreValue = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Score")
-	local score = scoreValue and scoreValue.Value or 0
 	local detectedTier = reconcileMonsterGunCopies(player)
 	local savedTier = tonumber(player:GetAttribute("MonsterGunTier")) or 0
 	if player:GetAttribute(MG3_RESET_PENDING_ATTRIBUTE) == true then
@@ -190,13 +195,12 @@ local function refreshPlayer(player)
 	local tier = math.max(1, detectedTier)
 	player:SetAttribute("MonsterGunTier", tier)
 
-	if tier < 2 and score >= POINTS_PER_TIER then
+	local progressAttribute = PROGRESS_ATTRIBUTES[tier]
+	local progress = progressAttribute and (tonumber(player:GetAttribute(progressAttribute)) or 0) or 0
+	if tier < 2 and progress >= POINTS_PER_TIER then
 		grantTier(player, 2)
-	elseif tier < 3 then
-		local baseline = tonumber(player:GetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE)) or POINTS_PER_TIER
-		if score >= baseline + POINTS_PER_TIER then
-			grantTier(player, 3)
-		end
+	elseif tier == 2 and progress >= POINTS_PER_TIER then
+		grantTier(player, 3)
 	end
 end
 
@@ -245,10 +249,10 @@ local function resetMG3AfterRespawn(player)
 				restored.Parent = backpack
 			end
 		end
-		local score = player:FindFirstChild("leaderstats") and player.leaderstats:FindFirstChild("Score")
-		-- Round score intentionally survives a death.  The next 100 points, not
-		-- old score, therefore become the new MG3 requirement.
-		player:SetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE, score and score.Value or 0)
+		-- MG3 must be earned again after a respawn. Only points scored with the
+		-- restored MG2 count toward its next unlock.
+		player:SetAttribute("MonsterGun2Points", 0)
+		player:SetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE, nil)
 		player:SetAttribute("MonsterGunTier", 2)
 		player:SetAttribute(MG3_RESET_PENDING_ATTRIBUTE, nil)
 	end
@@ -257,15 +261,7 @@ end
 local function bindPlayer(player)
 	local leaderstats = player:WaitForChild("leaderstats")
 	local score = leaderstats:WaitForChild("Score")
-	local previousScore = score.Value
 	score:GetPropertyChangedSignal("Value"):Connect(function()
-		-- A new round resets Score but keeps the earned MG2.  Its MG3 meter must
-		-- start from this round's normal 100-point MG2 threshold, not a prior
-		-- life's score baseline.
-		if score.Value < previousScore and getHighestTier(player) == 2 then
-			player:SetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE, POINTS_PER_TIER)
-		end
-		previousScore = score.Value
 		refreshPlayer(player)
 	end)
 

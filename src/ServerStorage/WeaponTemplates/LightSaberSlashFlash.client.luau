@@ -34,7 +34,8 @@ local function slashFlash()
 	flash.Shape = Enum.PartType.Ball
 	flash.Size = Vector3.new(0.5, 0.5, 0.5)
 	flash.Material = Enum.Material.Neon
-	flash.Transparency = 0.35
+	-- The slash feedback is a light pulse, not a visible projectile/bubble.
+	flash.Transparency = 1
 	flash.Color = FLASH_COLOR
 	flash.Anchored = true
 	flash.CanCollide = false

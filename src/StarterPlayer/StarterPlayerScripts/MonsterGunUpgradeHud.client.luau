@@ -10,6 +10,7 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local POINTS_PER_TIER = 100
 local MG3_PROGRESS_BASELINE_ATTRIBUTE = "MonsterGun3ProgressBaseline"
+local PROGRESS_ATTRIBUTES = { [1] = "MonsterGun1Points", [2] = "MonsterGun2Points" }
 local MG_COLOR = Color3.fromRGB(255, 105, 180)
 local EMPTY_COLOR = Color3.fromRGB(74, 25, 52)
 
@@ -132,19 +133,13 @@ local function isMonsterGunEquipped()
 	return false
 end
 
-local function getScore()
-	local leaderstats = player:FindFirstChild("leaderstats")
-	local score = leaderstats and leaderstats:FindFirstChild("Score")
-	return score and score.Value or 0
-end
-
 local function updateMeter()
 	local tier = tonumber(player:GetAttribute("MonsterGunTier")) or 1
 	panel.Visible = isMonsterGunEquipped() and tier < 3
 	if tier >= 3 then return end
 	title.Text = tier == 1 and "MONSTERGUN 2 UPGRADE" or "MONSTERGUN 3 UPGRADE"
-	local baseline = tier == 2 and (tonumber(player:GetAttribute(MG3_PROGRESS_BASELINE_ATTRIBUTE)) or POINTS_PER_TIER) or 0
-	local progress = math.clamp(getScore() - baseline, 0, POINTS_PER_TIER)
+	local progressAttribute = PROGRESS_ATTRIBUTES[tier]
+	local progress = math.clamp(progressAttribute and (tonumber(player:GetAttribute(progressAttribute)) or 0) or 0, 0, POINTS_PER_TIER)
 	progressFill.Size = UDim2.fromScale(progress / POINTS_PER_TIER, 1)
 end
 
@@ -156,8 +151,9 @@ end
 
 player:GetAttributeChangedSignal("MonsterGunTier"):Connect(updateMeter)
 player:GetAttributeChangedSignal(MG3_PROGRESS_BASELINE_ATTRIBUTE):Connect(updateMeter)
-local leaderstats = player:WaitForChild("leaderstats")
-leaderstats:WaitForChild("Score"):GetPropertyChangedSignal("Value"):Connect(updateMeter)
+for _, attributeName in pairs(PROGRESS_ATTRIBUTES) do
+	player:GetAttributeChangedSignal(attributeName):Connect(updateMeter)
+end
 player.CharacterAdded:Connect(bindCharacter)
 if player.Character then bindCharacter(player.Character) end
 

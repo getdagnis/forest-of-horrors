@@ -204,8 +204,12 @@ function MonsterManager.applyHP(model)
 	local config = MonsterManager.getConfig(model)
 	local hum = MonsterManager.getMonsterHumanoid(model)
 	if hum and config then
-		hum.MaxHealth = config.hp
-		hum.Health = config.hp
+		local configuredHP = config.hp
+		if model.Name == "creepyMonsterWhite" and model:GetAttribute("SecretShaftDoorGuard") == true then
+			configuredHP = 2400
+		end
+		hum.MaxHealth = configuredHP
+		hum.Health = configuredHP
 		-- Hide names completely. Show Roblox's health bar only after damage; the
 		-- private current/max label remains available to the player who hit it.
 		hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
@@ -230,7 +234,7 @@ end
 
 local damageLog = {}
 
-function MonsterManager.recordPlayerDamage(humanoid, player, requestedDamage, scoreColor)
+function MonsterManager.recordPlayerDamage(humanoid, player, requestedDamage, scoreColor, weaponName)
 	if not humanoid or humanoid.Health <= 0 then return end
 	if not player or not player:IsA("Player") then return end
 
@@ -251,7 +255,15 @@ function MonsterManager.recordPlayerDamage(humanoid, player, requestedDamage, sc
 	end
 
 	local userId = player.UserId
-	log.players[userId] = (log.players[userId] or 0) + actualDamage
+	local playerLog = log.players[userId]
+	if not playerLog then
+		playerLog = { damage = 0, weapons = {} }
+		log.players[userId] = playerLog
+	end
+	playerLog.damage += actualDamage
+	if typeof(weaponName) == "string" and weaponName ~= "" then
+		playerLog.weapons[weaponName] = (playerLog.weapons[weaponName] or 0) + actualDamage
+	end
 
 	humanoid:SetAttribute("LastAttackerId", userId)
 	humanoid:SetAttribute("LastPlayerDamageAt", workspace:GetServerTimeNow())
@@ -281,14 +293,32 @@ function MonsterManager.consumeScoreAwards(humanoid, totalPoints)
 
 	local maxHealth = math.max(1, log.maxHealth or humanoid.MaxHealth)
 
-	for userId, damage in pairs(log.players) do
+	for userId, playerLog in pairs(log.players) do
+		local damage = playerLog.damage or 0
 		local points = math.ceil(totalPoints * (damage / maxHealth))
 		points = math.max(1, points)
+		local weaponPoints = {}
+		local allocated = 0
+		local largestWeapon
+		local largestDamage = -1
+		for weaponName, weaponDamage in pairs(playerLog.weapons or {}) do
+			local allocatedPoints = math.floor(points * (weaponDamage / math.max(1, damage)))
+			weaponPoints[weaponName] = allocatedPoints
+			allocated += allocatedPoints
+			if weaponDamage > largestDamage then
+				largestDamage = weaponDamage
+				largestWeapon = weaponName
+			end
+		end
+		if largestWeapon then
+			weaponPoints[largestWeapon] += points - allocated
+		end
 
 		table.insert(awards, {
 			userId = userId,
 			points = points,
 			damage = damage,
+			weaponPoints = weaponPoints,
 		})
 	end
 

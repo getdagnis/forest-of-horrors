@@ -14,6 +14,7 @@ local player = Players.LocalPlayer
 local milestoneEvent = ReplicatedStorage:WaitForChild("MonsterMilestone")
 local playerKillMilestoneEvent = ReplicatedStorage:WaitForChild("PlayerKillMilestone")
 local secretShaftAnnouncementEvent = ReplicatedStorage:WaitForChild("SecretShaftAnnouncement")
+local secretShaftLockedEvent = ReplicatedStorage:WaitForChild("SecretShaftDoorLocked")
 local nightmareEscapeStartedEvent = ReplicatedStorage:WaitForChild("NightmareEscapeStarted")
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
 local RADAR_CONTACT_COUNT_ATTRIBUTE = "MonsterRadarContactCount"
@@ -136,6 +137,10 @@ secretShaftAnnouncementEvent.OnClientEvent:Connect(function()
 		task.wait(LONG_ANNOUNCEMENT_SECONDS + ANNOUNCEMENT_FADE_SECONDS + 0.3)
 		showAnnouncement("the secret shaft is now open...", LONG_ANNOUNCEMENT_SECONDS)
 	end)
+end)
+
+secretShaftLockedEvent.OnClientEvent:Connect(function()
+	showAnnouncement("you must kill the door guardian first", LONG_ANNOUNCEMENT_SECONDS)
 end)
 
 nightmareEscapeStartedEvent.OnClientEvent:Connect(function(data)
