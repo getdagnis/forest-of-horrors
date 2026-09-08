@@ -26,6 +26,7 @@ local AMBIENT_UPDATE_INTERVAL = 0.4
 local TOP_THREAT_TYPES = 4
 local RADAR_VALUE_FONT_SIZE = 16
 local RADAR_DETAIL_FONT_SIZE = 8
+local MCDONALDS_LOGO_IMAGE = "rbxassetid://102275809524944"
 local RADAR_CONTOUR_ROOT_NAME = "RadarContours"
 
 local COLORS = {
@@ -217,6 +218,17 @@ monsterLayer.Parent = plot
 local playerLayer = Instance.new("Folder")
 playerLayer.Name = "OtherPlayers"
 playerLayer.Parent = plot
+
+local mcdonaldsLogoMarker = Instance.new("ImageLabel")
+mcdonaldsLogoMarker.Name = "McDonaldsLogo"
+mcdonaldsLogoMarker.AnchorPoint = Vector2.new(0.5, 0.5)
+mcdonaldsLogoMarker.Size = UDim2.fromOffset(30, 30)
+mcdonaldsLogoMarker.BackgroundTransparency = 1
+mcdonaldsLogoMarker.Image = MCDONALDS_LOGO_IMAGE
+mcdonaldsLogoMarker.ScaleType = Enum.ScaleType.Fit
+mcdonaldsLogoMarker.ZIndex = 5
+mcdonaldsLogoMarker.Visible = false
+mcdonaldsLogoMarker.Parent = plot
 
 local selfMarker = makeFrame("You", plot, COLORS.cyan, 0.82)
 selfMarker.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -620,6 +632,13 @@ local function markerPosition(instance)
 	return nil
 end
 
+local function getMcDonaldsPosition()
+	local landmark = Workspace:FindFirstChild("McDonald's")
+		or Workspace:FindFirstChild("McDonalds")
+		or Workspace:FindFirstChild("McDonaldsModel")
+	return landmark and markerPosition(landmark) or nil
+end
+
 isRadarDetect = function(instance)
 	-- Support both the Studio Tags editor and the older Attribute workflow.
 	if CollectionService:HasTag(instance, "radar_detect")
@@ -791,6 +810,7 @@ local function refreshRadarContacts()
 	for _, instance in ipairs(roundMonsterModels) do
 		if instance.Parent ~= nil
 			and instance:GetAttribute("RoundManagedMonster") == true
+			and instance:GetAttribute("UndergroundMonster") ~= true
 		then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
 			-- Match the round counter's legacy-rig fallback (torso/head/primary part),
@@ -811,6 +831,7 @@ local function refreshRadarContacts()
 		if instance:IsA("Model")
 			and instance.Name == "weird monster thing"
 			and instance:GetAttribute("WMTGuardianPet") == true
+			and instance:GetAttribute("UndergroundMonster") ~= true
 		then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
 			local guardianRoot = instance:FindFirstChild("HumanoidRootPart", true)
@@ -824,6 +845,13 @@ local function refreshRadarContacts()
 	end
 	-- Only the six author-owned contour parts are drawn; imported map models are never traversed.
 	renderAuthoredContours(min, max)
+	local mcdonaldsPosition = getMcDonaldsPosition()
+	if mcdonaldsPosition then
+		mcdonaldsLogoMarker.Position = mapPosition(mcdonaldsPosition, min, max)
+		mcdonaldsLogoMarker.Visible = true
+	else
+		mcdonaldsLogoMarker.Visible = false
+	end
 	for _, candidate in ipairs(Players:GetPlayers()) do
 		local character = candidate.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")

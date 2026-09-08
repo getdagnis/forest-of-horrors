@@ -34,6 +34,7 @@ local function isTrackedMonster(instance)
 	return instance:IsA("Model")
 		and MonsterManager.isRoundTracked(instance)
 		and instance:GetAttribute("RoundManagedMonster") == true
+		and instance:GetAttribute("UndergroundMonster") ~= true
 end
 
 local function refreshTrackedMonster(instance)
@@ -58,6 +59,9 @@ local function registerTrackedMonster(instance)
 			refreshTrackedMonster(instance)
 		end),
 		instance:GetAttributeChangedSignal("RoundTracked"):Connect(function()
+			refreshTrackedMonster(instance)
+		end),
+		instance:GetAttributeChangedSignal("UndergroundMonster"):Connect(function()
 			refreshTrackedMonster(instance)
 		end),
 	}

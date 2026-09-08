@@ -28,6 +28,7 @@ local PET_DOT_COLOR = Color3.fromRGB(190, 255, 75)
 local OTHER_PLAYER_COLOR = Color3.fromRGB(117, 210, 255)
 local BOMB_WARNING_PULSE_SPEED = math.pi * 3
 local RADAR_CONTACT_COUNT_ATTRIBUTE = "MonsterRadarContactCount"
+local MCDONALDS_LOGO_IMAGE = "rbxassetid://102275809524944"
 
 -- Other local presentation systems may wait for a truly quiet radar window.
 -- -1 means the radar cannot currently produce a trustworthy contact count.
@@ -106,32 +107,21 @@ selfCorner.Parent = selfDot
 local mcdonaldsMarker = Instance.new("Frame")
 mcdonaldsMarker.Name = "McDonaldsBearing"
 mcdonaldsMarker.AnchorPoint = Vector2.new(0.5, 0.5)
-mcdonaldsMarker.Size = UDim2.fromOffset(16, 16)
-mcdonaldsMarker.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
-mcdonaldsMarker.BackgroundTransparency = 0.25
+mcdonaldsMarker.Size = UDim2.fromOffset(22, 22)
+mcdonaldsMarker.BackgroundTransparency = 1
 mcdonaldsMarker.BorderSizePixel = 0
 mcdonaldsMarker.Visible = false
 mcdonaldsMarker.ZIndex = 4
 mcdonaldsMarker.Parent = radar
-local mcdonaldsCorner = Instance.new("UICorner")
-mcdonaldsCorner.CornerRadius = UDim.new(1, 0)
-mcdonaldsCorner.Parent = mcdonaldsMarker
-local mcdonaldsStroke = Instance.new("UIStroke")
-mcdonaldsStroke.Color = Color3.fromRGB(151, 221, 255)
-mcdonaldsStroke.Thickness = 1
-mcdonaldsStroke.Transparency = 0.15
-mcdonaldsStroke.Parent = mcdonaldsMarker
-local mcdonaldsText = Instance.new("TextLabel")
-mcdonaldsText.BackgroundTransparency = 1
-mcdonaldsText.Size = UDim2.fromScale(1, 1)
-mcdonaldsText.Font = Enum.Font.GothamBold
-mcdonaldsText.Text = "M"
-mcdonaldsText.TextColor3 = Color3.fromRGB(151, 221, 255)
-mcdonaldsText.TextSize = 11
-mcdonaldsText.TextXAlignment = Enum.TextXAlignment.Center
-mcdonaldsText.TextYAlignment = Enum.TextYAlignment.Center
-mcdonaldsText.ZIndex = 5
-mcdonaldsText.Parent = mcdonaldsMarker
+local mcdonaldsLogo = Instance.new("ImageLabel")
+mcdonaldsLogo.Name = "McDonaldsLogo"
+mcdonaldsLogo.BackgroundTransparency = 1
+mcdonaldsLogo.Size = UDim2.fromScale(0.9, 0.9)
+mcdonaldsLogo.Position = UDim2.fromScale(0.05, 0.05)
+mcdonaldsLogo.Image = MCDONALDS_LOGO_IMAGE
+mcdonaldsLogo.ScaleType = Enum.ScaleType.Fit
+mcdonaldsLogo.ZIndex = 5
+mcdonaldsLogo.Parent = mcdonaldsMarker
 
 local function getMcDonaldsPosition()
 	local landmark = workspace:FindFirstChild("McDonald's")
@@ -231,10 +221,14 @@ end
 
 local trackedMonsters = {}
 local radarEntries = {}
+local function isRadarExcluded(model)
+	return model:GetAttribute("UndergroundMonster") == true
+end
+
 local function track(instance)
 	-- Guardians are never hostile contacts, but a bonded guardian remains a
 	-- useful friendly reference: it is drawn as a green ring below.
-	if instance:IsA("Model") and (
+	if instance:IsA("Model") and not isRadarExcluded(instance) and (
 		MonsterManager.isRoundTracked(instance)
 		or instance.Name == "weird monster thing"
 	) then
@@ -269,7 +263,9 @@ end
 local function isHostileRadarMonster(model)
 	-- WMTs remain visible contacts, but they are neutral for the directional
 	-- hostile search. A nearby guardian must never hide the real enemy cue.
-	return MonsterManager.isRoundTracked(model) and model.Name ~= "weird monster thing"
+	return not isRadarExcluded(model)
+		and MonsterManager.isRoundTracked(model)
+		and model.Name ~= "weird monster thing"
 end
 
 local function playPriorityWarning()
@@ -337,7 +333,8 @@ RunService.RenderStepped:Connect(function(deltaTime)
 
 	local livingMonsters = {}
 	for model in pairs(trackedMonsters) do
-		local humanoid = model.Parent and MonsterManager.getMonsterHumanoid(model)
+		local humanoid = model.Parent and not isRadarExcluded(model)
+			and MonsterManager.getMonsterHumanoid(model)
 		local position = humanoid and humanoid.Health > 0 and getMonsterPosition(model)
 		if position then
 			local offset = position - root.Position
