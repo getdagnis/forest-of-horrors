@@ -29,7 +29,7 @@ local scorepanel_position = {
 local large_font_size = 16
 local details_font_size = 8
 local DAMAGE_FLASH_MIN_OPACITY = 0.20
-local DAMAGE_FLASH_MAX_OPACITY = 0.45
+local DAMAGE_FLASH_MAX_OPACITY = 0.65
 local FALLBACK_HURT_SOUND_ID = "rbxasset://sounds/uuhhh.wav"
 -- Ordinary regeneration arrives as +1 ticks. Only deliberate bonus healing
 -- should interrupt combat with a flash/message.
@@ -53,9 +53,12 @@ local monsterCountEvent = ReplicatedStorage:WaitForChild("MonsterCountUpdate")
 local recordsEvent = ReplicatedStorage:WaitForChild("RecordsUpdate")
 local radarEvents = ReplicatedStorage:WaitForChild("RadarEvents")
 local bestSpawnAnnouncementEvent = ReplicatedStorage:WaitForChild("BestSpawnAnnouncement")
+local healthBonusFlashEvent = ReplicatedStorage:WaitForChild("HealthBonusFlash")
+local HEALTH_BASE_HP = 100
 
 local currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
 local monsterHistory, recordRows, allTimeBest = {}, {}, nil
+local scoringLeaders, quickestEscape = {}, nil
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "CombatStatusHud"
@@ -360,7 +363,7 @@ local function layout()
 	scoreButton.Text = scoreboardExpanded and "HIDE" or "SCORE"
 	scorePanel.Visible = not compactScoreboard or scoreboardExpanded
 	scorePanel.Position = UDim2.fromOffset(panelOffset.X, panelOffset.Y + (compactScoreboard and 38 or 0))
-	scorePanel.Size = UDim2.fromOffset(mobile and 210 or 280, mobile and 110 or 150)
+	scorePanel.Size = UDim2.fromOffset(mobile and 210 or 280, mobile and 210 or 260)
 	local scoreboardScale = mobile and 1.3 or 2
 	scoreboardTitle.TextSize = details_font_size * scoreboardScale
 	scoreboardTitle.Size = UDim2.new(1, -20, 0, details_font_size * scoreboardScale)
@@ -403,9 +406,7 @@ local function updateHealthPanel(humanoid)
 	-- Health bonuses extend the temporary pool, but the HUD percentage is
 	-- intentionally measured against the normal 100 HP life: full bonus health
 	-- therefore reads 200%, and damage above the base pool remains visible.
-	local bonus = tonumber(humanoid:GetAttribute("TemporaryHealthBonusHP")) or 0
-	local baseMaxHealth = math.max(1, humanoid.MaxHealth - bonus)
-	local percent = math.clamp(humanoid.Health / baseMaxHealth * 100, 0, 999)
+	local percent = math.clamp(humanoid.Health / HEALTH_BASE_HP * 100, 0, 999)
 	labels.Health.Text = percent >= 999 and "999+" or string.format("%d%%", math.floor(percent + 0.5))
 	if percent >= 86 then panels.Health.BackgroundColor3 = Color3.fromRGB(0, 69, 11)
 	elseif percent >= 56 then panels.Health.BackgroundColor3 = Color3.fromRGB(159, 161, 41)
@@ -437,7 +438,7 @@ end
 local function showDamage(lossPercent)
 	feedbackSerial += 1
 	local serial = feedbackSerial
-	local opacity = math.clamp(lossPercent / 45, DAMAGE_FLASH_MIN_OPACITY, DAMAGE_FLASH_MAX_OPACITY)
+	local opacity = math.clamp(lossPercent / 35, DAMAGE_FLASH_MIN_OPACITY, DAMAGE_FLASH_MAX_OPACITY)
 	damageOverlay.BackgroundTransparency = 1 - opacity
 	TweenService:Create(damageOverlay, TweenInfo.new(0.35), { BackgroundTransparency = 1 }):Play()
 	local hurtSound = getHurtSound()
@@ -458,6 +459,29 @@ local function showHeal(amount)
 	end
 	if serial == feedbackSerial then healText.Visible = false end
 end
+
+local function showHealthBonusFlash()
+	feedbackSerial += 1
+	local serial = feedbackSerial
+	healText.Text = "+100 HP  •  200% MAX"
+	healText.Visible = true
+	healFlash.Visible = true
+	healFlash.BackgroundTransparency = 0.08
+	TweenService:Create(healFlash, TweenInfo.new(0.5), { BackgroundTransparency = 1 }):Play()
+	task.delay(0.12, function()
+		if serial ~= feedbackSerial then return end
+		healFlash.BackgroundTransparency = 0.28
+		TweenService:Create(healFlash, TweenInfo.new(0.28), { BackgroundTransparency = 1 }):Play()
+	end)
+	task.delay(0.7, function()
+		if serial == feedbackSerial then
+			healFlash.Visible = false
+			healText.Visible = false
+		end
+	end)
+end
+
+healthBonusFlashEvent.OnClientEvent:Connect(showHealthBonusFlash)
 
 local function bindCharacter(character)
 	local humanoid = character:WaitForChild("Humanoid", 10)
@@ -514,7 +538,19 @@ local function renderScoreboard()
 		local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. row.name .. "</font>" or row.name
 		table.insert(lines, string.format("<b>%d. %s — %d/%d (%d deaths)</b>", index, name, row.score, row.kills, row.deaths or 0))
 	end
-	if allTimeBest then table.insert(lines, string.format("\nALL-TIME: %s — %d/%d (%s)", allTimeBest.name, allTimeBest.score, allTimeBest.kills, formatElapsed(allTimeBest.elapsedSeconds))) end
+	if #scoringLeaders > 0 then
+		table.insert(lines, "<b>SCORING LEADERS:</b>")
+		for index, row in ipairs(scoringLeaders) do
+			if index > 3 then break end
+			local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. row.name .. "</font>" or row.name
+			table.insert(lines, string.format("%d. %s — %d/%d (%s)", index, name, row.score, row.kills, formatElapsed(row.elapsedSeconds)))
+		end
+	elseif allTimeBest then
+		table.insert(lines, string.format("<b>SCORING LEADERS:</b>\n1. %s — %d/%d (%s)", allTimeBest.name, allTimeBest.score, allTimeBest.kills, formatElapsed(allTimeBest.elapsedSeconds)))
+	end
+	if quickestEscape and tonumber(quickestEscape.elapsedSeconds) and type(quickestEscape.names) == "table" and #quickestEscape.names > 0 then
+		table.insert(lines, string.format("\n<b>QUICKEST ESCAPE:</b> %s (%s)", table.concat(quickestEscape.names, ", "), formatElapsed(quickestEscape.elapsedSeconds)))
+	end
 	scoreboardText.Text = table.concat(lines, "\n")
 end
 
@@ -559,6 +595,23 @@ recordsEvent.OnClientEvent:Connect(function(data)
 	local best = data and (data.bestEver or data.allTimeBest)
 	if type(best) == "table" then allTimeBest = { name = tostring(best.playerName or best.name or "-"), score = tonumber(best.score) or 0, kills = tonumber(best.kills) or 0, elapsedSeconds = tonumber(best.elapsedSeconds) or 0 }
 	elseif data and data.bestEverScore then allTimeBest = { name = tostring(data.bestEverPlayerName or "-"), score = tonumber(data.bestEverScore) or 0, kills = tonumber(data.bestEverKills) or 0, elapsedSeconds = tonumber(data.bestEverElapsedSeconds) or 0 } end
+	local leaders = data and data.scoringLeaders
+	if type(leaders) == "table" then
+		scoringLeaders = {}
+		for _, row in ipairs(leaders) do
+			if type(row) == "table" then
+				table.insert(scoringLeaders, {
+					name = tostring(row.playerName or row.name or "-"),
+					score = tonumber(row.score) or 0,
+					kills = tonumber(row.kills) or 0,
+					elapsedSeconds = tonumber(row.elapsedSeconds) or 0,
+				})
+			end
+		end
+	end
+	if type(data and data.quickestEscape) == "table" then
+		quickestEscape = data.quickestEscape
+	end
 	renderScoreboard()
 end)
 player.CharacterAdded:Connect(bindCharacter)

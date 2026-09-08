@@ -1,14 +1,14 @@
 -- PlayerHealthSystem
 
--- PlayerHealthSystem: Sets default player HP to 120 and manages bonus HP from eating BigMacs.
--- Eating a BigMac grants +10 bonus HP (up to 60 bonus, max total 180 HP).
+-- PlayerHealthSystem: Sets default player HP to 100 and manages bonus HP from eating BigMacs.
+-- Eating a BigMac grants +10 bonus HP (up to 60 bonus, max total 160 HP).
 -- BigMacs reappear 30 seconds after being eaten.
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
 
-local DEFAULT_MAX_HP = 120
+local DEFAULT_MAX_HP = 100
 local MAX_BONUS_HP = 60
 local HP_PER_BURGER = 10
 local BIGMAC_RESPAWN_TIME = 30

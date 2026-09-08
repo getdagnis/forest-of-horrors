@@ -19,6 +19,9 @@ local stations = {}
 local watchedSwitches = {}
 
 local function isPowerBox(instance)
+	-- McDonald's has a dedicated station owner because its switch, effects, and
+	-- charging presentation are intentionally specific to that location.
+	if instance:GetAttribute("UseDedicatedPowerBoxSystem") == true then return false end
 	return instance:IsA("Model")
 		and (instance:GetAttribute("MonsterBlasterPowerBox") == true or instance.Name:sub(1, 8) == "PowerBox")
 end

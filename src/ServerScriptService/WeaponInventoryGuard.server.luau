@@ -62,6 +62,18 @@ local function restoreEquippedWeapon(player, tool)
 	end
 end
 
+local function getSpeedCoilDuration(tool)
+	local configured = tonumber(tool:GetAttribute("SpeedDuration"))
+	return configured and math.clamp(configured, 1, 3600) or SPEED_COIL_DURATION_SECONDS
+end
+
+local function rechargeSpeedCoil(tool, duration)
+	tool:SetAttribute("SpeedDuration", duration)
+	tool:SetAttribute("SpeedCoilRemaining", duration)
+	local nonce = (tonumber(tool:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
+	tool:SetAttribute("SpeedCoilRechargeNonce", nonce)
+end
+
 local function reconcileSpeedCoils(player)
 	local backpack = player:FindFirstChild("Backpack")
 	local character = player.Character
@@ -98,9 +110,11 @@ local function reconcileSpeedCoils(player)
 	if wasEquipped then equippedByPlayer[player] = keep end
 
 	if #candidates > 1 then
-		keep:SetAttribute("SpeedCoilRemaining", SPEED_COIL_DURATION_SECONDS)
-		local nonce = (tonumber(keep:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
-		keep:SetAttribute("SpeedCoilRechargeNonce", nonce)
+		local incoming = nil
+		for _, candidate in ipairs(candidates) do
+			if candidate ~= keep then incoming = candidate; break end
+		end
+		rechargeSpeedCoil(keep, getSpeedCoilDuration(incoming or keep))
 		for _, candidate in ipairs(candidates) do
 			if candidate ~= keep then candidate:Destroy() end
 		end
@@ -118,9 +132,7 @@ local function rejectIncomingDuplicate(player, incoming, incumbent)
 		wasEquipped = true
 	end
 	if incoming.Name == "SpeedCoil" and incumbent.Name == "SpeedCoil" then
-		incumbent:SetAttribute("SpeedCoilRemaining", SPEED_COIL_DURATION_SECONDS)
-		local nonce = (tonumber(incumbent:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
-		incumbent:SetAttribute("SpeedCoilRechargeNonce", nonce)
+		rechargeSpeedCoil(incumbent, getSpeedCoilDuration(incoming))
 		incoming:Destroy()
 		-- A duplicate coil is a recharge, not a new equip. Only restore the
 		-- incumbent when Roblox had actually been holding it before the pickup.

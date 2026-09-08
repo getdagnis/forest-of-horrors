@@ -89,7 +89,12 @@ local function clearShield(player, token)
 	if field then field:Destroy() end
 end
 
-local function grantShield(player, character)
+local function getShieldDuration(pickup)
+	local configured = tonumber(pickup:GetAttribute("ShieldDuration"))
+	return configured and math.clamp(configured, 1, 3600) or SHIELD_DURATION_SECONDS
+end
+
+local function grantShield(player, character, duration)
 	local previous = character:FindFirstChild(FORCE_FIELD_NAME)
 	if previous then previous:Destroy() end
 
@@ -100,9 +105,9 @@ local function grantShield(player, character)
 
 	local token = {}
 	shieldTokens[player] = token
-	player:SetAttribute(EXPIRES_AT_ATTRIBUTE, Workspace:GetServerTimeNow() + SHIELD_DURATION_SECONDS)
+	player:SetAttribute(EXPIRES_AT_ATTRIBUTE, Workspace:GetServerTimeNow() + duration)
 	playPickupSound(character)
-	task.delay(SHIELD_DURATION_SECONDS, function()
+	task.delay(duration, function()
 		clearShield(player, token)
 	end)
 end
@@ -111,7 +116,7 @@ local function collectPickup(pickup, state, player, character)
 	if not state.available then return end
 	state.available = false
 	setPickupVisible(state, false)
-	grantShield(player, character)
+	grantShield(player, character, getShieldDuration(pickup))
 
 	task.delay(PICKUP_RESPAWN_SECONDS, function()
 		if not pickup.Parent then

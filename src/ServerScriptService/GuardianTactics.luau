@@ -102,6 +102,15 @@ local function chooseTarget(state, root, ownerRoot, now, api)
 	return best, priority
 end
 
+local function noFollowZone(instance)
+	local current = instance
+	while current and current ~= Workspace do
+		if current:GetAttribute("GuardianNoFollow") == true then return current end
+		current = current.Parent
+	end
+	return nil
+end
+
 local function recover(state, root, now, api)
 	if not state.recoverUntil or now >= state.recoverUntil then return false end
 	announce(state, "Recover", now, api)
@@ -239,6 +248,28 @@ function Tactics.step(state, now, api)
 		state.lastOwnerRoot = ownerRoot
 	end
 	local ownerDistance = distance(root.Position, ownerRoot.Position)
+	-- Stay outside deliberately marked interiors. A guardian is a companion,
+	-- not a creature that tries to navigate stairs, rooms, and furniture.
+	if noFollowZone(ownerRoot) then
+		if state.combatTarget then dropTarget(state, now, false) end
+		Navigation.stop(state)
+		state.escortMoving = false
+		announce(state, "HoldAndHunt", now, api)
+		return
+	end
+	-- A distant guardian that has made no progress gets one clean route reset
+	-- after 30 seconds. This never moves its body; it only discards stale paths.
+	if ownerDistance <= 100 then
+		state.distantSince = nil
+	elseif not state.distantSince then
+		state.distantSince = now
+	elseif now - state.distantSince >= 30 then
+		Navigation.reset(state)
+		state.ownerRetryAt = 0
+		state.failedOwnerPosition = nil
+		state.distantSince = now
+		announce(state, "Recover", now, api)
+	end
 	-- A moving owner re-entering the local area is an immediate rejoin opportunity.
 	if state.failedOwnerPosition and distance(ownerRoot.Position, state.failedOwnerPosition) >= 24 then
 		state.ownerRetryAt = 0

@@ -28,7 +28,11 @@ local function playTeleportSound(root)
 end
 
 local TELEPORT_OFFSET = Vector3.new(0, 6, 0)
-local CHARACTER_COOLDOWN = 1.5
+-- Keep a player immune to another portal touch briefly after arrival. Some
+-- authored routes intentionally share X/Z space (for example McDonald's roof
+-- exit above the hall/underground entrance), so the old 1.5s window was short
+-- enough for a falling character to immediately chain back through the route.
+local CHARACTER_COOLDOWN = 4
 local STREAM_TIMEOUT = 15 -- McDonald's is a large streamed model; load it before moving the character
 
 local entrancesByRoute = {}
@@ -59,6 +63,26 @@ local function getPlayerCharacter(hit)
 		current = current.Parent
 	end
 	return nil
+end
+
+local function streamDestination(player, destination)
+	if not player or Workspace.StreamingEnabled == false then return true end
+	local ok, err = pcall(function()
+		player:RequestStreamAroundAsync(destination.Position, STREAM_TIMEOUT)
+	end)
+	if not ok then
+		warn("[TeleportSystem] destination stream failed:", destination:GetFullName(), err)
+	end
+	return ok
+end
+
+-- Streaming yields. A death, respawn or removed route invalidates the request.
+local function canCompleteTeleport(player, character, root, source, destination)
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	return player and player.Character == character
+		and character:IsDescendantOf(Workspace)
+		and root.Parent == character and humanoid and humanoid.Health > 0
+		and source:IsDescendantOf(Workspace) and destination:IsDescendantOf(Workspace)
 end
 
 local function setRouteLights(instance, brightness)
@@ -133,10 +157,11 @@ local function connectEntrance(entrance, route)
 		characterCooldowns[character] = true
 		setRouteLights(entrance, 0)
 		local player = Players:GetPlayerFromCharacter(character)
-		if player then
-			pcall(function()
-				player:RequestStreamAroundAsync(exit.Position, STREAM_TIMEOUT)
-			end)
+		if not streamDestination(player, exit)
+			or not canCompleteTeleport(player, character, root, entrance, exit) then
+			characterCooldowns[character] = nil
+			if entrance.Parent then setRouteLights(entrance, 10) end
+			return
 		end
 		root.CFrame = exit.CFrame + TELEPORT_OFFSET
 		playTeleportSound(root)
@@ -185,10 +210,10 @@ local function configureChainedPort(source, part)
 			end
 			characterCooldowns[character] = true
 			local player = Players:GetPlayerFromCharacter(character)
-			if player then
-				pcall(function()
-					player:RequestStreamAroundAsync(destination.Position, STREAM_TIMEOUT)
-				end)
+			if not streamDestination(player, destination)
+				or not canCompleteTeleport(player, character, root, part, destination) then
+				characterCooldowns[character] = nil
+				return
 			end
 			root.CFrame = destination.CFrame + TELEPORT_OFFSET
 			playTeleportSound(root)

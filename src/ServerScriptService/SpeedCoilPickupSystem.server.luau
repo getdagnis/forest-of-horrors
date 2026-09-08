@@ -45,7 +45,12 @@ local function findOwnedCoil(player)
 	return keep
 end
 
-local function prepareHeldTool(tool)
+local function getSpeedDuration(source)
+	local configured = tonumber(source:GetAttribute("SpeedDuration"))
+	return configured and math.clamp(configured, 1, 3600) or DURATION_SECONDS
+end
+
+local function prepareHeldTool(tool, duration)
 	for _, descendant in ipairs(tool:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = false
@@ -54,7 +59,8 @@ local function prepareHeldTool(tool)
 			descendant.Massless = true
 		end
 	end
-	tool:SetAttribute("SpeedCoilRemaining", DURATION_SECONDS)
+	tool:SetAttribute("SpeedDuration", duration)
+	tool:SetAttribute("SpeedCoilRemaining", duration)
 	tool:SetAttribute("SpeedCoilEquipped", false)
 	return tool
 end
@@ -70,13 +76,13 @@ local function playPickupSound(player)
 	Debris:AddItem(sound, math.max(sound.TimeLength, 2) + 1)
 end
 
-local function grantOrRecharge(player)
+local function grantOrRecharge(player, duration)
 	local coil = findOwnedCoil(player)
 	if not coil then
-		coil = prepareHeldTool(template:Clone())
+		coil = prepareHeldTool(template:Clone(), duration)
 		coil.Parent = player:WaitForChild("Backpack")
 	else
-		prepareHeldTool(coil)
+		prepareHeldTool(coil, duration)
 		local nonce = (tonumber(coil:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
 		coil:SetAttribute("SpeedCoilRechargeNonce", nonce)
 	end
@@ -126,7 +132,7 @@ local function configurePickup(model)
 	prompt.Triggered:Connect(function(player)
 		if not state.available then return end
 		setAvailable(false)
-		grantOrRecharge(player)
+		grantOrRecharge(player, getSpeedDuration(model))
 		local respawnSeconds = tonumber(model:GetAttribute("SpeedCoilRespawnSeconds")) or DEFAULT_RESPAWN_SECONDS
 		task.delay(math.max(1, respawnSeconds), function()
 			if model.Parent then setAvailable(true) end

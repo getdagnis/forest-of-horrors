@@ -634,7 +634,7 @@ isRadarDetect = function(instance)
 	return value == true or value == "true" or value == 1
 end
 
-task.spawn(buildRadarRegistry)
+-- The server snapshot is authoritative; do not scan Workspace on clients.
 
 local function setContourSegment(segment, part, min, max)
 	local width = math.max(1, max.X - min.X)
@@ -822,19 +822,7 @@ local function refreshRadarContacts()
 			end
 		end
 	end
-	for _, instance in ipairs(radarDetectInstances) do
-		if instance.Parent ~= nil and isRadarDetect(instance) then
-			local position = markerPosition(instance)
-			if position then
-				landmarkCount += 1
-				local marker = getLandmark(landmarkCount)
-				local mapped = mapPosition(position, min, max)
-				marker.Position = mapped
-				marker.Visible = true
-				placeLabel(getLandmarkLabel(landmarkCount), mapped, displayName(instance))
-			end
-		end
-	end
+	-- Only the six author-owned contour parts are drawn; imported map models are never traversed.
 	renderAuthoredContours(min, max)
 	for _, candidate in ipairs(Players:GetPlayers()) do
 		local character = candidate.Character

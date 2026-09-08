@@ -4,6 +4,7 @@
 
 local Debris = game:GetService("Debris")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 local Workspace = game:GetService("Workspace")
 
@@ -13,6 +14,12 @@ local RESPAWN_SECONDS = 60
 local HEALTH_COLOR = Color3.fromRGB(80, 255, 80)
 
 local pickupStates = {}
+local healthBonusFlashEvent = ReplicatedStorage:FindFirstChild("HealthBonusFlash")
+if not healthBonusFlashEvent then
+	healthBonusFlashEvent = Instance.new("RemoteEvent")
+	healthBonusFlashEvent.Name = "HealthBonusFlash"
+	healthBonusFlashEvent.Parent = ReplicatedStorage
+end
 
 local function playerFromHit(hit)
 	local character = hit and hit:FindFirstAncestorOfClass("Model")
@@ -100,18 +107,60 @@ local function playSound(character)
 	Debris:AddItem(sound, math.max(sound.TimeLength, 3) + 1)
 end
 
-local function collect(pickup, state, character, humanoid)
+local temporaryHealthControllers = setmetatable({}, { __mode = "k" })
+
+local function installTemporaryHealthCap(humanoid)
+	local existing = temporaryHealthControllers[humanoid]
+	if existing then return existing end
+	local lastHealth = humanoid.Health
+	local applyingBonus = false
+	humanoid.HealthChanged:Connect(function(health)
+		local temporary = math.max(0, humanoid:GetAttribute("TemporaryHealthBonusHP") or 0)
+		if humanoid:GetAttribute("TemporaryHealthBonusApplying") then
+			lastHealth = health
+			return
+		end
+		local normalMax = math.max(1, humanoid.MaxHealth - temporary)
+		if not applyingBonus and health > lastHealth and lastHealth > normalMax then
+			-- Normal regeneration may heal to 100%, but not replenish lost bonus HP.
+			applyingBonus = true
+			humanoid.Health = lastHealth
+			applyingBonus = false
+			return
+		end
+		lastHealth = health
+	end)
+	local beginApplying = function()
+		applyingBonus = true
+		return function()
+			lastHealth = humanoid.Health
+			applyingBonus = false
+		end
+	end
+	temporaryHealthControllers[humanoid] = beginApplying
+	return beginApplying
+end
+
+local function collect(pickup, state, player, character, humanoid)
 	if not state.available then return end
+	local normalMax = 100
+	local totalCap = normalMax + HEALTH_GAIN
+	if humanoid.Health >= totalCap then return end
+
 	state.available = false
 	setVisible(state, false)
-
-	-- Increase both values by the same amount. This gives 94 -> 194 and
-	-- full health -> base max + 100 without introducing regeneration.
-	humanoid.MaxHealth += HEALTH_GAIN
-	humanoid.Health += HEALTH_GAIN
-	humanoid:SetAttribute("TemporaryHealthBonusHP", (humanoid:GetAttribute("TemporaryHealthBonusHP") or 0) + HEALTH_GAIN)
-	showGain(character, humanoid.RootPart or character:FindFirstChild("HumanoidRootPart"))
+	local finishApplying = installTemporaryHealthCap(humanoid)()
+	humanoid:SetAttribute("TemporaryHealthBonusApplying", true)
+	local temporaryCapacity = HEALTH_GAIN
+	humanoid:SetAttribute("TemporaryHealthBonusHP", temporaryCapacity)
+	humanoid.MaxHealth = math.max(humanoid.MaxHealth, totalCap)
+	local gained = math.min(HEALTH_GAIN, totalCap - humanoid.Health)
+	humanoid.Health = math.min(totalCap, humanoid.Health + gained)
+	humanoid:SetAttribute("TemporaryHealthBonusApplying", nil)
+	finishApplying()
+	showGain(character, humanoid.RootPart or character:FindFirstChild("HumanoidRootPart"), gained)
 	playSound(character)
+	healthBonusFlashEvent:FireClient(player)
 
 	task.delay(RESPAWN_SECONDS, function()
 		if not pickup.Parent then
@@ -137,7 +186,7 @@ local function setupPickup(pickup)
 		part.Touched:Connect(function(hit)
 			if not state.available then return end
 			local player, character, humanoid = playerFromHit(hit)
-			if player then collect(pickup, state, character, humanoid) end
+			if player then collect(pickup, state, player, character, humanoid) end
 		end)
 	end
 end

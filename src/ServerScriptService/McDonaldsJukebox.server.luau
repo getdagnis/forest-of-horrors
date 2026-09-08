@@ -18,6 +18,9 @@ local tracks = {}
 for _, item in emitter:GetChildren() do
 	if item:IsA("Sound") then
 		item.Looped = false
+		item.RollOffMode = Enum.RollOffMode.InverseTapered
+		item.RollOffMinDistance = 12
+		item.RollOffMaxDistance = 75
 		item:Stop()
 		table.insert(tracks, item)
 	end

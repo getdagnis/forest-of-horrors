@@ -105,12 +105,16 @@ local function bindWorldTool(state, tool)
 	state.activeTool = tool
 	if not prepareTool(tool, false) then return end
 	tool.AncestryChanged:Connect(function()
-		if state.activeTool ~= tool or state.respawnScheduled or not isHeldByPlayer(tool) then return end
-		prepareTool(tool, true)
 		task.defer(function()
-			if state.activeTool ~= tool or state.respawnScheduled or not isHeldByPlayer(tool) then return end
-			state.activeTool = nil
-			scheduleRespawn(state)
+			if state.activeTool ~= tool or state.respawnScheduled then return end
+			-- A first pickup enters the player's Backpack. A later recharge pickup
+			-- can be immediately destroyed by the unique-weapon guard instead.
+			-- Both outcomes consume this world copy and must schedule its replacement.
+			if isHeldByPlayer(tool) then prepareTool(tool, true) end
+			if isHeldByPlayer(tool) or tool.Parent == nil then
+				state.activeTool = nil
+				scheduleRespawn(state)
+			end
 		end)
 	end)
 end

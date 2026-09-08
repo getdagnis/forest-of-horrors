@@ -20,7 +20,12 @@ local originalSpeed
 local timerConnection
 local runningConnection
 local smoke
-local remaining = math.clamp(tonumber(tool:GetAttribute("SpeedCoilRemaining")) or DURATION_SECONDS, 0, DURATION_SECONDS)
+local function getDuration()
+	local configured = tonumber(tool:GetAttribute("SpeedDuration"))
+	return configured and math.clamp(configured, 1, 3600) or DURATION_SECONDS
+end
+
+local remaining = math.clamp(tonumber(tool:GetAttribute("SpeedCoilRemaining")) or getDuration(), 0, getDuration())
 
 local function publish(equipped)
 	tool:SetAttribute("SpeedCoilRemaining", remaining)
@@ -94,7 +99,7 @@ local function start()
 end
 
 tool:GetAttributeChangedSignal("SpeedCoilRemaining"):Connect(function()
-	remaining = math.clamp(tonumber(tool:GetAttribute("SpeedCoilRemaining")) or 0, 0, DURATION_SECONDS)
+	remaining = math.clamp(tonumber(tool:GetAttribute("SpeedCoilRemaining")) or 0, 0, getDuration())
 	if originalSpeed == nil then publish(false) end
 end)
 
