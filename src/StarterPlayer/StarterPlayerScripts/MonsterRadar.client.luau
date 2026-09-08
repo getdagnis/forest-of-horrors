@@ -25,6 +25,7 @@ local PRIORITY_WARNING_RANGE = 80
 local MONSTER_DOT_COLOR = Color3.fromRGB(238, 67, 70)
 local BOMB_DOT_COLOR = Color3.fromRGB(255, 174, 192)
 local PET_DOT_COLOR = Color3.fromRGB(190, 255, 75)
+local OTHER_PLAYER_COLOR = Color3.fromRGB(117, 210, 255)
 local BOMB_WARNING_PULSE_SPEED = math.pi * 3
 local RADAR_CONTACT_COUNT_ATTRIBUTE = "MonsterRadarContactCount"
 
@@ -202,6 +203,32 @@ for index = 1, MAX_DOTS do
 	dots[index] = dot
 end
 
+-- Teammates use their own pool so they never consume monster-contact slots or
+-- affect the quiet-radar story signal. A hollow cyan ring keeps them distinct
+-- from the local filled cyan dot and every monster marker.
+local playerRings = {}
+local function getPlayerRing(index)
+	local ring = playerRings[index]
+	if ring then return ring end
+	ring = Instance.new("Frame")
+	ring.Name = "OtherPlayerRing"
+	ring.AnchorPoint = Vector2.new(0.5, 0.5)
+	ring.Size = UDim2.fromOffset(DOT_SIZE + 3, DOT_SIZE + 3)
+	ring.BackgroundTransparency = 1
+	ring.BorderSizePixel = 0
+	ring.ZIndex = 3
+	ring.Parent = radar
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = ring
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = OTHER_PLAYER_COLOR
+	stroke.Thickness = 1.5
+	stroke.Parent = ring
+	playerRings[index] = ring
+	return ring
+end
+
 local trackedMonsters = {}
 local radarEntries = {}
 local function track(instance)
@@ -283,6 +310,7 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	local camera = workspace.CurrentCamera
 	if not root or not camera then
 		for _, dot in ipairs(dots) do dot.Visible = false end
+		for _, ring in ipairs(playerRings) do ring.Visible = false end
 		mcdonaldsMarker.Visible = false
 		player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, -1)
 		return
@@ -417,6 +445,28 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	end
 	for index = shown + 1, MAX_DOTS do dots[index].Visible = false end
 	player:SetAttribute(RADAR_CONTACT_COUNT_ATTRIBUTE, shown)
+
+	local playersShown = 0
+	for _, otherPlayer in ipairs(Players:GetPlayers()) do
+		if otherPlayer ~= player then
+			local otherCharacter = otherPlayer.Character
+			local otherHumanoid = otherCharacter and otherCharacter:FindFirstChildOfClass("Humanoid")
+			local otherRoot = otherCharacter and otherCharacter:FindFirstChild("HumanoidRootPart")
+			if otherHumanoid and otherHumanoid.Health > 0 and otherRoot and otherRoot:IsA("BasePart") then
+				local offset = otherRoot.Position - root.Position
+				local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+				if flatOffset.Magnitude <= radarRange then
+					playersShown += 1
+					local localOffset = camera.CFrame:VectorToObjectSpace(flatOffset)
+					local scale = 0.43 / radarRange
+					local ring = getPlayerRing(playersShown)
+					ring.Position = UDim2.fromScale(0.5 + localOffset.X * scale, 0.5 + localOffset.Z * scale)
+					ring.Visible = true
+				end
+			end
+		end
+	end
+	for index = playersShown + 1, #playerRings do playerRings[index].Visible = false end
 
 	-- Friendly/neutral guardian rings must not hide the directional cue for the
 	-- nearest real hostile beyond the maximum radar range.

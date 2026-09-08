@@ -51,6 +51,9 @@ local function getNearestPlayerRoot(monsterRoot)
 	local nearestDistance = getLureRadius()
 
 	for _, player in Players:GetPlayers() do
+		-- Easy mode keeps the shared monsters and round intact, but this optional
+		-- global pressure system must never choose that player as its destination.
+		if player:GetAttribute("Difficulty") == "Easy" then continue end
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")

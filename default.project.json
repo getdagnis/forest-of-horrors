@@ -148,8 +148,14 @@
       "PlayerHealthSystem": {
         "$path": "src/ServerScriptService/PlayerHealthSystem.luau"
       },
+      "DifficultySystem": {
+        "$path": "src/ServerScriptService/DifficultySystem.server.luau"
+      },
       "HealthBonusPickupSystem": {
         "$path": "src/ServerScriptService/HealthBonusPickupSystem.server.luau"
+      },
+      "ScoreHistorySystem": {
+        "$path": "src/ServerScriptService/ScoreHistorySystem.server.luau"
       },
       "MonsterDeathSafetySystem": {
         "$path": "src/ServerScriptService/MonsterDeathSafetySystem.server.luau"
@@ -195,6 +201,9 @@
       },
       "MonsterMilestoneHud": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MonsterMilestoneHud.client.luau"
+      },
+      "DifficultySelector": {
+        "$path": "src/StarterPlayer/StarterPlayerScripts/DifficultySelector.client.luau"
       },
       "MultikillHud": {
         "$path": "src/StarterPlayer/StarterPlayerScripts/MultikillHud.client.luau"

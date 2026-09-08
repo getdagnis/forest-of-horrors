@@ -463,7 +463,8 @@ end
 local function showHealthBonusFlash()
 	feedbackSerial += 1
 	local serial = feedbackSerial
-	healText.Text = "+100 HP  •  200% MAX"
+	local baseMaxHP = player:GetAttribute("Difficulty") == "Easy" and 200 or 100
+	healText.Text = "+100 HP  •  " .. tostring(baseMaxHP + 100) .. "% MAX"
 	healText.Visible = true
 	healFlash.Visible = true
 	healFlash.BackgroundTransparency = 0.08
@@ -509,7 +510,7 @@ local function normalizeRows(data)
 	local result = {}
 	for _, row in ipairs(list) do
 		if type(row) == "table" then
-			table.insert(result, { name = tostring(row.name or row.playerName or row.player or "-"), score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, deaths = tonumber(row.deaths) or 0, bestSpawn = tonumber(row.bestSpawn or row.personalBestSpawn or row.spawn) or 0 })
+				table.insert(result, { name = tostring(row.name or row.playerName or row.player or "-"), difficulty = row.difficulty == "Easy" and "Easy" or "Hard", score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, deaths = tonumber(row.deaths) or 0, bestSpawn = tonumber(row.bestSpawn or row.personalBestSpawn or row.spawn) or 0 })
 		end
 	end
 	return result
@@ -527,7 +528,7 @@ local function renderScoreboard()
 			local stats = other:FindFirstChild("leaderstats")
 			local score = stats and stats:FindFirstChild("Score")
 			local kills = stats and stats:FindFirstChild("Kills")
-			table.insert(rows, { name = other.Name, score = score and score.Value or 0, kills = kills and kills.Value or 0, deaths = 0, bestSpawn = 0 })
+				table.insert(rows, { name = other.Name, difficulty = other:GetAttribute("Difficulty") == "Easy" and "Easy" or "Hard", score = score and score.Value or 0, kills = kills and kills.Value or 0, deaths = 0, bestSpawn = 0 })
 		end
 		table.sort(rows, function(a, b) return a.score == b.score and a.name < b.name or a.score > b.score end)
 	end
@@ -535,21 +536,22 @@ local function renderScoreboard()
 	local lines = {}
 	for index, row in ipairs(rows) do
 		if index > 8 then break end
-		local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. row.name .. "</font>" or row.name
+			local displayName = row.name .. (row.difficulty == "Easy" and " [EASY]" or "")
+			local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. displayName .. "</font>" or displayName
 		table.insert(lines, string.format("<b>%d. %s — %d/%d (%d deaths)</b>", index, name, row.score, row.kills, row.deaths or 0))
 	end
 	if #scoringLeaders > 0 then
-		table.insert(lines, "<b>SCORING LEADERS:</b>")
+		table.insert(lines, "\n<b>ALL-TIME BEST:</b>")
 		for index, row in ipairs(scoringLeaders) do
 			if index > 3 then break end
 			local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. row.name .. "</font>" or row.name
-			table.insert(lines, string.format("%d. %s — %d/%d (%s)", index, name, row.score, row.kills, formatElapsed(row.elapsedSeconds)))
+			table.insert(lines, string.format("<b>%d. %s — %d/%d (%s)</b>", index, name, row.score, row.kills, formatElapsed(row.elapsedSeconds)))
 		end
 	elseif allTimeBest then
-		table.insert(lines, string.format("<b>SCORING LEADERS:</b>\n1. %s — %d/%d (%s)", allTimeBest.name, allTimeBest.score, allTimeBest.kills, formatElapsed(allTimeBest.elapsedSeconds)))
+		table.insert(lines, string.format("\n<b>ALL-TIME BEST:</b>\n1. %s — %d/%d (%s)", allTimeBest.name, allTimeBest.score, allTimeBest.kills, formatElapsed(allTimeBest.elapsedSeconds)))
 	end
 	if quickestEscape and tonumber(quickestEscape.elapsedSeconds) and type(quickestEscape.names) == "table" and #quickestEscape.names > 0 then
-		table.insert(lines, string.format("\n<b>QUICKEST ESCAPE:</b> %s (%s)", table.concat(quickestEscape.names, ", "), formatElapsed(quickestEscape.elapsedSeconds)))
+		table.insert(lines, string.format("\n<b>QUICKEST ESCAPE:</b>\n%s (%s)", table.concat(quickestEscape.names, ", "), formatElapsed(quickestEscape.elapsedSeconds)))
 	end
 	scoreboardText.Text = table.concat(lines, "\n")
 end

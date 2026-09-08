@@ -244,7 +244,7 @@ local function cloneWeaponHud()
 	if existing then existing:Destroy() end
 	activeHud = sourceHud:Clone()
 	activeHud.Name = "MonsterBlasterWeaponHud"
-	activeHud.ResetOnSpawn = false
+	activeHud.ResetOnSpawn = true
 	activeHud.Parent = playerGui
 
 	-- The marketplace HUD contains the old green-digit readout.  This Tool now
@@ -410,6 +410,9 @@ local function destroyWeaponHud()
 	chargeHudViewportConnection = nil
 	chargeHudScale = nil
 	if activeHud then activeHud:Destroy() end
+	local playerGui = player:FindFirstChildOfClass("PlayerGui")
+	local staleHud = playerGui and playerGui:FindFirstChild("MonsterBlasterWeaponHud")
+	if staleHud then staleHud:Destroy() end
 	activeHud = nil
 	aimCrosshair = nil
 	chargeLevelTitle = nil
@@ -440,21 +443,9 @@ local function releaseCharge()
 	fireShot()
 end
 
-local function bindMobileChargeControl()
-	if not UserInputService.TouchEnabled then return end
-	ContextActionService:BindAction("MonsterBlasterCharge", function(_, inputState)
-		if inputState == Enum.UserInputState.Begin then
-			startCharge()
-		elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
-			releaseCharge()
-		end
-		return Enum.ContextActionResult.Sink
-	end, true, Enum.UserInputType.Touch)
-	ContextActionService:SetTitle("MonsterBlasterCharge", "HOLD CHARGE")
-	ContextActionService:SetPosition("MonsterBlasterCharge", UDim2.new(1, -118, 1, -190))
-end
-
 local function unbindMobileChargeControl()
+	-- Remove the old global touch sink. Tool.Activated/Deactivated already owns
+	-- mouse, touch and gamepad firing through Roblox's native Tool controls.
 	ContextActionService:UnbindAction("MonsterBlasterCharge")
 end
 
@@ -727,7 +718,7 @@ tool.Equipped:Connect(function()
 	cloneWeaponHud()
 	lastChargeUnits = getChargeUnits()
 	updateChargeHud()
-	bindMobileChargeControl()
+	unbindMobileChargeControl()
 	if not pickupSoundPlayed and tool:GetAttribute(Config.LOADOUT_CHARGE_ATTRIBUTE) ~= true then
 		playPickupSound()
 		pickupSoundPlayed = true
@@ -760,12 +751,13 @@ player.CharacterAdded:Connect(function()
 	end)
 end)
 
+player.CharacterRemoving:Connect(cleanupWeaponState)
+
 -- Roblox can remove a Tool during respawn without firing Unequipped. The
 -- ContextActionService button is client-global, so explicitly clean it when
 -- this Tool leaves both the Character and Backpack.
-tool.AncestryChanged:Connect(function(_, parent)
-	local backpack = player:FindFirstChildOfClass("Backpack")
-	if parent ~= player.Character and parent ~= backpack then
+tool.AncestryChanged:Connect(function()
+	if not isEquipped() then
 		cleanupWeaponState()
 	end
 end)

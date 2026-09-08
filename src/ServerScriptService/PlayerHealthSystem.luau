@@ -8,7 +8,8 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local Debris = game:GetService("Debris")
 
-local DEFAULT_MAX_HP = 100
+local HARD_MAX_HP = 100
+local EASY_MAX_HP = 200
 local MAX_BONUS_HP = 60
 local HP_PER_BURGER = 10
 local BIGMAC_RESPAWN_TIME = 30
@@ -22,6 +23,10 @@ local bigmac = mcdonalds and mcdonalds:FindFirstChild("BigMac")
 local bigmacAvailable = bigmac ~= nil
 local bigmacOriginalParts = {}
 
+local function getBaseMaxHP(player)
+	return player:GetAttribute("Difficulty") == "Easy" and EASY_MAX_HP or HARD_MAX_HP
+end
+
 ---------------------------------------------------------------------------
 -- Player HP setup
 ---------------------------------------------------------------------------
@@ -33,14 +38,25 @@ local function setupCharacter(player, character)
 	-- Read any persisted bonus HP from the player attribute (survives respawns)
 	local bonusHP = player:GetAttribute("BonusHP") or 0
 
-	humanoid.MaxHealth = DEFAULT_MAX_HP + bonusHP
-	humanoid.Health = DEFAULT_MAX_HP + bonusHP
+	local maxHealth = getBaseMaxHP(player) + bonusHP
+	humanoid.MaxHealth = maxHealth
+	humanoid.Health = maxHealth
 	-- ScoreGui owns the player's health presentation. Suppress Roblox's
 	-- world-space Humanoid bar so it cannot cover the scoreboard/radar.
 	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.AlwaysOff
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
 	-- Store the bonus on the humanoid too for convenience
+	humanoid:SetAttribute("BonusHP", bonusHP)
+end
+
+local function applyDifficulty(player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return end
+	local bonusHP = player:GetAttribute("BonusHP") or 0
+	humanoid.MaxHealth = getBaseMaxHP(player) + bonusHP
+	humanoid.Health = humanoid.MaxHealth
 	humanoid:SetAttribute("BonusHP", bonusHP)
 end
 
@@ -52,6 +68,9 @@ local function onPlayerAdded(player)
 
 	player.CharacterAdded:Connect(function(character)
 		setupCharacter(player, character)
+	end)
+	player:GetAttributeChangedSignal("Difficulty"):Connect(function()
+		applyDifficulty(player)
 	end)
 
 	-- Handle characters that already exist
@@ -203,7 +222,8 @@ local function checkBigMacProximity()
 
 				-- Increase MaxHealth and heal by the bonus amount gained
 				local gained = newBonus - currentBonus
-				humanoid.MaxHealth = DEFAULT_MAX_HP + newBonus
+				local baseMaxHP = getBaseMaxHP(player)
+				humanoid.MaxHealth = baseMaxHP + newBonus
 				humanoid.Health = math.min(humanoid.Health + gained, humanoid.MaxHealth)
 
 				-- Play heal sound

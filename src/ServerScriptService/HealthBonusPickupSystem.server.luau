@@ -109,6 +109,10 @@ end
 
 local temporaryHealthControllers = setmetatable({}, { __mode = "k" })
 
+local function getBaseMaxHP(player)
+	return player:GetAttribute("Difficulty") == "Easy" and 200 or 100
+end
+
 local function installTemporaryHealthCap(humanoid)
 	local existing = temporaryHealthControllers[humanoid]
 	if existing then return existing end
@@ -143,7 +147,7 @@ end
 
 local function collect(pickup, state, player, character, humanoid)
 	if not state.available then return end
-	local normalMax = 100
+	local normalMax = getBaseMaxHP(player)
 	local totalCap = normalMax + HEALTH_GAIN
 	if humanoid.Health >= totalCap then return end
 

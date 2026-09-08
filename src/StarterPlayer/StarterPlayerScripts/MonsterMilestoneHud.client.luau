@@ -17,6 +17,7 @@ local secretShaftAnnouncementEvent = ReplicatedStorage:WaitForChild("SecretShaft
 local secretShaftLockedEvent = ReplicatedStorage:WaitForChild("SecretShaftDoorLocked")
 local nightmareEscapeStartedEvent = ReplicatedStorage:WaitForChild("NightmareEscapeStarted")
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
+local INTRODUCTION_COMPLETE_ATTRIBUTE = "NightmareIntroductionComplete"
 local RADAR_CONTACT_COUNT_ATTRIBUTE = "MonsterRadarContactCount"
 local DEEPER_MESSAGE_REMAINING_SECONDS = 21 * 60 + 30
 local LONG_ANNOUNCEMENT_SECONDS = 5
@@ -116,6 +117,9 @@ local function startNightmareIntroduction()
 		-- silence before the second line appears.
 		task.wait(LONG_ANNOUNCEMENT_SECONDS + ANNOUNCEMENT_FADE_SECONDS + 1)
 		showAnnouncement("Or you will stay in it forever...", LONG_ANNOUNCEMENT_SECONDS)
+		-- Unlock difficulty only after the second line and its fade.
+		task.wait(LONG_ANNOUNCEMENT_SECONDS + ANNOUNCEMENT_FADE_SECONDS)
+		player:SetAttribute(INTRODUCTION_COMPLETE_ATTRIBUTE, true)
 	end)
 end
 

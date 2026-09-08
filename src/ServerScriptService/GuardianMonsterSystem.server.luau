@@ -510,6 +510,15 @@ local function clearOffer(state)
 	state.model:SetAttribute("WMTOfferReady", false)
 end
 
+local function cancelOffer(state, reason)
+	local player = state.offerPlayer
+	local visible = state.offerReady
+	clearOffer(state)
+	if visible and player and player.Parent then
+		rescueResultEvent:FireClient(player, state.model, false, reason or "the offer ended")
+	end
+end
+
 local function restoreUnbonded(state)
 	resetPetPath(state)
 	if state.ownerCharacterConnection then
@@ -864,7 +873,7 @@ local function updateGuardian(state)
 			if not guardianRoot or not playerRoot or now >= state.offerDeadline
 				or not contourSelected or not peaceful
 			then
-				clearOffer(state)
+				cancelOffer(state, "the guardian changed its mind")
 				-- Losing this exact contour or having danger enter the current battle
 				-- radar cancels the attempt. The player can deliberately aim again.
 				state.mode = "unbonded"

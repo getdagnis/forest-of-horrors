@@ -68,6 +68,8 @@ local accept = makeButton("Accept", "accept", UDim2.fromOffset(48, 50), Color3.f
 local decline = makeButton("Refuse", "refuse", UDim2.fromOffset(222, 50), Color3.fromRGB(255, 180, 180))
 local offeredGuardian
 local waitingForAcceptance = false
+local offerToken = 0
+local CLIENT_OFFER_TIMEOUT = 17
 
 local lossText = Instance.new("TextLabel")
 lossText.Name = "PetLostText"
@@ -297,6 +299,17 @@ local function respond(accepted)
 	end
 end
 
+local function clearOfferUi(guardian)
+	if guardian and guardian ~= offeredGuardian then return end
+	offerToken += 1
+	offeredGuardian = nil
+	waitingForAcceptance = false
+	accept.Active = true
+	decline.Active = true
+	panel.Visible = false
+	hideAnswer()
+end
+
 accept.Activated:Connect(function() respond(true) end)
 decline.Activated:Connect(function() respond(false) end)
 
@@ -308,17 +321,25 @@ rescueEvent.OnClientEvent:Connect(function(guardian, message)
 	text.Text = typeof(message) == "string" and message or "It wants to be your pet."
 	panel.Visible = true
 	showAnswer(text.Text, true)
+	offerToken += 1
+	local token = offerToken
+	task.delay(CLIENT_OFFER_TIMEOUT, function()
+		if token == offerToken and offeredGuardian == guardian then
+			clearOfferUi(guardian)
+		end
+	end)
 end)
 
-rescueResultEvent.OnClientEvent:Connect(function(guardian, accepted)
+rescueResultEvent.OnClientEvent:Connect(function(guardian, accepted, reason)
 	if guardian ~= offeredGuardian then return end
-	waitingForAcceptance = false
-	accept.Active = true
-	if accepted then
-		offeredGuardian = nil
-		panel.Visible = false
-		hideAnswer()
+	clearOfferUi(guardian)
+	if not accepted and typeof(reason) == "string" and reason ~= "" then
+		showAnswer(reason, false)
 	end
+end)
+
+player.CharacterAdded:Connect(function()
+	clearOfferUi()
 end)
 
 petLostEvent.OnClientEvent:Connect(function()

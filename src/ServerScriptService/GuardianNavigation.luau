@@ -68,6 +68,30 @@ local function canWalkDirect(state, root, destination)
 	return true
 end
 
+function Navigation.findClearFallback(state, root, towardPosition)
+	local toward = flat(towardPosition - root.Position)
+	if toward.Magnitude < 0.01 then toward = flat(root.CFrame.LookVector) end
+	if toward.Magnitude < 0.01 then toward = Vector3.zAxis end
+	toward = toward.Unit
+	local floorParams = RaycastParams.new()
+	floorParams.FilterType = Enum.RaycastFilterType.Exclude
+	floorParams.FilterDescendantsInstances = { state.model }
+	floorParams.RespectCanCollide = true
+	for _, radius in ipairs({ 10, 16 }) do
+		for _, angle in ipairs({ 0, math.rad(45), math.rad(-45), math.rad(90), math.rad(-90), math.pi }) do
+			local direction = CFrame.fromAxisAngle(Vector3.yAxis, angle):VectorToWorldSpace(toward)
+			local candidate = root.Position + direction * radius
+			local ground = Workspace:Raycast(candidate + Vector3.new(0, 12, 0), Vector3.new(0, -30, 0), floorParams)
+			if ground and ground.Material ~= Enum.Material.Water and ground.Material ~= Enum.Material.CrackedLava
+				and canWalkDirect(state, root, ground.Position)
+			then
+				return ground.Position
+			end
+		end
+	end
+	return nil
+end
+
 local function fail(nav, now, reason)
 	disconnectRoute(nav)
 	nav.failures += 1

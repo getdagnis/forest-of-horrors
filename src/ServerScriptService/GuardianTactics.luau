@@ -9,6 +9,7 @@ Tactics.Config = {
 	AttackRange = 9, AttackHeight = 8, AttackCooldown = 0.65, Damage = 150,
 	TargetLock = 2, FailedTargetCooldown = 20, NoHitTimeout = 10,
 	OwnerRetrySeconds = 3, GangLimit = 3,
+	StuckDistance = 70, StuckSeconds = 30, StuckMovement = 4,
 }
 local C = Tactics.Config
 local phrases = {
@@ -257,17 +258,27 @@ function Tactics.step(state, now, api)
 		announce(state, "HoldAndHunt", now, api)
 		return
 	end
-	-- A distant guardian that has made no progress gets one clean route reset
-	-- after 30 seconds. This never moves its body; it only discards stale paths.
-	if ownerDistance <= 100 then
+	-- A distant guardian must actually be stationary for the full window. Its
+	-- recovery remains Humanoid-driven: discard the stale route, jump once, and
+	-- walk toward nearby clear ground before retrying the owner route.
+	if ownerDistance <= C.StuckDistance then
 		state.distantSince = nil
+		state.distantAnchorPosition = nil
 	elseif not state.distantSince then
 		state.distantSince = now
-	elseif now - state.distantSince >= 30 then
+		state.distantAnchorPosition = root.Position
+	elseif distance(root.Position, state.distantAnchorPosition or root.Position) > C.StuckMovement then
+		state.distantSince = now
+		state.distantAnchorPosition = root.Position
+	elseif not state.combatTarget and now - state.distantSince >= C.StuckSeconds then
 		Navigation.reset(state)
+		state.humanoid.Jump = true
+		state.recoverDestination = Navigation.findClearFallback(state, root, ownerRoot.Position)
+		state.recoverUntil = state.recoverDestination and (now + 6) or 0
 		state.ownerRetryAt = 0
 		state.failedOwnerPosition = nil
 		state.distantSince = now
+		state.distantAnchorPosition = root.Position
 		announce(state, "Recover", now, api)
 	end
 	-- A moving owner re-entering the local area is an immediate rejoin opportunity.

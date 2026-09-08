@@ -188,6 +188,7 @@ local function broadcastRecords()
 end
 
 local function updateBestEver(player, score, killCount, spawn)
+	if player:GetAttribute("Difficulty") == "Easy" then return end
 	if score <= (bestEver.score or 0) then return end
 
 	bestEver = {
@@ -244,6 +245,7 @@ getScoreboard = function()
 		local best = sessionBest[player] or {}
 		table.insert(list, {
 			name = player.Name,
+			difficulty = player:GetAttribute("Difficulty") == "Easy" and "Easy" or "Hard",
 			score = scores[player] or 0,
 			kills = kills[player] or 0,
 			bestSpawn = best.score or 0,
@@ -509,7 +511,7 @@ local function updateScoreRecords(player)
 		}
 	end
 
-	if currentScore > serverBest.score then
+	if player:GetAttribute("Difficulty") ~= "Easy" and currentScore > serverBest.score then
 		serverBest = {
 			score = currentScore,
 			playerName = player.Name,

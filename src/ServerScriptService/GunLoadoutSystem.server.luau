@@ -105,7 +105,8 @@ local function grantLoadout(player)
 	-- Roblox may not carry the promoted Tool instance through CharacterAdded.
 	-- Restore the saved tier directly so an earned MG2 never falls back to MG1.
 	if player:GetAttribute(MG3_RESET_PENDING_ATTRIBUTE) == true then highestGunTier = math.min(highestGunTier, 2) end
-	local primaryGun = highestGunTier == 2 and "MonsterGun2"
+	local primaryGun = player:GetAttribute("Difficulty") == "Easy" and "MonsterGun2"
+		or highestGunTier == 2 and "MonsterGun2"
 		or highestGunTier >= 3 and "MonsterGun3"
 		or "MonsterGun"
 	grantTemplate(player, primaryGun)
@@ -118,10 +119,23 @@ local function grantLoadout(player)
 	end
 end
 
+local function applyDifficultyLoadout(player)
+	local selected = player:GetAttribute("Difficulty")
+	if selected ~= "Easy" and selected ~= "Hard" then return end
+	local baseTier = selected == "Easy" and 2 or 1
+	local currentTier = reconcileMonsterGunTier(player)
+	if currentTier >= baseTier then return end
+	player:SetAttribute("MonsterGunTier", baseTier)
+	grantTemplate(player, baseTier == 2 and "MonsterGun2" or "MonsterGun")
+end
+
 local function bindPlayer(player)
 	player.CharacterAdded:Connect(function()
 		-- Let Roblox finish moving surviving Tools before checking for a copy.
 		task.defer(grantLoadout, player)
+	end)
+	player:GetAttributeChangedSignal("Difficulty"):Connect(function()
+		task.defer(applyDifficultyLoadout, player)
 	end)
 	if player.Character then
 		task.defer(grantLoadout, player)
