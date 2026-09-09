@@ -10,6 +10,19 @@ local player = Players.LocalPlayer
 local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
 AudioPreloader.Start()
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
+local INTRO_MOVEMENT_LOCK_SECONDS = 15
+
+-- Disable only Roblox's local walk/run/jump controls during the opening lines.
+-- The character remains fully physical: gravity, animation, camera, damage,
+-- world simulation, monsters, and the round clock continue normally.
+local playerControls = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule")):GetControls()
+
+local function lockOpeningMovement()
+	playerControls:Disable()
+	task.delay(INTRO_MOVEMENT_LOCK_SECONDS, function()
+		playerControls:Enable()
+	end)
+end
 
 local roundCompleteEvent = ReplicatedStorage:WaitForChild("RoundComplete")
 local roundRestartedEvent = ReplicatedStorage:WaitForChild("RoundRestarted")
@@ -212,6 +225,7 @@ local function closeWelcome()
 	-- the announcement HUD speaks over it.
 	welcomePanel.Visible = false
 	welcomeShade.BackgroundTransparency = welcomeShadeTransparency
+	lockOpeningMovement()
 	playSound("GameIntro")
 	-- This local attribute is the one-time handoff to the existing announcement
 	-- HUD. StarterPlayerScripts survive character respawns, so the introduction

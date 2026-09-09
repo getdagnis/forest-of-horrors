@@ -364,7 +364,7 @@ local function layout()
 	scorePanel.Visible = not compactScoreboard or scoreboardExpanded
 	scorePanel.Position = UDim2.fromOffset(panelOffset.X, panelOffset.Y + (compactScoreboard and 38 or 0))
 	scorePanel.Size = UDim2.fromOffset(mobile and 210 or 280, mobile and 210 or 260)
-	local scoreboardScale = mobile and 1.3 or 2
+	local scoreboardScale = mobile and 1.6 or 2.4
 	scoreboardTitle.TextSize = details_font_size * scoreboardScale
 	scoreboardTitle.Size = UDim2.new(1, -20, 0, details_font_size * scoreboardScale)
 	scoreboardText.TextSize = details_font_size * scoreboardScale

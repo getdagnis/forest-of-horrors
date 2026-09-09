@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 
 local player = Players.LocalPlayer
+local GUARDIAN_COLOR = Color3.fromRGB(220, 240, 210)
 local rescueEvent = ReplicatedStorage:WaitForChild("WMTRescueOffer")
 local rescueResponseEvent = ReplicatedStorage:WaitForChild("WMTRescueResponse")
 local rescueResultEvent = ReplicatedStorage:WaitForChild("WMTRescueResult")
@@ -35,7 +36,7 @@ text.Size = UDim2.new(1, 0, 0, 48)
 text.Position = UDim2.fromOffset(0, 0)
 text.BackgroundTransparency = 1
 text.Font = Enum.Font.GothamBold
-text.TextColor3 = Color3.fromRGB(230, 255, 180)
+text.TextColor3 = GUARDIAN_COLOR
 text.TextSize = 28
 text.Visible = false -- GuardianAnswer is the one shared message line.
 text.Parent = panel
@@ -79,7 +80,7 @@ lossText.Size = UDim2.fromOffset(520, 52)
 lossText.BackgroundTransparency = 1
 lossText.Font = Enum.Font.GothamBold
 lossText.Text = "your guardian pet has fallen"
-lossText.TextColor3 = Color3.fromRGB(255, 105, 105)
+lossText.TextColor3 = GUARDIAN_COLOR
 lossText.TextStrokeTransparency = 0.25
 lossText.TextSize = 28
 lossText.Visible = false
@@ -104,7 +105,7 @@ conversationText.Size = UDim2.new(1, 0, 0, 17)
 conversationText.BackgroundTransparency = 1
 conversationText.Font = Enum.Font.GothamBold
 conversationText.Text = "TALKING"
-conversationText.TextColor3 = Color3.fromRGB(225, 240, 215)
+conversationText.TextColor3 = GUARDIAN_COLOR
 conversationText.TextSize = 13
 conversationText.TextStrokeTransparency = 0.65
 conversationText.Parent = conversation
@@ -113,7 +114,7 @@ local bar = Instance.new("Frame")
 bar.Name = "ProgressBar"
 bar.Position = UDim2.fromOffset(0, 23)
 bar.Size = UDim2.new(1, 0, 0, 5)
-bar.BackgroundColor3 = Color3.fromRGB(220, 240, 210)
+bar.BackgroundColor3 = GUARDIAN_COLOR
 bar.BackgroundTransparency = 0.78
 bar.BorderSizePixel = 0
 bar.Parent = conversation
@@ -121,7 +122,7 @@ bar.Parent = conversation
 local fill = Instance.new("Frame")
 fill.Name = "Fill"
 fill.Size = UDim2.fromScale(0, 1)
-fill.BackgroundColor3 = Color3.fromRGB(205, 255, 145)
+fill.BackgroundColor3 = GUARDIAN_COLOR
 fill.BackgroundTransparency = 0.28
 fill.BorderSizePixel = 0
 fill.Parent = bar
@@ -133,7 +134,7 @@ answerText.Position = UDim2.fromScale(0.5, 0.42)
 answerText.Size = UDim2.new(0.72, 0, 0, 68)
 answerText.BackgroundTransparency = 1
 answerText.Font = Enum.Font.GothamBold
-answerText.TextColor3 = Color3.new(1, 1, 1)
+answerText.TextColor3 = GUARDIAN_COLOR
 answerText.TextStrokeTransparency = 0
 answerText.TextSize = 28
 answerText.TextWrapped = true
@@ -155,7 +156,7 @@ statusText.Position = UDim2.fromScale(0.5, 0.84)
 statusText.Size = UDim2.new(0.72, 0, 0, 26)
 statusText.BackgroundTransparency = 1
 statusText.Font = Enum.Font.GothamBold
-statusText.TextColor3 = Color3.fromRGB(245, 245, 245)
+statusText.TextColor3 = GUARDIAN_COLOR
 statusText.TextStrokeTransparency = 0.72
 statusText.TextTransparency = 1
 statusText.TextWrapped = true
@@ -165,11 +166,8 @@ local statusToken = 0
 
 local function updateStatusTextSize()
 	local camera = workspace.CurrentCamera
-	if camera and camera.ViewportSize.X < 500 then
-		statusText.TextSize = 12
-	else
-		statusText.TextSize = 14
-	end
+	local mobile = camera and (camera.ViewportSize.X < 1100 or camera.ViewportSize.Y < 650)
+	statusText.TextSize = mobile and 13 or 19
 end
 
 local function hideStatus()
@@ -182,11 +180,11 @@ local function statusIsSuppressed()
 	return conversation.Visible or panel.Visible or lossText.Visible
 end
 
-local function showStatus(message)
+local function showStatus(message, quoted)
 	if statusIsSuppressed() then return end
 	statusToken += 1
 	local token = statusToken
-	statusText.Text = string.format('"%s"', message)
+	statusText.Text = quoted and string.format('"%s"', message) or tostring(message)
 	statusText.TextTransparency = 1
 	statusText.Visible = true
 	TweenService:Create(statusText, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -320,7 +318,7 @@ rescueEvent.OnClientEvent:Connect(function(guardian, message)
 	accept.Active = true
 	text.Text = typeof(message) == "string" and message or "It wants to be your pet."
 	panel.Visible = true
-	showAnswer(text.Text, true)
+	showAnswer(string.format('"%s"', text.Text), true)
 	offerToken += 1
 	local token = offerToken
 	task.delay(CLIENT_OFFER_TIMEOUT, function()
@@ -370,7 +368,7 @@ local function bindStatusEvent(event)
 		-- The guardian model may not be streamed to this client yet; the server is
 		-- authoritative for ownership, while this client only accepts display text.
 		if typeof(stateName) ~= "string" or typeof(message) ~= "string" or message == "" then return end
-		showStatus(message)
+		showStatus(message, stateName ~= "Kill")
 	end)
 end
 ReplicatedStorage.ChildAdded:Connect(bindStatusEvent)

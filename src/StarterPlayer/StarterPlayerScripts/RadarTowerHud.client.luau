@@ -37,7 +37,7 @@ local COLORS = {
 	cyan = Color3.fromRGB(157, 129, 255),
 	threat = Color3.fromRGB(255, 52, 117),
 	friendly = Color3.fromRGB(186, 180, 203),
-	guardian = Color3.fromRGB(190, 255, 75),
+	guardian = Color3.fromRGB(220, 240, 210),
 	text = Color3.fromRGB(244, 235, 255),
 	muted = Color3.fromRGB(181, 153, 213),
 }

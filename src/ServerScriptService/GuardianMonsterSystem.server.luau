@@ -88,8 +88,9 @@ local TRUST_AIM_WEAPONS = {
 }
 
 local PET_BODY_COLOR = Color3.fromRGB(44, 69, 67) -- Earth green
-local PET_OUTLINE_COLOR = Color3.fromRGB(190, 255, 75) -- soft lemon green
-local PET_OUTLINE_TRANSPARENCY = 0.3
+local GUARDIAN_COLOR = Color3.fromRGB(220, 240, 210)
+local PET_OUTLINE_COLOR = GUARDIAN_COLOR
+local PET_OUTLINE_TRANSPARENCY = 0.35
 
 local function getOrCreateRemoteEvent(name)
 	local event = ReplicatedStorage:FindFirstChild(name)
@@ -297,6 +298,20 @@ local function damageMonster(state, targetModel, amount, cooldown)
 
 	state.lastMonsterHit[targetHumanoid] = now
 	local actualDamage = MonsterManager.damageMonsterTarget(targetModel, amount, state.model)
+	if actualDamage > 0 and targetHumanoid.Health <= 0 then
+		local reportOwner = state.owner
+		if (not reportOwner or not reportOwner.Parent) and state.gangLeader then
+			reportOwner = state.gangLeader.owner
+		end
+		if reportOwner and reportOwner.Parent then
+			statusEvent:FireClient(
+				reportOwner,
+				state.model,
+				"Kill",
+				"your guardian pet killed " .. MonsterManager.getShortName(targetModel)
+			)
+		end
+	end
 	if state.mode == "pet" or state.mode == "gang" then
 		-- The target's own family AI decides whether and how to retaliate. This
 		-- marker grants a short response window without making GuardianMonsterSystem
