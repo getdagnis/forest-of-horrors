@@ -20,6 +20,7 @@ local managedMonsters = {} -- model -> true; only these models are allowed into 
 local roundTemplates = {}
 
 local spawnCounts = {}
+local roundSpawnBases = {}
 local sessionBest = {} -- player -> {score, spawn}
 -- Completed lives only. This deliberately stays separate from sessionBest,
 -- which updates as a player earns points during their currently active life.
@@ -134,6 +135,7 @@ local scoreEvent = getOrCreateRemoteEvent("ScoreUpdate")
 local monsterCountEvent = getOrCreateRemoteEvent("MonsterCountUpdate")
 local recordsEvent = getOrCreateRemoteEvent("RecordsUpdate")
 local roundCompleteEvent = getOrCreateRemoteEvent("RoundComplete")
+local nightmareEscapedEvent = getOrCreateRemoteEvent("NightmareEscaped")
 local nightmareEscapeStartedEvent = getOrCreateRemoteEvent("NightmareEscapeStarted")
 local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
 local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
@@ -207,8 +209,8 @@ local function broadcastRecords()
 end
 
 local function updateBestEver(player, score, killCount, spawn)
-	if player:GetAttribute("Difficulty") == "Easy" then return end
-	if score <= (bestEver.score or 0) then return end
+	if player:GetAttribute("Difficulty") == "Easy" then return false end
+	if score <= (bestEver.score or 0) then return false end
 
 	bestEver = {
 		score = score,
@@ -223,6 +225,8 @@ local function updateBestEver(player, score, killCount, spawn)
 			bestEverStore:SetAsync("BestEver", bestEver)
 		end)
 	end)
+	player:SetAttribute("NewAllTimeScoreRecord", true)
+	return true
 end
 
 local function setupLeaderstats(player)
@@ -281,6 +285,17 @@ getScoreboard = function()
 	end)
 
 	return list
+end
+
+local function getPlayerResult(player, elapsedSeconds)
+	return {
+		playerName = player.Name,
+		score = scores[player] or 0,
+		kills = kills[player] or 0,
+		deaths = math.max(0, tonumber(player:GetAttribute("RoundDeaths")) or 0),
+		elapsedSeconds = elapsedSeconds,
+		newScoreRecord = player:GetAttribute("NewAllTimeScoreRecord") == true,
+	}
 end
 
 
@@ -1015,6 +1030,9 @@ end
 local function resetScores()
 	for _, player in Players:GetPlayers() do
 		player:SetAttribute("EscapedNightmare", false)
+		player:SetAttribute("RoundDeaths", 0)
+		player:SetAttribute("NewAllTimeScoreRecord", false)
+		roundSpawnBases[player] = spawnCounts[player] or 0
 		scores[player] = 0
 		kills[player] = 0
 		spawnScores[player] = 0
@@ -1108,31 +1126,29 @@ task.spawn(function()
 		elseif escapeActive then
 			local escapeEndsAt = tonumber(ws:GetAttribute("NightmareEscapeEndsAt")) or 0
 			if ws:GetServerTimeNow() >= escapeEndsAt then
-				escapeActive = false
-				roundFailed = true
-				ws:SetAttribute("NightmareEscapeActive", false)
-				ws:SetAttribute("RoundPhase", "Failed")
-				roundFailedEvent:FireAllClients({
-					message = "You were too late. The nightmare kept you.",
-					scoreboard = getScoreboard(),
-					serverBest = serverBest,
-					bestEver = bestEver,
-				})
+					escapeActive = false
+					roundFailed = true
+					ws:SetAttribute("NightmareEscapeActive", false)
+					ws:SetAttribute("RoundPhase", "Failed")
+					for _, player in Players:GetPlayers() do
+						local result = getPlayerResult(player)
+						result.message = "You were too late. The nightmare kept you."
+						roundFailedEvent:FireClient(player, result)
+					end
 				broadcastMonsterCount()
 				broadcastRecords()
 			end
 		elseif not roundComplete and not roundFailed then
 			local endsAt = tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) or 0
 			if ws:GetServerTimeNow() >= endsAt then
-				roundFailed = true
-				ws:SetAttribute("RoundActive", false)
-				ws:SetAttribute("RoundPhase", "Failed")
-				roundFailedEvent:FireAllClients({
-					roundEndsAt = endsAt,
-					scoreboard = getScoreboard(),
-					serverBest = serverBest,
-					bestEver = bestEver,
-				})
+					roundFailed = true
+					ws:SetAttribute("RoundActive", false)
+					ws:SetAttribute("RoundPhase", "Failed")
+					for _, player in Players:GetPlayers() do
+						local result = getPlayerResult(player)
+						result.roundEndsAt = endsAt
+						roundFailedEvent:FireClient(player, result)
+					end
 				broadcastMonsterCount()
 				broadcastRecords()
 			end
@@ -1168,12 +1184,15 @@ end)
 -- erasing the player's score or kill total for the current game.
 local function onPlayerAdded(player)
 	player:SetAttribute("EscapedNightmare", false)
+	player:SetAttribute("RoundDeaths", 0)
+	player:SetAttribute("NewAllTimeScoreRecord", false)
 	scores[player] = 0
 	kills[player] = 0
 	spawnScores[player] = 0
 	spawnKills[player] = 0
 	multikillStates[player] = nil
 	spawnCounts[player] = 0
+	roundSpawnBases[player] = 0
 	setupLeaderstats(player)
 
 	player.CharacterAdded:Connect(function()
@@ -1203,6 +1222,7 @@ local function onPlayerAdded(player)
 		end
 
 		spawnCounts[player] += 1
+		player:SetAttribute("RoundDeaths", math.max(0, spawnCounts[player] - (roundSpawnBases[player] or 0) - 1))
 		-- Scores and kills are the player's totals for this round. Only the
 		-- per-life counters reset, so death no longer makes the main HUD read 0/0.
 		spawnScores[player] = 0
@@ -1222,4 +1242,5 @@ Players.PlayerRemoving:Connect(function(player)
 	completedSpawnBest[player] = nil
 	spawnScores[player] = nil
 	spawnKills[player] = nil
+	roundSpawnBases[player] = nil
 end)

@@ -7,6 +7,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local recordsEvent = ReplicatedStorage:WaitForChild("RecordsUpdate")
+local escapedEvent = ReplicatedStorage:WaitForChild("NightmareEscaped")
 local store = DataStoreService:GetDataStore("ForestOfHorrorsScoreHistoryV1")
 local leaders = {}
 local quickestEscape = { elapsedSeconds = nil, names = {} }
@@ -122,14 +123,29 @@ local function bindPlayer(player)
 	player:GetAttributeChangedSignal("EscapedNightmare"):Connect(function()
 		if player:GetAttribute("EscapedNightmare") ~= true then return end
 		local elapsed = math.max(0, math.floor(Workspace:GetServerTimeNow() - (tonumber(Workspace:GetAttribute("RoundStartedAt")) or Workspace:GetServerTimeNow())))
-		if not quickestEscape.elapsedSeconds or elapsed < quickestEscape.elapsedSeconds then
+		local newEscapeRecord = not quickestEscape.elapsedSeconds or elapsed < quickestEscape.elapsedSeconds
+		local recordChanged = newEscapeRecord
+		if newEscapeRecord then
 			quickestEscape.elapsedSeconds, quickestEscape.names = elapsed, { player.Name }
 		elseif elapsed == quickestEscape.elapsedSeconds and not table.find(quickestEscape.names, player.Name) then
 			table.insert(quickestEscape.names, player.Name)
 			table.sort(quickestEscape.names)
-		else return end
-		queueSave()
-		for _, other in ipairs(Players:GetPlayers()) do publish(other) end
+			recordChanged = true
+		end
+		if recordChanged then
+			queueSave()
+			for _, other in ipairs(Players:GetPlayers()) do publish(other) end
+		end
+		local score, kills = getStats(player)
+		escapedEvent:FireClient(player, {
+			playerName = player.Name,
+			score = score,
+			kills = kills,
+			deaths = math.max(0, tonumber(player:GetAttribute("RoundDeaths")) or 0),
+			elapsedSeconds = elapsed,
+			newScoreRecord = player:GetAttribute("NewAllTimeScoreRecord") == true,
+			newEscapeRecord = newEscapeRecord,
+		})
 	end)
 	player:GetAttributeChangedSignal("Difficulty"):Connect(function()
 		if player:GetAttribute("Difficulty") ~= "Easy" then return end

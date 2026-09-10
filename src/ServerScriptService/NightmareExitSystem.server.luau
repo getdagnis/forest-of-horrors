@@ -2,22 +2,11 @@
 -- shared hunt is cleared. Entering it is an individual player's escape.
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local PORTAL_ATTRIBUTE = "NightmareExitPortal"
 local ESCAPE_ACTIVE_ATTRIBUTE = "NightmareEscapeActive"
 
-local function getOrCreateRemoteEvent(name)
-	local event = ReplicatedStorage:FindFirstChild(name)
-	if event and event:IsA("RemoteEvent") then return event end
-	event = Instance.new("RemoteEvent")
-	event.Name = name
-	event.Parent = ReplicatedStorage
-	return event
-end
-
-local escapedEvent = getOrCreateRemoteEvent("NightmareEscaped")
 local portalRecords = setmetatable({}, { __mode = "k" })
 local connectedParts = setmetatable({}, { __mode = "k" })
 
@@ -72,7 +61,6 @@ local function connectPortalPart(part)
 		if not player or player:GetAttribute("EscapedNightmare") == true then return end
 
 		player:SetAttribute("EscapedNightmare", true)
-		escapedEvent:FireClient(player)
 	end)
 end
 

@@ -1,16 +1,19 @@
 local Players = game:GetService("Players")
 local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
+local UI_TEST = true -- Studio-only end-screen preview buttons.
+
 local player = Players.LocalPlayer
 local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
 AudioPreloader.Start()
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
-local INTRO_MOVEMENT_LOCK_SECONDS = 15
+local INTRO_MOVEMENT_LOCK_SECONDS = 8
 
 -- Disable only Roblox's local walk/run/jump controls during the opening lines.
 -- The character remains fully physical: gravity, animation, camera, damage,
@@ -62,7 +65,7 @@ local escapePanel = Instance.new("Frame")
 escapePanel.Name = "EscapePanel"
 escapePanel.AnchorPoint = Vector2.new(0.5, 0.5)
 escapePanel.Position = UDim2.fromScale(0.5, 0.5)
-escapePanel.Size = UDim2.fromOffset(620, 280)
+escapePanel.Size = UDim2.fromOffset(620, 320)
 escapePanel.BackgroundColor3 = Color3.fromRGB(12, 4, 25)
 escapePanel.BackgroundTransparency = 0.08
 escapePanel.BorderSizePixel = 0
@@ -78,10 +81,10 @@ escapeStroke.Parent = escapePanel
 local escapeTitle = Instance.new("TextLabel")
 escapeTitle.Name = "Title"
 escapeTitle.BackgroundTransparency = 1
-escapeTitle.Position = UDim2.fromOffset(28, 46)
-escapeTitle.Size = UDim2.new(1, -56, 0, 102)
+escapeTitle.Position = UDim2.fromOffset(28, 22)
+escapeTitle.Size = UDim2.new(1, -56, 0, 94)
 escapeTitle.Font = Enum.Font.GothamBlack
-escapeTitle.Text = "You escaped the nightmare.\nThis time."
+escapeTitle.Text = "Congratulations!\nYou got out of this nightmare.\nFor now."
 escapeTitle.TextColor3 = Color3.fromRGB(246, 235, 255)
 escapeTitle.TextStrokeColor3 = Color3.fromRGB(44, 15, 77)
 escapeTitle.TextStrokeTransparency = 0.1
@@ -92,10 +95,47 @@ escapeTitle.TextYAlignment = Enum.TextYAlignment.Center
 escapeTitle.ZIndex = 202
 escapeTitle.Parent = escapePanel
 
+local resultName = Instance.new("TextLabel")
+resultName.Name = "PlayerName"
+resultName.BackgroundTransparency = 1
+resultName.Position = UDim2.fromOffset(28, 121)
+resultName.Size = UDim2.new(1, -56, 0, 24)
+resultName.Font = Enum.Font.GothamBold
+resultName.TextColor3 = Color3.fromRGB(246, 235, 255)
+resultName.TextSize = 20
+resultName.TextXAlignment = Enum.TextXAlignment.Center
+resultName.ZIndex = 202
+resultName.Parent = escapePanel
+
+local resultStats = Instance.new("TextLabel")
+resultStats.Name = "Stats"
+resultStats.BackgroundTransparency = 1
+resultStats.Position = UDim2.fromOffset(28, 150)
+resultStats.Size = UDim2.new(1, -56, 0, 24)
+resultStats.Font = Enum.Font.GothamBold
+resultStats.TextColor3 = Color3.fromRGB(209, 174, 255)
+resultStats.TextSize = 16
+resultStats.TextXAlignment = Enum.TextXAlignment.Center
+resultStats.ZIndex = 202
+resultStats.Parent = escapePanel
+
+local resultRecord = Instance.new("TextLabel")
+resultRecord.Name = "Record"
+resultRecord.BackgroundTransparency = 1
+resultRecord.Position = UDim2.fromOffset(28, 179)
+resultRecord.Size = UDim2.new(1, -56, 0, 20)
+resultRecord.Font = Enum.Font.GothamBold
+resultRecord.TextColor3 = Color3.fromRGB(255, 127, 205)
+resultRecord.TextSize = 14
+resultRecord.TextXAlignment = Enum.TextXAlignment.Center
+resultRecord.Visible = false
+resultRecord.ZIndex = 202
+resultRecord.Parent = escapePanel
+
 local escapeDetail = Instance.new("TextLabel")
 escapeDetail.Name = "Detail"
 escapeDetail.BackgroundTransparency = 1
-escapeDetail.Position = UDim2.fromOffset(28, 154)
+escapeDetail.Position = UDim2.fromOffset(28, 205)
 escapeDetail.Size = UDim2.new(1, -56, 0, 28)
 escapeDetail.Font = Enum.Font.Gotham
 escapeDetail.Text = "For now, the forest is quiet."
@@ -108,7 +148,7 @@ escapeDetail.Parent = escapePanel
 local escapeRestartButton = Instance.new("TextButton")
 escapeRestartButton.Name = "WakeUpAgain"
 escapeRestartButton.AnchorPoint = Vector2.new(0.5, 0)
-escapeRestartButton.Position = UDim2.new(0.5, 0, 1, -65)
+escapeRestartButton.Position = UDim2.new(0.5, 0, 1, -55)
 escapeRestartButton.Size = UDim2.fromOffset(180, 42)
 escapeRestartButton.BackgroundColor3 = Color3.fromRGB(80, 19, 107)
 escapeRestartButton.BorderSizePixel = 0
@@ -125,8 +165,11 @@ local escapedNightmare = false
 local function resizeEscapePanel()
 	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
 	local mobile = viewport.X < 700 or viewport.Y < 520
-	escapePanel.Size = mobile and UDim2.new(0.88, 0, 0, 245) or UDim2.fromOffset(620, 280)
+	escapePanel.Size = mobile and UDim2.new(0.88, 0, 0, 280) or UDim2.fromOffset(620, 320)
 	escapeTitle.TextSize = mobile and 26 or 38
+	resultName.TextSize = mobile and 17 or 20
+	resultStats.TextSize = mobile and 12 or 16
+	resultRecord.TextSize = mobile and 10 or 14
 	escapeDetail.TextSize = mobile and 13 or 16
 end
 
@@ -272,46 +315,140 @@ UserInputService.InputBegan:Connect(function(input)
 	end
 end)
 
-local function formatLeaderboard(list)
-	local lines = {}
+local function formatElapsed(seconds)
+	seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+	return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+end
 
-	for index, row in ipairs(list or {}) do
-		if index > 5 then break end
-		table.insert(lines, tostring(index) .. ". " .. tostring(row.name) .. " — " .. tostring(row.score))
-	end
+local function recordText(data)
+	local newScore = data and data.newScoreRecord == true
+	local newEscape = data and data.newEscapeRecord == true
+	if newScore and newEscape then return "THAT'S A NEW SCORE AND ESCAPE-TIME RECORD" end
+	if newScore then return "THAT'S A NEW SCORE RECORD" end
+	if newEscape then return "THAT'S A NEW ESCAPE-TIME RECORD" end
+	return nil
+end
 
-	if #lines == 0 then
-		return "No scores yet."
-	end
-
-	return table.concat(lines, "\n")
+local function showResult(data)
+	data = data or {}
+	local escaped = data.outcome == "escape"
+	escapedNightmare = escaped
+	endShade.Visible = false
+	resizeEscapePanel()
+	escapeTitle.Text = escaped
+		and "Congratulations!\nYou got out of this nightmare.\nFor now."
+		or "The nightmare won"
+	resultName.Text = tostring(data.playerName or player.Name)
+	local stats = string.format(
+		"SCORE %d / KILLS %d / DEATHS %d",
+		tonumber(data.score) or 0,
+		tonumber(data.kills) or 0,
+		tonumber(data.deaths) or 0
+	)
+	if escaped then stats ..= " / TIME " .. formatElapsed(data.elapsedSeconds) end
+	resultStats.Text = stats
+	local record = recordText(data)
+	resultRecord.Text = record or ""
+	resultRecord.Visible = record ~= nil
+	escapeDetail.Text = (data.message)
+		or (escaped and "For now, the forest is quiet." or "Time ran out. The forest is still hunting.")
+	escapeRestartButton.Text = escaped and "WAKE UP AGAIN" or "QUICK RESTART"
+	escapeShade.Visible = true
 end
 
 local function showRoundFailure(data)
 	if escapedNightmare then return end
-	styleLeaderboard()
-	endTitle.Text = "The nightmare won"
-	endMessage.Text = (data and data.message) or "Time ran out. The forest is still hunting."
-	leaderboard.Text = formatLeaderboard(data and data.scoreboard)
-	restartButton.Text = "Quick Restart"
-	endShade.Visible = true
+	data = data or {}
+	data.outcome = "timeout"
+	showResult(data)
 end
 
 roundCompleteEvent.OnClientEvent:Connect(function(data)
-	styleLeaderboard()
-	endTitle.Text = "Round completed"
-	endMessage.Text = "Congrats. The forest is clear."
-	restartButton.Text = "Continue / Restart"
-	leaderboard.Text = formatLeaderboard(data and data.scoreboard)
-	endShade.Visible = true
+	data = data or {}
+	data.outcome = "complete"
+	data.message = data.message or "Congrats. The forest is clear."
+	showResult(data)
 end)
 
-nightmareEscapedEvent.OnClientEvent:Connect(function()
-	escapedNightmare = true
-	endShade.Visible = false
-	resizeEscapePanel()
-	escapeShade.Visible = true
-end)
+local function showEscapedScreen(data)
+	data = data or {}
+	data.outcome = "escape"
+	showResult(data)
+end
+
+nightmareEscapedEvent.OnClientEvent:Connect(showEscapedScreen)
+
+-- Studio-only visual previews. They use the real client display functions but
+-- never contact the server or alter a published session.
+if UI_TEST and RunService:IsStudio() then
+	local previewBar = Instance.new("Frame")
+	previewBar.Name = "StudioGameFlowPreview"
+	previewBar.Position = UDim2.fromOffset(16, 145)
+	previewBar.Size = UDim2.fromOffset(330, 42)
+	previewBar.BackgroundColor3 = Color3.fromRGB(24, 12, 43)
+	previewBar.BorderSizePixel = 0
+	previewBar.ZIndex = 1000
+	previewBar.Parent = gui
+	Instance.new("UICorner", previewBar).CornerRadius = UDim.new(0, 7)
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.Padding = UDim.new(0, 5)
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Parent = previewBar
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0, 5)
+	padding.PaddingRight = UDim.new(0, 5)
+	padding.Parent = previewBar
+
+	local function previewButton(text, width)
+		local button = Instance.new("TextButton")
+		button.Size = UDim2.fromOffset(width, 32)
+		button.BackgroundColor3 = Color3.fromRGB(82, 36, 121)
+		button.BorderSizePixel = 0
+		button.Font = Enum.Font.GothamBold
+		button.Text = text
+		button.TextColor3 = Color3.fromRGB(255, 245, 255)
+		button.TextSize = 11
+		button.ZIndex = 1001
+		button.Parent = previewBar
+		Instance.new("UICorner", button).CornerRadius = UDim.new(0, 5)
+		return button
+	end
+
+	local timeoutButton = previewButton("TIME ENDED", 112)
+	local escapedButton = previewButton("ESCAPED", 96)
+	local closeButton = previewButton("CLOSE", 96)
+
+	timeoutButton.Activated:Connect(function()
+		welcomeShade.Visible = false
+		showRoundFailure({
+			message = "Time ran out. The forest is still hunting.",
+			playerName = player.Name,
+			score = 42,
+			kills = 9,
+			deaths = 2,
+			newScoreRecord = true,
+		})
+	end)
+	escapedButton.Activated:Connect(function()
+		welcomeShade.Visible = false
+		showEscapedScreen({
+			playerName = player.Name,
+			score = 42,
+			kills = 9,
+			deaths = 2,
+			elapsedSeconds = 43 * 60 + 46,
+			newScoreRecord = true,
+			newEscapeRecord = true,
+		})
+	end)
+	closeButton.Activated:Connect(function()
+			escapedNightmare = false
+			endShade.Visible = false
+			escapeShade.Visible = false
+	end)
+end
 
 -- RoundFailed is created by the server round controller in newer places. Do not
 -- block the existing completion HUD in older places where it does not exist yet.
