@@ -34,18 +34,27 @@ local announcedMonsterMilestones = {}
 local lastBroadcastMonsterCount = nil
 local multikillStates = {}
 
-local RESPAWN_TIME = 30 -- seconds before a killed monster respawns
-local CORPSE_DISPLAY_TIME = 5 -- separate from respawn time; body remains briefly visible
-local RESPAWN_LIVES = 4 -- initial life plus three server-owned replacements
+local RESPAWN_TIME = 15 -- seconds before a killed monster respawns
+local CORPSE_DISPLAY_TIME = 3 -- separate from respawn time; body remains briefly visible
+local RESPAWN_LIVES = 3 -- initial life plus three server-owned replacements
 local ROUND_DURATION_SECONDS = 44 * 60 + 45
 local ESCAPE_DURATION_SECONDS = 5 * 60
-local DEFAULT_MONSTER_MAX_COUNT = 90
+local DEFAULT_MONSTER_MAX_COUNT = 180
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
 local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
 local MONSTER_MAX_COUNT_ATTRIBUTE = "MonsterMaxCount"
 local MANAGED_MONSTER_ATTRIBUTE = "RoundManagedMonster"
 local LIVES_REMAINING_ATTRIBUTE = "RoundLivesRemaining"
 local RESPAWN_LEVEL_ATTRIBUTE = "MonsterRespawnLevel"
+local UNDERGROUND_PHASE_ATTRIBUTE = "UndergroundPhaseActive"
+local SECRET_SHAFT_OPEN_ATTRIBUTE = "SecretShaftDoorOpen"
+local NO_RESPAWN_WINDOW_SECONDS = 10 * 60 -- no respawns in the final 12 minutes
+
+local function isInNoRespawnWindow()
+	local endsAt = tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE))
+	if not endsAt then return false end
+	return ws:GetServerTimeNow() >= endsAt - NO_RESPAWN_WINDOW_SECONDS
+end
 
 local function getRespawnTime(model)
 	if model.Name == MonsterBombConfig.MODEL_NAME then
@@ -92,6 +101,8 @@ local function resetRoundClock()
 	ws:SetAttribute("NightmareEscapeActive", false)
 	ws:SetAttribute("NightmareEscapeEndsAt", nil)
 	ws:SetAttribute("NightmareClearElapsedSeconds", nil)
+	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, false)
+	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, false)
 end
 
 getMonsterMaxCount()
@@ -99,6 +110,12 @@ if ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE) == nil
 	or tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) == nil
 	or tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) <= ws:GetServerTimeNow() then
 	resetRoundClock()
+end
+if ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) == nil then
+	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, false)
+end
+if ws:GetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE) == nil then
+	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, false)
 end
 
 local function getOrCreateRemoteEvent(name)
@@ -126,6 +143,8 @@ local playerKillMilestoneEvent = getOrCreateRemoteEvent("PlayerKillMilestone")
 local bestSpawnAnnouncementEvent = getOrCreateRemoteEvent("BestSpawnAnnouncement")
 local secretShaftAnnouncementEvent = getOrCreateRemoteEvent("SecretShaftAnnouncement")
 local secretShaftLockedEvent = getOrCreateRemoteEvent("SecretShaftDoorLocked")
+local lavaPoolDoorOpenedEvent = getOrCreateRemoteEvent("LavaPoolDoorOpened")
+local lavaPoolDoorLockedEvent = getOrCreateRemoteEvent("LavaPoolDoorLocked")
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
@@ -326,6 +345,50 @@ local function countLivingMonsters()
 	return count
 end
 
+-- Underground/key monsters remain normal round participants, but are not part
+-- of the surface combat total shown in the score HUD. This prevents the HUD
+-- from directing players toward monsters that are deliberately hidden from
+-- both radars.
+local function countLivingSurfaceMonsters()
+	local count = 0
+
+	for model in pairs(managedMonsters) do
+		if model.Parent
+			and model:IsDescendantOf(ws)
+			and model:GetAttribute("UndergroundMonster") ~= true
+			and MonsterManager.isRoundTracked(model)
+		then
+			local humanoid = MonsterManager.getMonsterHumanoid(model)
+			if humanoid and humanoid.Health > 0 and getMonsterRoot(model) then
+				count += 1
+			end
+		end
+	end
+
+	return count
+end
+
+local function countLivingUndergroundMonsters()
+	local count = 0
+
+	for model in pairs(managedMonsters) do
+		if model.Parent
+			and model:IsDescendantOf(ws)
+			and model:GetAttribute("UndergroundMonster") == true
+			and MonsterManager.isRoundTracked(model)
+		then
+			local humanoid = MonsterManager.getMonsterHumanoid(model)
+			if humanoid and humanoid.Health > 0 and getMonsterRoot(model) then
+				count += 1
+			end
+		end
+	end
+
+	return count
+end
+
+local beginUndergroundPhase
+
 local function checkRoundComplete(count)
 	if roundComplete or roundFailed then return end
 	if pendingRespawns > 0 then return end
@@ -373,17 +436,36 @@ local function announceMonsterMilestone(count)
 end
 
 local function broadcastMonsterCount()
-	local count = countLivingMonsters()
-	announceMonsterMilestone(count)
-	monsterCountEvent:FireAllClients(count)
-	checkRoundComplete(count)
+	local roundCount = countLivingMonsters()
+	local surfaceCount = countLivingSurfaceMonsters()
+	local undergroundCount = countLivingUndergroundMonsters()
+
+	if not roundComplete
+		and not roundFailed
+		and pendingRespawns == 0
+		and ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) ~= true
+		and surfaceCount == 0
+		and undergroundCount > 0
+	then
+		beginUndergroundPhase()
+	end
+
+	local displayedCount = ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) == true
+		and undergroundCount
+		or surfaceCount
+	announceMonsterMilestone(displayedCount)
+	monsterCountEvent:FireAllClients(displayedCount)
+	checkRoundComplete(roundCount)
 end
 
 local DEFAULT_SCORE_POPUP_COLOR = Color3.fromRGB(255, 238, 150)
 local MULTIKILL_WINDOW_SECONDS = 5
 local MAJOR_KILL_MIN_HP = 520
 local MONSTER_KILL_BONUS = 1
-local secretShaftOpened = false
+local secretShaftOpened = ws:GetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE) == true
+local lavaPoolDoorOpened = ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) == true
+local secretShaftDoors = {}
+local lavaPoolDoors = {}
 local PLAYER_KILL_MILESTONES = {
 	[50] = true,
 	[100] = true,
@@ -450,19 +532,81 @@ local function showScorePopup(model, awards, color)
 	end)
 end
 
--- The marked white creepy is a one-time world gate. Keep this in the central
--- death path so weapon, bomb, and other authoritative damage sources all open
--- the shaft consistently, while the server owns both the door removal and the
--- all-player announcement.
+local function rememberDoor(doors, door, prompt)
+	if doors[door] then return doors[door] end
+
+	local record = {
+		prompt = prompt,
+		promptEnabled = prompt and prompt.Enabled,
+		parts = {},
+	}
+	local function rememberPart(part)
+		table.insert(record.parts, {
+			part = part,
+			transparency = part.Transparency,
+			canCollide = part.CanCollide,
+			canTouch = part.CanTouch,
+			canQuery = part.CanQuery,
+		})
+	end
+
+	rememberPart(door)
+	for _, descendant in ipairs(door:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			rememberPart(descendant)
+		end
+	end
+	doors[door] = record
+	return record
+end
+
+local function setDoorsOpen(doors, isOpen)
+	for door, record in pairs(doors) do
+		if door.Parent then
+			for _, partState in ipairs(record.parts) do
+				local part = partState.part
+				if part.Parent then
+					if isOpen then
+						part.Transparency = 1
+						part.CanCollide = false
+						part.CanTouch = false
+						part.CanQuery = false
+					else
+						part.Transparency = partState.transparency
+						part.CanCollide = partState.canCollide
+						part.CanTouch = partState.canTouch
+						part.CanQuery = partState.canQuery
+					end
+				end
+			end
+			if record.prompt and record.prompt.Parent then
+				if isOpen then
+					record.prompt.Enabled = false
+				else
+					record.prompt.Enabled = record.promptEnabled
+				end
+			end
+		end
+	end
+end
+
+local function resetGateDoors()
+	secretShaftOpened = false
+	lavaPoolDoorOpened = false
+	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, false)
+	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, false)
+	setDoorsOpen(secretShaftDoors, false)
+	setDoorsOpen(lavaPoolDoors, false)
+end
+
+-- The marked white creepy opens this gate no matter which authoritative damage
+-- source kills it. Unlike the old version, the physical door is hidden rather
+-- than destroyed so a restarted game can restore its original locked state.
 local function openSecretShaftIfGuard(model)
 	if secretShaftOpened or model:GetAttribute("SecretShaftDoorGuard") ~= true then return end
 	secretShaftOpened = true
-
-	for _, item in ipairs(ws:GetDescendants()) do
-		if item.Name == "SecretShaftDoor" and item:GetAttribute("SecretShaftDoor") == true then
-			item:Destroy()
-		end
-	end
+	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, true)
+	setDoorsOpen(secretShaftDoors, true)
 
 	local source = SoundService:FindFirstChild("SecretShaftGuard")
 	if source and source:IsA("Sound") then
@@ -478,7 +622,7 @@ local function openSecretShaftIfGuard(model)
 	secretShaftAnnouncementEvent:FireAllClients()
 end
 
-local function bindSecretShaftDoor()
+local function bindGateDoors()
 	for _, item in ipairs(ws:GetDescendants()) do
 		if item:IsA("BasePart") and item.Name == "SecretShaftDoor" and item:GetAttribute("SecretShaftDoor") == true then
 			local prompt = item:FindFirstChildOfClass("ProximityPrompt") or Instance.new("ProximityPrompt")
@@ -488,16 +632,41 @@ local function bindSecretShaftDoor()
 			prompt.MaxActivationDistance = 10
 			prompt.RequiresLineOfSight = false
 			prompt.Parent = item
+			rememberDoor(secretShaftDoors, item, prompt)
 			prompt.Triggered:Connect(function(player)
 				if not secretShaftOpened then
 					secretShaftLockedEvent:FireClient(player)
+				end
+			end)
+		elseif item:IsA("BasePart") and item.Name == "LavaPoolDoor" and item:GetAttribute("LavaPoolDoor") == true then
+			local prompt = item:FindFirstChildOfClass("ProximityPrompt") or Instance.new("ProximityPrompt")
+			prompt.ActionText = "Open"
+			prompt.ObjectText = "Lava Pool"
+			prompt.HoldDuration = 0.2
+			prompt.MaxActivationDistance = 10
+			prompt.RequiresLineOfSight = false
+			prompt.Parent = item
+			rememberDoor(lavaPoolDoors, item, prompt)
+			prompt.Triggered:Connect(function(player)
+				if not lavaPoolDoorOpened then
+					lavaPoolDoorLockedEvent:FireClient(player)
 				end
 			end)
 		end
 	end
 end
 
-bindSecretShaftDoor()
+bindGateDoors()
+setDoorsOpen(secretShaftDoors, secretShaftOpened)
+setDoorsOpen(lavaPoolDoors, lavaPoolDoorOpened)
+
+beginUndergroundPhase = function()
+	if ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) == true then return end
+	lavaPoolDoorOpened = true
+	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, true)
+	setDoorsOpen(lavaPoolDoors, true)
+	lavaPoolDoorOpenedEvent:FireAllClients()
+end
 
 local function updateScoreRecords(player)
 	local currentScore = scores[player] or 0
@@ -689,9 +858,9 @@ local function onMonsterKilled(hum, model)
 		local livesAfterDeath = permanentWeaponKill and 0 or math.max(0, (data.livesRemaining or 1) - 1)
 		local willRespawn = livesAfterDeath > 0 and (
 			model.Name == MonsterBombConfig.MODEL_NAME
-			or math.random() < getRespawnChance()
+				or math.random() < getRespawnChance()
 		)
-		if livesAfterDeath == 0 or not willRespawn or roundFailed or roundComplete then
+		if livesAfterDeath == 0 or not willRespawn or roundFailed or roundComplete or isInNoRespawnWindow() or ws:GetAttribute("GameStopped") == true then
 			task.delay(CORPSE_DISPLAY_TIME, function()
 				if model.Parent then
 					model:Destroy()
@@ -865,7 +1034,9 @@ local function restartRound()
 	escapeActive = false
 	announcedMonsterMilestones = {}
 	lastBroadcastMonsterCount = nil
+	ws:SetAttribute("GameStopped", false)
 	resetRoundClock()
+	resetGateDoors()
 
 	for _, instance in ws:GetDescendants() do
 		if instance:IsA("Model") and MonsterManager.isRoundTracked(instance) then
@@ -897,6 +1068,10 @@ local function restartRound()
 end
 
 restartRoundEvent.OnServerEvent:Connect(function(player)
+	if ws:GetAttribute("GameStopped") == true then
+		restartRound()
+		return
+	end
 	if not roundComplete and not roundFailed then return end
 	-- During the escape phase only somebody who has actually entered the portal
 	-- may restart the shared round. It prevents an uninvolved player from
@@ -928,7 +1103,9 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(1)
-		if escapeActive then
+		if ws:GetAttribute("GameStopped") == true then
+			-- Game is stopped; do not advance any round logic
+		elseif escapeActive then
 			local escapeEndsAt = tonumber(ws:GetAttribute("NightmareEscapeEndsAt")) or 0
 			if ws:GetServerTimeNow() >= escapeEndsAt then
 				escapeActive = false
@@ -969,7 +1146,7 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(3)
-		if not roundComplete and not roundFailed then
+		if not roundComplete and not roundFailed and ws:GetAttribute("GameStopped") ~= true then
 			for model in pairs(managedMonsters) do
 				if not model.Parent or not model:IsDescendantOf(ws) then
 					managedMonsters[model] = nil

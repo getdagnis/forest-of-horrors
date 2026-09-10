@@ -26,6 +26,9 @@ local DEFAULT_MONSTER_DAMAGE_COOLDOWN = 2
 -- interval. Lower values look busier but cost more pathfinding; 12 seconds
 -- keeps 10–30 minute map-scale travel slow and varied.
 local SEARCH_WAYPOINT_INTERVAL = 12
+local PERCEPTION_INTERVAL = 0.5
+local STATE_TICK_MIN = 0.22
+local STATE_TICK_MAX = 0.30
 
 local function updateDisplay(display, state)
 	task.spawn(function()
@@ -65,6 +68,7 @@ end
 -- means each zombie only does its local state-machine work.
 ZombieAI.new = function(model, navigation)
 	local zombie = {}
+	local brainRandom = Random.new()
 	local configTable = model:WaitForChild("Configurations")
 	local configs = {}
 
@@ -84,7 +88,10 @@ ZombieAI.new = function(model, navigation)
 	-- only the per-zombie strike interval, not player attack damage.
 	loadConfig("MonsterDamageCooldown", DEFAULT_MONSTER_DAMAGE_COOLDOWN)
 
-	local StateMachine = require(ServerStorage:WaitForChild("ROBLOX_StateMachine")).new()
+	local StateMachine = require(ServerStorage:WaitForChild("ROBLOX_StateMachine")).new({
+		WaitTime = brainRandom:NextNumber(STATE_TICK_MIN, STATE_TICK_MAX),
+		InitialDelay = brainRandom:NextNumber(0, PERCEPTION_INTERVAL),
+	})
 	local PathLib = require(ServerStorage:WaitForChild("ROBLOX_PathfindingLibrary")).new()
 	local ZombieTarget = nil
 	local ZombieTargetLastLocation = nil
@@ -94,6 +101,8 @@ ZombieAI.new = function(model, navigation)
 	local lastProgressPosition = nil
 	local lastProgressAt = time()
 	local lastMonsterAttack = 0
+	local lastPerceptionAt = -math.huge
+	local cachedVisiblePlayerTarget = nil
 	local stopRequested = false
 
 	local function moveTo(destination, usePathfinding)
@@ -247,28 +256,47 @@ ZombieAI.new = function(model, navigation)
 			return true
 		end
 
-		local humanoids = HumanoidList:GetCurrent()
-		local ignoredCharacters = { model }
-		local playerCharacters = {}
+		local now = time()
+		if now - lastPerceptionAt >= PERCEPTION_INTERVAL then
+			lastPerceptionAt = now
+			-- HumanoidList is the existing shared cache. Retaining it preserves the
+			-- legacy raycast behavior: nearby non-player characters stay ignored
+			-- when checking sightlines to player characters.
+			local humanoids = HumanoidList:GetCurrent()
+			local ignoredCharacters = { model }
+			local playerCharacters = {}
 
-		for _, humanoid in pairs(humanoids) do
-			local character = humanoid and humanoid.Parent
-			local characterRoot = character and character:FindFirstChild("HumanoidRootPart")
+			for _, humanoid in pairs(humanoids) do
+				local character = humanoid and humanoid.Parent
+				local characterRoot = character and character:FindFirstChild("HumanoidRootPart")
 
-			if character and characterRoot and humanoid.Health > 0 and humanoid.WalkSpeed > 0 then
-				local distance = (root.Position - characterRoot.Position).Magnitude
+				if character and characterRoot and humanoid.Health > 0 and humanoid.WalkSpeed > 0 then
+					local distance = (root.Position - characterRoot.Position).Magnitude
 
-				if distance <= configs["AggroRange"] then
-					if Players:GetPlayerFromCharacter(character) then
-						table.insert(playerCharacters, character)
-					else
-						table.insert(ignoredCharacters, character)
+					if distance <= configs["AggroRange"] then
+						if Players:GetPlayerFromCharacter(character) then
+							table.insert(playerCharacters, character)
+						else
+							table.insert(ignoredCharacters, character)
+						end
 					end
 				end
 			end
+
+			cachedVisiblePlayerTarget = AIUtilities:GetClosestVisibleTarget(
+				model,
+				playerCharacters,
+				ignoredCharacters,
+				configs["FieldOfView"]
+			)
 		end
 
-		local target = AIUtilities:GetClosestVisibleTarget(model, playerCharacters, ignoredCharacters, configs["FieldOfView"])
+		local target = cachedVisiblePlayerTarget
+		local targetHumanoid = target and getHumanoid(target)
+		if not targetHumanoid or targetHumanoid.Health <= 0 or not getRoot(target) then
+			target = nil
+			cachedVisiblePlayerTarget = nil
+		end
 
 		-- A guardian pet can provoke only the monster it struck. A visible player
 		-- remains the stronger priority unless the pet has actually stepped between

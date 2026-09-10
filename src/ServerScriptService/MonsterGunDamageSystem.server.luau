@@ -185,19 +185,12 @@ local function getServerShot(tool, player, cameraOrigin, direction)
 	return muzzlePosition or cameraOrigin, result, endPosition, false
 end
 
-local function makeMonsterPink(model)
-	for _, item in model:GetDescendants() do
-		if item:IsA("BasePart") then
-			item.Color = HIT_COLOR
-			item.Material = Enum.Material.Neon
-		end
-	end
-end
-
 local function disintegrateMonster(model, blastOrigin)
-	makeMonsterPink(model)
 	for _, item in model:GetDescendants() do
-		if item:IsA("Motor6D") or item:IsA("Weld") or item:IsA("WeldConstraint") then
+		-- Marketplace rigs regularly use ManualWeld, Glue, Snap, or constraints
+		-- instead of plain Motor6Ds. Remove every internal physical joint so a
+		-- confirmed lethal hit cannot leave an intact dead creepy rig behind.
+		if item:IsA("JointInstance") or item:IsA("WeldConstraint") or item:IsA("Constraint") then
 			item:Destroy()
 		end
 	end
@@ -243,7 +236,11 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 		humanoid.RequiresNeck = false
 		-- A lethal bomb shot must run MonsterBombSystem's normal explosion and
 		-- respawn lifecycle. Disintegrating it here would erase that gameplay.
-		if monsterModel.Name ~= "BombMonster" then
+		-- Creepy variants use MonsterDeathSafety's one post-death scatter path.
+		-- Their visible mesh lives outside the nested Noob humanoid rig.
+		if monsterModel.Name ~= "BombMonster"
+			and string.sub(monsterModel.Name, 1, #"creepyMonster") ~= "creepyMonster"
+		then
 			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 			disintegrateMonster(monsterModel, root and root.Position or monsterModel:GetPivot().Position)
 		end

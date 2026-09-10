@@ -11,10 +11,18 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local SPAWN_POINT_NAME = "AppleStoreZombieSpawnPoint"
 local ZOMBIE_NAME = "Drooling Zombie"
-local SPAWN_INTERVAL = 15
+local SPAWN_INTERVAL = 30
 local MAX_LIVING_MONSTERS = 150
-local STOP_SPAWNING_AT_OR_BELOW = 20
-local DEFAULT_HEIGHT_OFFSET = 3
+local STOP_SPAWNING_AT_OR_BELOW = 25
+local DEFAULT_HEIGHT_OFFSET = 6
+local NO_SPAWN_WINDOW_SECONDS = 12 * 60 -- no zombie spawning in the final 12 minutes
+
+local function isInNoSpawnWindow()
+	if Workspace:GetAttribute("GameStopped") == true then return true end
+	local endsAt = tonumber(Workspace:GetAttribute("RoundEndsAt"))
+	if not endsAt then return false end
+	return Workspace:GetServerTimeNow() >= endsAt - NO_SPAWN_WINDOW_SECONDS
+end
 
 local activeSpawnPoints = {}
 local zombieTemplate
@@ -63,7 +71,8 @@ local function getSpawnCFrame(spawnPoint)
 end
 
 local function spawnZombie(spawnPoint)
-	if Workspace:GetAttribute("RoundActive") == false then return end
+	if Workspace:GetAttribute("RoundActive") == false or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
+	if isInNoSpawnWindow() then return end
 	local livingCount = countLivingMonsters()
 	-- The late-round population is intentionally allowed to shrink. Do not
 	-- refill the last twenty canonical hostile contacts from this generator.

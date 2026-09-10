@@ -11,8 +11,6 @@ local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 local tool = script.Parent
-local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
-AudioPreloader.Start()
 local shootEvent = tool:WaitForChild("ShootEvent")
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
@@ -169,7 +167,6 @@ local function getChargeProgress()
 end
 
 local function playShotSound(power)
-	AudioPreloader.WaitUntilReady(2)
 	local sound = getOrCreateSound("GunshotSound", GUNSHOT_SOUND, DEFAULT_SOUND_VOLUME)
 	if not sound then return end
 	-- A reused Sound keeps its first SoundId unless it is updated explicitly.
@@ -180,7 +177,6 @@ local function playShotSound(power)
 end
 
 local function playCooldownSound()
-	AudioPreloader.WaitUntilReady(2)
 	local sound = getOrCreateSound("CooldownSound", COOLDOWN_SOUND, DEFAULT_SOUND_VOLUME)
 	if sound then
 		-- Repeated clicks during cooldown must give repeated feedback, rather than
@@ -445,7 +441,7 @@ end
 
 local function unbindMobileChargeControl()
 	-- Remove the old global touch sink. Tool.Activated/Deactivated already owns
-	-- mouse, touch and gamepad firing through Roblox's native Tool controls.
+	-- mouse, touch and gamepad firing through native Tool controls.
 	ContextActionService:UnbindAction("MonsterBlasterCharge")
 end
 
@@ -594,7 +590,7 @@ local function muzzleFlash(power)
 	light.Color = Config.FLASH_COLOR
 	light.Brightness = MUZZLE_LIGHT_BRIGHTNESS_MIN + MUZZLE_LIGHT_BRIGHTNESS_GAIN * power
 	light.Range = MUZZLE_LIGHT_RANGE_MIN + MUZZLE_LIGHT_RANGE_GAIN * power
-	light.Shadows = true
+	light.Shadows = false
 	light.Parent = flash
 	Debris:AddItem(flash, MUZZLE_FLASH_LIFETIME)
 end
@@ -614,7 +610,7 @@ local function makeImpactLight(position, power)
 	light.Color = Config.FLASH_COLOR
 	light.Brightness = IMPACT_LIGHT_BRIGHTNESS_MIN + IMPACT_LIGHT_BRIGHTNESS_GAIN * power
 	light.Range = IMPACT_LIGHT_RANGE_MIN + IMPACT_LIGHT_RANGE_GAIN * power
-	light.Shadows = true
+	light.Shadows = false
 	light.Parent = emitter
 	Debris:AddItem(emitter, IMPACT_LIGHT_LIFETIME)
 end
@@ -746,9 +742,7 @@ tool.Unequipped:Connect(function()
 end)
 
 player.CharacterAdded:Connect(function()
-	task.defer(function()
-		cleanupWeaponState()
-	end)
+	task.defer(cleanupWeaponState)
 end)
 
 player.CharacterRemoving:Connect(cleanupWeaponState)

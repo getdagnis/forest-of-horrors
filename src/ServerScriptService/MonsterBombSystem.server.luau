@@ -26,31 +26,6 @@ local function getRoot(model)
 		or model:FindFirstChildWhichIsA("BasePart", true)
 end
 
--- BombMonster has no model-local Animator. Restore only its original calm
--- float here, relative to the spawn pivot; warning and explosion presentation
--- deliberately stay exactly as they are below.
-local function startIdleBob(model, humanoid)
-	local active = true
-	local basePivot = model:GetPivot()
-
-	task.spawn(function()
-		local startedAt = os.clock()
-		while active and model.Parent and humanoid.Parent and humanoid.Health > 0 do
-			local offset = math.sin((os.clock() - startedAt) * Config.IDLE_PULSE_SPEED) * Config.IDLE_PULSE_HEIGHT
-			model:PivotTo(basePivot * CFrame.new(0, offset, 0))
-			task.wait(0.03)
-		end
-	end)
-
-	return function(resetToBase)
-		if not active then return end
-		active = false
-		if resetToBase and model.Parent then
-			model:PivotTo(basePivot)
-		end
-	end
-end
-
 local function getOrCreateWarningLight(model, root)
 	local skin = model:FindFirstChild("Skin", true)
 	if not (skin and skin:IsA("BasePart")) then
@@ -85,7 +60,7 @@ local function startWarningPulse(model)
 
 	applyWarningSkin(model)
 	light.Color = Config.WARNING_LIGHT_COLOR
-	light.Shadows = true
+	light.Shadows = false
 	light.Enabled = true
 	local active = true
 	local startedAt = os.clock()
@@ -196,7 +171,7 @@ local function makeExplosionVisual(position)
 	light.Color = Config.BLAST_COLOR
 	light.Brightness = 34
 	light.Range = Config.BLAST_RADIUS * 1.2
-	light.Shadows = true
+	light.Shadows = false
 	light.Parent = sphere
 
 	TweenService:Create(sphere, TweenInfo.new(Config.BLAST_VISUAL_DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
@@ -281,7 +256,6 @@ local function setupBomb(model)
 	humanoid.NameDisplayDistance = 0
 	humanoid.HealthDisplayType = Enum.HumanoidHealthDisplayType.DisplayWhenDamaged
 
-	local stopIdleBob = startIdleBob(model, humanoid)
 	local existingWarningLight = getOrCreateWarningLight(model, getRoot(model))
 	if existingWarningLight then existingWarningLight.Enabled = false end
 	local exploded = false
@@ -295,7 +269,6 @@ local function setupBomb(model)
 
 		local root = getRoot(model)
 		local position = root and root.Position or model:GetPivot().Position
-		stopIdleBob()
 		stopWarningPulse()
 		makeExplosionVisual(position)
 		playExplosionSound(model, position)
@@ -316,7 +289,6 @@ local function setupBomb(model)
 		if warningActive or exploded or not model.Parent then return end
 		warningActive = true
 		model:SetAttribute("BombWarningActive", true)
-		stopIdleBob(true)
 		stopWarningPulse = startWarningPulse(model)
 		playWarningSound(model)
 		task.delay(Config.WARNING_TIME, explode)
@@ -354,7 +326,6 @@ local function setupBomb(model)
 	end)
 
 	model.Destroying:Connect(function()
-		stopIdleBob()
 		stopWarningPulse()
 		activeBombs[model] = nil
 	end)

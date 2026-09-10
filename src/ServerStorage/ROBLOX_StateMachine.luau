@@ -1,10 +1,13 @@
 local machine = {}
 
-machine.new = function()
+machine.new = function(options)
 	local StateMachine = {}
+	options = options or {}
 
-	StateMachine.WaitTime = 0.2
+	StateMachine.WaitTime = options.WaitTime or 0.2
+	StateMachine.InitialDelay = options.InitialDelay or 0
 	StateMachine.CurrentState = nil
+	StateMachine.HasStarted = false
 
 	StateMachine.SwitchState = function(newState)
 		if StateMachine.CurrentState then
@@ -28,6 +31,13 @@ machine.new = function()
 
 		state.Run = function()
 			state.isRunning = true
+			-- Stagger only the first update for this brain. Later state changes
+			-- remain immediate instead of adding delay to each transition.
+			if not StateMachine.HasStarted then
+				StateMachine.HasStarted = true
+				task.wait(StateMachine.InitialDelay)
+				if not state.isRunning then return end
+			end
 
 			while state.isRunning do
 				for _, condition in pairs(state.Conditions) do

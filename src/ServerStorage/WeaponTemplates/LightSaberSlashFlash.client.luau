@@ -47,7 +47,7 @@ local function slashFlash()
 	light.Color = FLASH_COLOR
 	light.Brightness = SLASH_LIGHT_BRIGHTNESS
 	light.Range = SLASH_LIGHT_RANGE
-	light.Shadows = true
+	light.Shadows = false
 	light.Parent = flash
 
 	-- Put the pulse at the striking end, matching the short coloured gun pulses

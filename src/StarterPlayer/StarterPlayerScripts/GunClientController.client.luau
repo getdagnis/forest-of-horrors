@@ -11,9 +11,8 @@ local SoundService = game:GetService("SoundService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
-AudioPreloader.Start()
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
+local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFeedback"))
 local GunAim = require(ReplicatedStorage:WaitForChild("GunAim"))
 local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
 local shotVisualEvent = ReplicatedStorage:WaitForChild("GunShotVisual")
@@ -33,8 +32,9 @@ local DEFAULT_COLORS = {
 local GUN_MUZZLE_LIGHT_LIFETIME = 0.12
 local GUN_IMPACT_LIGHT_LIFETIME = 0.32
 local GUN_BEAM_LIFETIME = 0.2
+local MAX_FREE_IMPACT_ENDPOINTS = 64
 local knownMonsters = {}
-local flashStates = {}
+local freeImpactEndpoints = {}
 local equippedTool
 local activeHud
 local lockedMonster
@@ -241,7 +241,6 @@ end
 
 
 local function playShotSound(tool)
-	AudioPreloader.WaitUntilReady(2)
 	local sound = tool:FindFirstChild("ShotSound", true)
 	if not sound or not sound:IsA("Sound") then
 		sound = SoundService:FindFirstChild("FallbackShotSound")
@@ -268,28 +267,60 @@ local function getVisibleBeamStart(tool, barrel)
 	return attachment, true
 end
 
+local function makeImpactEndpoint()
+	local part = Instance.new("Part")
+	part.Name = "GunBeamEnd"
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Transparency = 1
+	part.Size = Vector3.new(0.1, 0.1, 0.1)
+
+	local attachment = Instance.new("Attachment")
+	attachment.Name = "GunBeamEndAttachment"
+	attachment.Parent = part
+
+	local light = Instance.new("PointLight")
+	light.Name = "GunImpactLight"
+	light.Brightness = 12
+	light.Range = 24
+	light.Shadows = false
+	light.Enabled = false
+	light.Parent = part
+
+	return { part = part, attachment = attachment, light = light, token = 0 }
+end
+
+local function acquireImpactEndpoint(endPosition, color)
+	local endpoint = table.remove(freeImpactEndpoints) or makeImpactEndpoint()
+	endpoint.token += 1
+	endpoint.part.Position = endPosition
+	endpoint.light.Color = color
+	endpoint.light.Enabled = true
+	endpoint.part.Parent = workspace
+	return endpoint, endpoint.token
+end
+
+local function releaseImpactEndpoint(endpoint, token)
+	task.delay(GUN_IMPACT_LIGHT_LIFETIME, function()
+		if endpoint.token ~= token then return end
+		endpoint.light.Enabled = false
+		endpoint.part.Parent = nil
+		if #freeImpactEndpoints < MAX_FREE_IMPACT_ENDPOINTS then
+			table.insert(freeImpactEndpoints, endpoint)
+		else
+			endpoint.part:Destroy()
+		end
+	end)
+end
+
 local function renderShot(tool, origin, endPosition, color, hitModel)
 	local barrel = tool and (tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true))
 	if not barrel or not barrel:IsA("BasePart") then return end
 	playShotSound(tool)
 
-	local endPart = Instance.new("Part")
-	endPart.Name = "GunBeamEnd"
-	endPart.Anchored = true
-	endPart.CanCollide = false
-	endPart.CanQuery = false
-	endPart.CanTouch = false
-	endPart.Transparency = 1
-	endPart.Size = Vector3.new(0.1, 0.1, 0.1)
-	endPart.Position = endPosition
-	endPart.Parent = workspace
-
-	local hitLight = Instance.new("PointLight")
-	hitLight.Color = color
-	hitLight.Brightness = 12
-	hitLight.Range = 24
-	hitLight.Shadows = true
-	hitLight.Parent = endPart
+	local endpoint, endpointToken = acquireImpactEndpoint(endPosition, color)
 
 	local startAttachment, isTemporary = getVisibleBeamStart(tool, barrel)
 	local muzzleLight = Instance.new("PointLight")
@@ -297,14 +328,12 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	muzzleLight.Color = color
 	muzzleLight.Brightness = 12
 	muzzleLight.Range = 16
-	muzzleLight.Shadows = true
+	muzzleLight.Shadows = false
 	muzzleLight.Parent = startAttachment
 	Debris:AddItem(muzzleLight, GUN_MUZZLE_LIGHT_LIFETIME)
-	local endAttachment = Instance.new("Attachment")
-	endAttachment.Parent = endPart
 	local beam = Instance.new("Beam")
 	beam.Attachment0 = startAttachment
-	beam.Attachment1 = endAttachment
+	beam.Attachment1 = endpoint.attachment
 	beam.FaceCamera = true
 	beam.Width0 = 0.28
 	beam.Width1 = 0.12
@@ -315,48 +344,10 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 	beam.Parent = barrel
 	Debris:AddItem(beam, GUN_BEAM_LIFETIME)
 	if isTemporary then Debris:AddItem(startAttachment, GUN_BEAM_LIFETIME) end
-	Debris:AddItem(endPart, GUN_IMPACT_LIGHT_LIFETIME)
+	releaseImpactEndpoint(endpoint, endpointToken)
 
 	if hitModel then
-		local state = flashStates[hitModel]
-		if not state then
-			state = { parts = {}, bodyColors = {}, token = 0 }
-			flashStates[hitModel] = state
-			for _, item in hitModel:GetDescendants() do
-				if item:IsA("BasePart") then
-					state.parts[item] = { color = item.Color, material = item.Material }
-				elseif item:IsA("BodyColors") then
-					state.bodyColors[item] = {
-						head = item.HeadColor3, leftArm = item.LeftArmColor3, rightArm = item.RightArmColor3,
-						leftLeg = item.LeftLegColor3, rightLeg = item.RightLegColor3, torso = item.TorsoColor3,
-					}
-				end
-			end
-		end
-		for part in pairs(state.parts) do
-			if part.Parent then part.Color = color; part.Material = Enum.Material.Neon end
-		end
-		for bodyColors in pairs(state.bodyColors) do
-			if bodyColors.Parent then
-				bodyColors.HeadColor3 = color; bodyColors.LeftArmColor3 = color; bodyColors.RightArmColor3 = color
-				bodyColors.LeftLegColor3 = color; bodyColors.RightLegColor3 = color; bodyColors.TorsoColor3 = color
-			end
-		end
-		state.token += 1
-		local token = state.token
-		task.delay(0.25, function()
-			if flashStates[hitModel] ~= state or state.token ~= token then return end
-			flashStates[hitModel] = nil
-			for part, values in pairs(state.parts) do
-				if part.Parent then part.Color = values.color; part.Material = values.material end
-			end
-			for bodyColors, values in pairs(state.bodyColors) do
-				if bodyColors.Parent then
-					bodyColors.HeadColor3 = values.head; bodyColors.LeftArmColor3 = values.leftArm; bodyColors.RightArmColor3 = values.rightArm
-					bodyColors.LeftLegColor3 = values.leftLeg; bodyColors.RightLegColor3 = values.rightLeg; bodyColors.TorsoColor3 = values.torso
-				end
-			end
-		end)
+		MonsterHitFeedback.flash(hitModel, color, 0.25, false)
 	end
 end
 

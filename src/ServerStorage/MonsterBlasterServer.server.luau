@@ -34,11 +34,11 @@ local DIRECTION_EPSILON = 0.01
 local MONSTER_FLASH_DURATION = 0.25
 local KILL_ILLUMINATION_DURATION = 0.3
 local DISINTEGRATION_DIRECTION_EPSILON = 0.1
-local DISINTEGRATION_DECAL_TRANSPARENCY = 0.45
 local DISINTEGRATION_SPEED_MIN = 45
 local DISINTEGRATION_SPEED_MAX = 80
 local DISINTEGRATION_UPWARD_SPEED_MIN = 25
 local DISINTEGRATION_UPWARD_SPEED_MAX = 55
+local DEATH_HIGHLIGHT_DURATION = 0.30
 local KNOCKBACK_HORIZONTAL_SPEED = 65
 local KNOCKBACK_UPWARD_SPEED = 8
 local MONSTER_PUSH_DISTANCE = 8
@@ -319,32 +319,12 @@ local function shouldGroundShockwave(result)
 	return not (model and Players:GetPlayerFromCharacter(model))
 end
 
-local function setBodyColors(bodyColors, color)
-	bodyColors.HeadColor3 = color
-	bodyColors.LeftArmColor3 = color
-	bodyColors.RightArmColor3 = color
-	bodyColors.LeftLegColor3 = color
-	bodyColors.RightLegColor3 = color
-	bodyColors.TorsoColor3 = color
-end
-
-local function makeMonsterBlue(model)
-	for _, item in model:GetDescendants() do
-		if item:IsA("BodyColors") then
-			setBodyColors(item, Config.FLASH_COLOR)
-		elseif item:IsA("BasePart") then
-			item.Color = Config.FLASH_COLOR
-			item.Material = Enum.Material.Neon
-		elseif item:IsA("Decal") or item:IsA("Texture") then
-			item.Transparency = DISINTEGRATION_DECAL_TRANSPARENCY
-		end
-	end
-end
-
 local function disintegrateMonster(model, blastOrigin)
-	makeMonsterBlue(model)
+	MonsterHitFeedback.flash(model, Config.FLASH_COLOR, DEATH_HIGHLIGHT_DURATION, false)
 	for _, item in model:GetDescendants() do
-		if item:IsA("Motor6D") or item:IsA("Weld") or item:IsA("WeldConstraint") then item:Destroy() end
+		-- Imported rigs can be held together by ManualWeld, Glue, Snap, or a
+		-- physical constraint. A lethal hit must sever every internal joint.
+		if item:IsA("JointInstance") or item:IsA("WeldConstraint") or item:IsA("Constraint") then item:Destroy() end
 	end
 	for _, part in model:GetDescendants() do
 		if part:IsA("BasePart") then
@@ -381,7 +361,7 @@ local function pushMonsterBack(model, blastOrigin)
 	Debris:AddItem(attachment, MONSTER_PUSH_SECONDS)
 end
 
-local function damageMonster(player, model, damage, blastOrigin, directBeam)
+local function damageMonster(player, model, damage, blastOrigin)
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
 	-- A bonded guardian may be fighting inside either the direct beam or ground
@@ -399,17 +379,18 @@ local function damageMonster(player, model, damage, blastOrigin, directBeam)
 		-- during the weapon's own charge/cooldown window.
 		humanoid:SetAttribute("BlasterRegenLockedUntil", workspace:GetServerTimeNow() + 5)
 	end
-	-- A lethal direct beam is the Blaster's high-impact finish: the dead model
-	-- breaks into physical pieces and is thrown away from the shot origin.
-	-- Ground shockwaves remain area damage only, and bombs retain their own
+	-- Every non-bomb Blaster lethal is a high-impact finish, whether caused by
+	-- the direct beam or its ground shockwave. Bombs retain their separate
 	-- warning/explosion lifecycle rather than becoming ordinary debris.
-	local disintegrateOnDeath = willDie and directBeam and model.Name ~= "BombMonster"
-	if disintegrateOnDeath then
+	local disintegrateOnDeath = willDie and model.Name ~= "BombMonster"
+	if disintegrateOnDeath
+		and string.sub(model.Name, 1, #"creepyMonster") ~= "creepyMonster"
+	then
 		humanoid.BreakJointsOnDeath = false
 		humanoid.RequiresNeck = false
 		-- Death listeners run synchronously from TakeDamage. Break and launch a
-		-- confirmed-lethal direct-beam target first, before corpse safety can
-		-- neutralise the dead rig's scripts and physics.
+		-- confirmed-lethal target first, before corpse safety can neutralise the
+		-- dead rig's scripts and physics.
 		disintegrateMonster(model, blastOrigin)
 	end
 	humanoid:TakeDamage(effectiveDamage)
@@ -542,7 +523,7 @@ local function damageGroundShockwave(player, position, power)
 	end)
 	local targetCount = math.min(Config.MAX_SHOCKWAVE_TARGETS, #candidates)
 	for index = 1, targetCount do
-		damageMonster(player, candidates[index].model, damage, position, false)
+		damageMonster(player, candidates[index].model, damage, position)
 	end
 end
 
@@ -594,15 +575,15 @@ shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outli
 		-- Preserve the forgiving Spherecast/contour target first, then continue
 		-- through every monster that the exact camera ray crosses behind it.
 		local damaged = { [target] = true }
-		damageMonster(player, target, damage, origin, true)
+		damageMonster(player, target, damage, origin)
 		for _, monster in ipairs(getPiercedMonsterHits(origin, unitDirection, player.Character)) do
 			if not damaged[monster] then
 				damaged[monster] = true
-				damageMonster(player, monster, damage, origin, true)
+				damageMonster(player, monster, damage, origin)
 			end
 		end
 	else
-		damageMonster(player, target, damage, origin, true)
+		damageMonster(player, target, damage, origin)
 	end
 end)
 

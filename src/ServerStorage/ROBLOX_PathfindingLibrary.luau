@@ -8,11 +8,13 @@ local PathfindingUtility = {}
 local TargetOffsetMax = 10
 local JumpThreshold = 1.5
 local NextPointThreshold = 4
+local MIN_PATH_RECOMPUTE_INTERVAL = 0.8
 
 function PathfindingUtility.new()
 	local this = {}
 
 	local lastTargetPos = Vector3.new(math.huge, math.huge, math.huge)
+	local lastPathComputeAt = -math.huge
 	local path = nil
 	local currentPointIndex = 1
 
@@ -26,7 +28,11 @@ function PathfindingUtility.new()
 
 		local targetOffset = (lastTargetPos - target).Magnitude
 
-		if targetOffset > TargetOffsetMax then
+		-- Keep following the current path while a moving target jitters. A fresh
+		-- route is capped at once per 0.8 seconds, but the first path is immediate.
+		if (not path or targetOffset > TargetOffsetMax)
+			and time() - lastPathComputeAt >= MIN_PATH_RECOMPUTE_INTERVAL
+		then
 			local startPoint = root.Position
 			local humanoidState = humanoid:GetState()
 
@@ -50,6 +56,7 @@ function PathfindingUtility.new()
 			path = PathfindingService:ComputeSmoothPathAsync(startPoint, newTarget, 500)
 			currentPointIndex = 1
 			lastTargetPos = target
+			lastPathComputeAt = time()
 		end
 
 		if path then

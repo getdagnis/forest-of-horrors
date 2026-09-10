@@ -1,99 +1,94 @@
--- RadarTowerSystem: explicit, copy-safe radar tower controls.
--- Every tower is identified by RadarTower=true. Its actual Seat and display
--- part are marked with RadarTowerSeat=true and RadarTowerScreen=true.
+-- RadarTowerSystem: author-owned controls for the single restored pilot tower.
+-- The old RadarSeat/RadarScreen hierarchy is visual scenery only. At runtime we
+-- create one explicit RadarTowerConsole Part at the legacy display and own its
+-- prompt, click target, HUD event, and local-audio anchor from this script.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
+local PILOT_TOWER_PREFIX = "MGT"
 local ACTIVATION_DISTANCE = 16
+
 local event = ReplicatedStorage:FindFirstChild("RadarTowerUse")
 if not event then
 	event = Instance.new("RemoteEvent")
 	event.Name = "RadarTowerUse"
 	event.Parent = ReplicatedStorage
 end
+
+local activeSources = {}
+local pilotTower
+local console
+
+-- The server sees the complete map even when client streaming hides distant
+-- monsters. Keep a small registry instead of scanning all Workspace parts for
+-- every radar refresh.
 local snapshotEvent = ReplicatedStorage:FindFirstChild("RadarTowerSnapshot")
 if not snapshotEvent then
 	snapshotEvent = Instance.new("RemoteEvent")
 	snapshotEvent.Name = "RadarTowerSnapshot"
 	snapshotEvent.Parent = ReplicatedStorage
 end
-
-local activeSources = {}
-local boundTowers = {}
-local boundSeats = {}
--- Keep the radar's contact source bounded to round monster models.  The old
--- snapshot path walked every descendant in Workspace on activation and every
--- ten seconds; this place contains tens of thousands of imported parts.
 local trackedMonsters = {}
-local trackedMonsterConnections = {}
-
-local function isTrackedMonster(instance)
-	return instance:IsA("Model")
-		and MonsterManager.isRoundTracked(instance)
-		and instance:GetAttribute("RoundManagedMonster") == true
-		and instance:GetAttribute("UndergroundMonster") ~= true
-end
 
 local function refreshTrackedMonster(instance)
 	if not instance:IsA("Model") then return end
-	if isTrackedMonster(instance) then
-		trackedMonsters[instance] = true
-	else
-		trackedMonsters[instance] = nil
-	end
-end
-
-local function registerTrackedMonster(instance)
-	if not instance:IsA("Model") or trackedMonsterConnections[instance] then
-		refreshTrackedMonster(instance)
-		return
-	end
-	-- Ignore ordinary map models; only configured monster models can ever
-	-- become radar contacts.  This keeps the registry itself small.
-	if not MonsterManager.getConfig(instance) then return end
-	trackedMonsterConnections[instance] = {
-		instance:GetAttributeChangedSignal("RoundManagedMonster"):Connect(function()
-			refreshTrackedMonster(instance)
-		end),
-		instance:GetAttributeChangedSignal("RoundTracked"):Connect(function()
-			refreshTrackedMonster(instance)
-		end),
-		instance:GetAttributeChangedSignal("UndergroundMonster"):Connect(function()
-			refreshTrackedMonster(instance)
-		end),
-	}
-	refreshTrackedMonster(instance)
-end
-
-local function unregisterTrackedMonster(instance)
-	trackedMonsters[instance] = nil
-	local connections = trackedMonsterConnections[instance]
-	if connections then
-		for _, connection in ipairs(connections) do connection:Disconnect() end
-		trackedMonsterConnections[instance] = nil
-	end
+	local tracked = MonsterManager.isRoundTracked(instance)
+		and instance:GetAttribute("RoundManagedMonster") == true
+		and (
+			Workspace:GetAttribute("UndergroundPhaseActive") == true
+			or instance:GetAttribute("UndergroundMonster") ~= true
+		)
+	if tracked then trackedMonsters[instance] = true else trackedMonsters[instance] = nil end
 end
 
 for _, instance in ipairs(Workspace:GetDescendants()) do
-	if instance:IsA("Model") then registerTrackedMonster(instance) end
+	if instance:IsA("Model") and MonsterManager.getConfig(instance) then
+		refreshTrackedMonster(instance)
+		instance:GetAttributeChangedSignal("RoundManagedMonster"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
+		instance:GetAttributeChangedSignal("RoundTracked"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
+		instance:GetAttributeChangedSignal("UndergroundMonster"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
+	end
 end
-
 Workspace.DescendantAdded:Connect(function(instance)
-	if instance:IsA("Model") then
-		task.defer(registerTrackedMonster, instance)
+	if instance:IsA("Model") and MonsterManager.getConfig(instance) then
+		task.defer(refreshTrackedMonster, instance)
+		instance:GetAttributeChangedSignal("RoundManagedMonster"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
+		instance:GetAttributeChangedSignal("RoundTracked"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
+		instance:GetAttributeChangedSignal("UndergroundMonster"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
 	end
 end)
 Workspace.DescendantRemoving:Connect(function(instance)
-	if instance:IsA("Model") then unregisterTrackedMonster(instance) end
+	if instance:IsA("Model") then trackedMonsters[instance] = nil end
+end)
+Workspace:GetAttributeChangedSignal("UndergroundPhaseActive"):Connect(function()
+	-- The phase changes once before a restart. Rebuild the bounded contact set
+	-- immediately so active tower clients receive the newly relevant monsters.
+	for _, instance in ipairs(Workspace:GetDescendants()) do
+		if instance:IsA("Model") and MonsterManager.getConfig(instance) then
+			refreshTrackedMonster(instance)
+		end
+	end
 end)
 
-local function buildSnapshot()
+local function sendRadarSnapshot(player)
 	local records = {}
 	for instance in pairs(trackedMonsters) do
-		if instance.Parent ~= nil and isTrackedMonster(instance) then
+		if instance.Parent ~= nil then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
 			local root = MonsterManager.getMonsterRoot(instance)
 			if humanoid and humanoid.Health > 0 and root then
@@ -102,53 +97,12 @@ local function buildSnapshot()
 					position = root.Position,
 					guardian = instance.Name == "weird monster thing"
 						and instance:GetAttribute("WMTGuardianPet") == true,
+					secretShaftGuardian = instance:GetAttribute("SecretShaftDoorGuard") == true,
 				})
 			end
 		end
 	end
-	return records
-end
-
-local function sendSnapshot(player)
-	snapshotEvent:FireClient(player, buildSnapshot())
-end
-
-local function isMarked(instance, attribute)
-	return instance:GetAttribute(attribute) == true
-end
-
-local function towerFor(instance)
-	local current = instance
-	while current and current ~= Workspace do
-		if current:IsA("Model") and isMarked(current, "RadarTower") then
-			return current
-		end
-		current = current.Parent
-	end
-	return nil
-end
-
-local function firstMarkedDescendant(tower, attribute, className)
-	for _, instance in ipairs(tower:GetDescendants()) do
-		if isMarked(instance, attribute) and (not className or instance:IsA(className)) then
-			return instance
-		end
-	end
-	return nil
-end
-
-local function firstNamedDescendant(tower, name, className)
-	for _, instance in ipairs(tower:GetDescendants()) do
-		if instance.Name == name and (not className or instance:IsA(className)) then
-			return instance
-		end
-	end
-	return nil
-end
-
-local function playerFromOccupant(occupant)
-	local character = occupant and occupant.Parent
-	return character and Players:GetPlayerFromCharacter(character) or nil
+	snapshotEvent:FireClient(player, records)
 end
 
 local function hideRadar(player, source)
@@ -159,19 +113,25 @@ local function hideRadar(player, source)
 	warn("[RadarTower] closed for", player.Name)
 end
 
-local function showRadar(player, source, tower, kind)
-	if not (player and source and source.Parent and tower and tower.Parent) then return end
-	local character = player.Character
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not root or (root.Position - source.Position).Magnitude > ACTIVATION_DISTANCE then return end
-	activeSources[player] = { source = source, tower = tower, kind = kind }
-	event:FireClient(player, true, tower)
-	sendSnapshot(player)
-	warn("[RadarTower] opened for", player.Name, "at", tower:GetFullName(), "via", kind)
+local function showRadar(player, source, kind)
+	if not (player and source and source.Parent) then return end
+	activeSources[player] = { source = source, kind = kind }
+	event:FireClient(player, true, source.Parent)
+	sendRadarSnapshot(player)
+	warn("[RadarTower] opened for", player.Name, "via", kind)
 end
 
-local function disableLegacyRadarScripts(tower)
-	for _, instance in ipairs(tower:GetDescendants()) do
+local function firstDescendant(parent, name, className)
+	for _, instance in ipairs(parent:GetDescendants()) do
+		if instance.Name == name and (not className or instance:IsA(className)) then
+			return instance
+		end
+	end
+	return nil
+end
+
+local function disableLegacyRadarScript(displayPart)
+	for _, instance in ipairs(displayPart:GetDescendants()) do
 		if instance:IsA("Script") and instance.Name == "RadarScript" then
 			instance.Disabled = true
 			warn("[RadarTower] disabled legacy RadarScript:", instance:GetFullName())
@@ -179,38 +139,24 @@ local function disableLegacyRadarScripts(tower)
 	end
 end
 
-local function prepareAudio(tower)
+local function prepareAudio()
 	for _, soundName in ipairs({ "RadarYacht", "RadarLoop" }) do
-		local sound = firstNamedDescendant(tower, soundName, "Sound")
+		local sound = firstDescendant(pilotTower, soundName, "Sound")
 		if sound then
 			sound.Looped = true
 			sound.Playing = false
-			warn("[RadarTower] prepared " .. soundName .. ":", sound:GetFullName())
+			warn("[RadarTower] prepared local " .. soundName .. ":", sound:GetFullName())
+		else
+			warn("[RadarTower] missing " .. soundName)
 		end
 	end
 end
 
-local function bindSeat(tower, seat)
-	if boundSeats[seat] or not seat:IsA("Seat") or not isMarked(seat, "RadarTowerSeat") then return end
-	boundSeats[seat] = true
-	seat:GetPropertyChangedSignal("Occupant"):Connect(function()
-		local previous = seat:GetAttribute("RadarOccupantUserId")
-		local player = playerFromOccupant(seat.Occupant)
-		local userId = player and player.UserId or 0
-		seat:SetAttribute("RadarOccupantUserId", userId)
-		if previous and previous ~= 0 and previous ~= userId then
-			local previousPlayer = Players:GetPlayerByUserId(previous)
-			if previousPlayer then hideRadar(previousPlayer, seat) end
-		end
-		if player then showRadar(player, seat, tower, "seat") end
-	end)
-	end
-
-local function createConsole(tower, displayPart)
-	local console = tower:FindFirstChild("RadarTowerConsole")
+local function createConsole(displayPart)
+	local console = pilotTower:FindFirstChild("RadarTowerConsole")
 	if console and not console:IsA("BasePart") then
-		warn("[RadarTower] invalid RadarTowerConsole:", console:GetFullName())
-		return
+		warn("[RadarTower] RadarTowerConsole exists but is not a BasePart")
+		return false
 	end
 	if not console then
 		console = Instance.new("Part")
@@ -222,9 +168,14 @@ local function createConsole(tower, displayPart)
 		console.CanTouch = false
 		console.CanQuery = false
 		console.Transparency = 1
-		console.Parent = tower
-		warn("[RadarTower] created console:", console:GetFullName())
+		console.Parent = pilotTower
+		warn("[RadarTower] created author-owned console at:", displayPart:GetFullName())
 	end
+
+	-- These runtime attributes are only for the HUD's audio-position lookup.
+	pilotTower:SetAttribute("RadarTower", true)
+	console:SetAttribute("RadarTowerScreen", true)
+
 	local prompt = console:FindFirstChild("RadarTowerPrompt")
 	if not prompt then
 		prompt = Instance.new("ProximityPrompt")
@@ -236,43 +187,58 @@ local function createConsole(tower, displayPart)
 		prompt.MaxActivationDistance = ACTIVATION_DISTANCE
 		prompt.RequiresLineOfSight = false
 		prompt.Parent = console
-		prompt.Triggered:Connect(function(player)
-			showRadar(player, console, tower, "console prompt")
-		end)
 	end
+	prompt.Triggered:Connect(function(player)
+		showRadar(player, console, "console prompt")
+	end)
+
 	local detector = console:FindFirstChild("RadarTowerClick")
 	if not detector then
 		detector = Instance.new("ClickDetector")
 		detector.Name = "RadarTowerClick"
 		detector.MaxActivationDistance = ACTIVATION_DISTANCE
 		detector.Parent = console
-		detector.MouseClick:Connect(function(player)
-			showRadar(player, console, tower, "console click")
-		end)
 	end
-	console:SetAttribute("RadarTowerScreen", true)
+	detector.MouseClick:Connect(function(player)
+		showRadar(player, console, "console click")
+	end)
+
+	warn("[RadarTower] console ready:", console:GetFullName())
+	return true
 end
 
-local function bindTower(tower)
-	if boundTowers[tower] or not tower:IsA("Model") or not isMarked(tower, "RadarTower") then return end
-	boundTowers[tower] = true
-	disableLegacyRadarScripts(tower)
-	prepareAudio(tower)
-	local seat = firstMarkedDescendant(tower, "RadarTowerSeat", "Seat")
-	local displayPart = firstMarkedDescendant(tower, "RadarTowerScreen", "BasePart")
-	if seat then bindSeat(tower, seat) else warn("[RadarTower] missing marked Seat:", tower:GetFullName()) end
-	if displayPart then createConsole(tower, displayPart) else warn("[RadarTower] missing marked screen:", tower:GetFullName()) end
-	warn("[RadarTower] tower ready:", tower:GetFullName())
+local function bootstrap()
+	local towers = {}
+	for _, child in ipairs(Workspace:GetChildren()) do
+		if string.sub(child.Name, 1, #PILOT_TOWER_PREFIX) == PILOT_TOWER_PREFIX and child:IsA("Model") then
+			table.insert(towers, child)
+		end
+	end
+
+	if #towers == 0 then
+		warn("[RadarTower] bootstrap failed: no Workspace models with prefix '" .. PILOT_TOWER_PREFIX .. "' found")
+		return
+	end
+
+	for _, tower in ipairs(towers) do
+		pilotTower = tower
+
+		local cockpit = firstDescendant(pilotTower, "RadarCockpit", "Model")
+		local screenModel = cockpit and firstDescendant(cockpit, "RadarScreen", "Model")
+		local displayPart = screenModel and screenModel:FindFirstChild("Drag", true)
+		if not (displayPart and displayPart:IsA("BasePart")) then
+			warn("[RadarTower] bootstrap skipped: RadarCockpit.RadarSystem.RadarScreen.Drag missing in", pilotTower:GetFullName())
+			continue
+		end
+
+		disableLegacyRadarScript(displayPart)
+		prepareAudio()
+		createConsole(displayPart)
+	end
 end
 
-for _, instance in ipairs(Workspace:GetDescendants()) do
-	if instance:IsA("Model") and isMarked(instance, "RadarTower") then bindTower(instance) end
-end
-Workspace.DescendantAdded:Connect(function(instance)
-	if instance:IsA("Model") and isMarked(instance, "RadarTower") then task.defer(bindTower, instance) end
-end)
-
-warn("[RadarTower] server started; scanning marked towers")
+warn("[RadarTower] server started; creating the pilot console")
+bootstrap()
 
 event.OnServerEvent:Connect(function(player, enabled)
 	if enabled == false then hideRadar(player) end
@@ -285,8 +251,7 @@ task.spawn(function()
 			local character = player.Character
 			local root = character and character:FindFirstChild("HumanoidRootPart")
 			local source = active.source
-			local stillSeated = active.kind ~= "seat" or playerFromOccupant(source.Occupant) == player
-			if not source or not source.Parent or not root or not stillSeated
+			if not source or not source.Parent or not root
 				or (root.Position - source.Position).Magnitude > ACTIVATION_DISTANCE
 			then
 				hideRadar(player, source)
@@ -299,7 +264,7 @@ task.spawn(function()
 	while true do
 		task.wait(10)
 		for player in pairs(activeSources) do
-			sendSnapshot(player)
+			sendRadarSnapshot(player)
 		end
 	end
 end)

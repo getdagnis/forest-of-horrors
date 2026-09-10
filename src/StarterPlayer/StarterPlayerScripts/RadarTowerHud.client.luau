@@ -18,16 +18,20 @@ local snapshotEvent = ReplicatedStorage:WaitForChild("RadarTowerSnapshot")
 
 -- Tune this to the loop's real beep interval if its audio is trimmed later.
 local PULSE_INTERVAL = 2.0
--- The tower is a tactical snapshot, not a live GPS feed.  Keeping this at
--- ten seconds avoids turning the radar into another per-frame monster system.
+-- The tower is a tactical snapshot rather than a live GPS feed.
 local REFRESH_INTERVAL = 10.0
 local AMBIENT_RANGE = 30
 local AMBIENT_UPDATE_INTERVAL = 0.4
 local TOP_THREAT_TYPES = 4
 local RADAR_VALUE_FONT_SIZE = 16
 local RADAR_DETAIL_FONT_SIZE = 8
+-- Only Drooling Zombies use the compact battle-radar contact size. Other
+-- hostiles retain the larger tower-radar contact size for quick triage.
+local ZOMBIE_NAME = "Drooling Zombie"
+local ZOMBIE_DOT_SIZE = 6
+local HOSTILE_DOT_SIZE = 10
+local SECRET_SHAFT_GUARDIAN_DOT_SIZE = 8
 local MCDONALDS_LOGO_IMAGE = "rbxassetid://102275809524944"
-local RADAR_CONTOUR_ROOT_NAME = "RadarContours"
 
 local COLORS = {
 	background = Color3.fromRGB(8, 3, 18),
@@ -36,6 +40,7 @@ local COLORS = {
 	phosphor = Color3.fromRGB(198, 117, 255),
 	cyan = Color3.fromRGB(157, 129, 255),
 	threat = Color3.fromRGB(255, 52, 117),
+	monsterGun1 = Color3.fromRGB(255, 105, 180),
 	friendly = Color3.fromRGB(186, 180, 203),
 	guardian = Color3.fromRGB(220, 240, 210),
 	text = Color3.fromRGB(244, 235, 255),
@@ -230,20 +235,14 @@ mcdonaldsLogoMarker.ZIndex = 5
 mcdonaldsLogoMarker.Visible = false
 mcdonaldsLogoMarker.Parent = plot
 
-local selfMarker = makeFrame("You", plot, COLORS.cyan, 0.82)
+local selfMarker = makeFrame("You", plot, COLORS.text, 0)
 selfMarker.AnchorPoint = Vector2.new(0.5, 0.5)
-selfMarker.Size = UDim2.fromOffset(18, 18)
+selfMarker.Size = UDim2.fromOffset(14, 14)
 Instance.new("UICorner", selfMarker).CornerRadius = UDim.new(1, 0)
 local selfStroke = Instance.new("UIStroke")
-selfStroke.Color = COLORS.cyan
+selfStroke.Color = COLORS.phosphor
 selfStroke.Thickness = 2
 selfStroke.Parent = selfMarker
--- A small map-facing wedge makes heading readable without competing with contacts.
-local selfFacing = makeText("Facing", plot, "▲", 15, COLORS.cyan, Enum.Font.MontserratBold)
-selfFacing.AnchorPoint = Vector2.new(0.5, 0.5)
-selfFacing.Size = UDim2.fromOffset(22, 22)
-selfFacing.TextXAlignment = Enum.TextXAlignment.Center
-selfFacing.ZIndex = 5
 local selfLabel = makeText("PlayerName", plot, "YOU", 20, COLORS.cyan, Enum.Font.MontserratBold)
 selfLabel.AnchorPoint = Vector2.new(0, 0.5)
 selfLabel.Size = UDim2.fromOffset(90, 16)
@@ -365,90 +364,16 @@ end
 
 local monsterDots = {}
 local guardianDots = {}
+local secretShaftGuardianDots = {}
+local secretShaftGuardianLabels = {}
 local playerDots = {}
 local playerLabels = {}
 local landmarkMarkers = {}
 local landmarkLabels = {}
 local contourSegments = {}
-local roadSegments = {}
 local activeRadarLoop
 local backpackWasEnabled
-local isRadarDetect
 local latestServerSnapshot
-
--- Workspace:GetDescendants() is intentionally not used while the radar is
--- open.  Large imported NPCs contain hundreds of parts/scripts each, so a
--- fresh whole-map traversal at every scan can stall the client long enough
--- for Roblox's content-loading pause to appear.  Build a small model registry
--- once, in yielded batches, then maintain it as models enter/leave Workspace.
-local roundMonsterModels = {}
-local roundMonsterModelSet = {}
-local radarDetectInstances = {}
-local radarDetectSet = {}
-
-local function cacheRadarInstance(instance)
-	if not radarDetectSet[instance] and isRadarDetect(instance) then
-		radarDetectSet[instance] = true
-		table.insert(radarDetectInstances, instance)
-	end
-end
-
-local function cacheRoundMonster(instance)
-	if instance:IsA("Model")
-		and not roundMonsterModelSet[instance]
-		and MonsterManager.isRoundTracked(instance)
-	then
-		roundMonsterModelSet[instance] = true
-		table.insert(roundMonsterModels, instance)
-	end
-end
-
-local function buildRadarRegistry()
-	local descendants = Workspace:GetDescendants()
-	for index, instance in ipairs(descendants) do
-		cacheRadarInstance(instance)
-		cacheRoundMonster(instance)
-		if index % 150 == 0 then
-			task.wait()
-		end
-	end
-	-- Models can be cloned while the yielded initial pass is running. The
-	-- DescendantAdded connection below catches those; this second pass only
-	-- covers a model whose attributes were applied during the first pass.
-	for index = #roundMonsterModels, 1, -1 do
-		local model = roundMonsterModels[index]
-		if model.Parent == nil then
-			roundMonsterModelSet[model] = nil
-			table.remove(roundMonsterModels, index)
-		end
-	end
-end
-
-Workspace.DescendantAdded:Connect(function(instance)
-	cacheRadarInstance(instance)
-	cacheRoundMonster(instance)
-end)
-
-Workspace.DescendantRemoving:Connect(function(instance)
-	if radarDetectSet[instance] then
-		radarDetectSet[instance] = nil
-		for index = #radarDetectInstances, 1, -1 do
-			if radarDetectInstances[index] == instance then
-				table.remove(radarDetectInstances, index)
-				break
-			end
-		end
-	end
-	if roundMonsterModelSet[instance] then
-		roundMonsterModelSet[instance] = nil
-		for index = #roundMonsterModels, 1, -1 do
-			if roundMonsterModels[index] == instance then
-				table.remove(roundMonsterModels, index)
-				break
-			end
-		end
-	end
-end)
 
 local function setRadarInventoryHidden(hidden)
 	if hidden then
@@ -509,18 +434,16 @@ local function updateCornerCoordinates(min, max)
 	cornerCoordinates.CoordBottomRight.Text = string.format("X %.0f  /  Z %.0f", max.X, max.Z)
 end
 
-local function getMonsterDot(index)
+local function getMonsterDot(index, isZombie)
 	local dot = monsterDots[index]
-	if dot then return dot end
-	dot = makeFrame("Hostile", monsterLayer, COLORS.threat, 0.03)
-	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(10, 10)
-	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Color3.new(1, 0.78, 0.87)
-	stroke.Transparency = 0.15
-	stroke.Parent = dot
-	monsterDots[index] = dot
+	if not dot then
+		dot = makeFrame("Hostile", monsterLayer, COLORS.threat, 0)
+		dot.AnchorPoint = Vector2.new(0.5, 0.5)
+		Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+		monsterDots[index] = dot
+	end
+	local size = isZombie and ZOMBIE_DOT_SIZE or HOSTILE_DOT_SIZE
+	dot.Size = UDim2.fromOffset(size, size)
 	return dot
 end
 
@@ -529,15 +452,47 @@ local function getGuardianDot(index)
 	if dot then return dot end
 	dot = makeFrame("GuardianPet", monsterLayer, COLORS.guardian, 1)
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(10, 10)
+	dot.Size = UDim2.fromOffset(13, 13)
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.guardian
-	stroke.Thickness = 1
-	stroke.Transparency = 0.55
+	stroke.Thickness = 2
+	stroke.Transparency = 0
 	stroke.Parent = dot
 	guardianDots[index] = dot
 	return dot
+end
+
+local function getSecretShaftGuardianDot(index)
+	local dot = secretShaftGuardianDots[index]
+	if dot then return dot end
+	dot = makeFrame("SecretShaftGuardian", monsterLayer, COLORS.monsterGun1, 0)
+	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot.Size = UDim2.fromOffset(SECRET_SHAFT_GUARDIAN_DOT_SIZE, SECRET_SHAFT_GUARDIAN_DOT_SIZE)
+	dot.ZIndex = 6
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+	secretShaftGuardianDots[index] = dot
+	return dot
+end
+
+local function getSecretShaftGuardianLabel(index)
+	local label = secretShaftGuardianLabels[index]
+	if label then return label end
+	label = makeText("SecretShaftGuardianName", monsterLayer, "secret shaft guardian", RADAR_VALUE_FONT_SIZE, COLORS.monsterGun1, Enum.Font.MontserratBold)
+	label.AnchorPoint = Vector2.new(1, 0)
+	label.Size = UDim2.fromOffset(220, 24)
+	label.TextXAlignment = Enum.TextXAlignment.Right
+	label.TextYAlignment = Enum.TextYAlignment.Top
+	label.ZIndex = 7
+	secretShaftGuardianLabels[index] = label
+	return label
+end
+
+local function placeSecretShaftGuardianLabel(label, position)
+	-- This boss lives near the map's right edge.  Anchor the name below-left so
+	-- it stays inside the map instead of clipping off its right side.
+	label.Position = UDim2.new(position.X.Scale, position.X.Offset - 5, position.Y.Scale, position.Y.Offset + 6)
+	label.Visible = true
 end
 
 local function getPlayerDot(index)
@@ -608,19 +563,6 @@ local function getContourSegment(index)
 	return segment
 end
 
-local function getRoadSegment(index)
-	local segment = roadSegments[index]
-	if segment then return segment end
-	-- A road is a centre line, not an outlined rectangle. This keeps adjacent
-	-- curve pieces visually continuous instead of drawing cross-lines at joins.
-	segment = makeFrame("Road", contourLayer, COLORS.cyan, 0.16)
-	segment.AnchorPoint = Vector2.new(0.5, 0.5)
-	segment.BorderSizePixel = 0
-	segment.ZIndex = 1
-	roadSegments[index] = segment
-	return segment
-end
-
 local function markerPosition(instance)
 	if instance:IsA("BasePart") then return instance.Position end
 	if instance:IsA("Model") then
@@ -639,7 +581,7 @@ local function getMcDonaldsPosition()
 	return landmark and markerPosition(landmark) or nil
 end
 
-isRadarDetect = function(instance)
+local function isRadarDetect(instance)
 	-- Support both the Studio Tags editor and the older Attribute workflow.
 	if CollectionService:HasTag(instance, "radar_detect")
 		or CollectionService:HasTag(instance, "RadarDetect")
@@ -652,6 +594,122 @@ isRadarDetect = function(instance)
 	-- an accidental Studio attribute visible rather than silently dropping it.
 	return value == true or value == "true" or value == 1
 end
+
+local function isRadarLandmark(instance)
+	if CollectionService:HasTag(instance, "RadarLandmark")
+		or CollectionService:HasTag(instance, "RadarContour")
+	then
+		return true
+	end
+	local value = instance:GetAttribute("RadarLandmark")
+	if value == true or value == "true" or value == 1 then return true end
+	-- Transitional support for the earlier contour name while Studio objects
+	-- are being migrated by the command-bar conversion.
+	local legacy = instance:GetAttribute("RadarContour")
+	return legacy == true or legacy == "true" or legacy == 1
+end
+
+-- Key locations are shown as physical outlines rather than beacon dots.  The
+-- aliases deliberately accept both the neat Studio names and the common names
+-- used by imported marketplace buildings.  A building Model is processed once
+-- and all of its parts form the outline, so a curved road stays curved.
+local KEY_MAP_CONTOUR_NAMES = {
+	["mcdonalds"] = true,
+	["mcdonald"] = true,
+	["applestore"] = true,
+	["apple"] = true,
+	["donutstore"] = true,
+	["donutsstore"] = true,
+	["donutshop"] = true,
+	["donutsshop"] = true,
+	["road"] = true,
+	["roads"] = true,
+	["mainroad"] = true,
+}
+
+local function normalisedMapName(name)
+	return string.lower(name):gsub("[^%w]", "")
+end
+
+local function isKeyMapContour(instance)
+	return instance:IsA("Model") and KEY_MAP_CONTOUR_NAMES[normalisedMapName(instance.Name)] == true
+end
+
+local function isMapContour(instance)
+	-- Only explicitly authored/tagged contour objects are rendered. Inferring
+	-- contours from whole building models can expand thousands of map parts into
+	-- GUI segments during the first radar scan.
+	return isRadarLandmark(instance)
+end
+
+local function hasMapContourAncestor(instance)
+	local ancestor = instance.Parent
+	while ancestor and ancestor ~= Workspace do
+		if isMapContour(ancestor) then return true end
+		ancestor = ancestor.Parent
+	end
+	return false
+end
+
+
+-- Keep radar work out of the open/refresh path. Imported models can have many
+-- descendants, so build a yielded registry once and maintain it incrementally.
+local roundMonsterModels = {}
+local roundMonsterModelSet = {}
+local radarCandidates = {}
+local radarCandidateSet = {}
+
+local function cacheRoundMonster(instance)
+	if instance:IsA("Model")
+		and not roundMonsterModelSet[instance]
+		and MonsterManager.isRoundTracked(instance)
+	then
+		roundMonsterModelSet[instance] = true
+		table.insert(roundMonsterModels, instance)
+	end
+end
+
+local function isRadarCandidate(instance)
+	return isRadarDetect(instance) or isMapContour(instance)
+end
+
+local function cacheRadarCandidate(instance)
+	if not radarCandidateSet[instance] and isRadarCandidate(instance) then
+		radarCandidateSet[instance] = true
+		table.insert(radarCandidates, instance)
+	end
+end
+
+local function removeCached(list, set, instance)
+	if not set[instance] then return end
+	set[instance] = nil
+	for index = #list, 1, -1 do
+		if list[index] == instance then
+			table.remove(list, index)
+			return
+		end
+	end
+end
+
+local function buildRadarRegistry()
+	for index, instance in ipairs(Workspace:GetDescendants()) do
+		cacheRoundMonster(instance)
+		cacheRadarCandidate(instance)
+		if index % 150 == 0 then
+			task.wait()
+		end
+	end
+end
+
+Workspace.DescendantAdded:Connect(function(instance)
+	cacheRoundMonster(instance)
+	cacheRadarCandidate(instance)
+end)
+
+Workspace.DescendantRemoving:Connect(function(instance)
+	removeCached(roundMonsterModels, roundMonsterModelSet, instance)
+	removeCached(radarCandidates, radarCandidateSet, instance)
+end)
 
 -- The server snapshot is authoritative; do not scan Workspace on clients.
 
@@ -672,42 +730,20 @@ local function setContourSegment(segment, part, min, max)
 	segment.Visible = true
 end
 
-local function setRoadSegment(segment, part, min, max)
-	local width = math.max(1, max.X - min.X)
-	local depth = math.max(1, max.Z - min.Z)
-	local position = mapPosition(part.Position, min, max)
-	local right = part.CFrame.RightVector
-	local length = math.max(0.002, math.sqrt((right.X * part.Size.X / width) ^ 2 + (right.Z * part.Size.X / depth) ^ 2))
-	segment.Position = position
-	segment.Size = UDim2.new(length, 0, 0, 1)
-	segment.Rotation = math.deg(math.atan2(right.Z / depth, right.X / width))
-	segment.Visible = true
-end
-
-local function isRoadContour(part)
-	return part:GetAttribute("RadarContourStyle") == "Road"
-		or string.match(string.lower(part.Name), "^roadcontour") ~= nil
-end
-
 local function renderAuthoredContours(min, max)
-	local contourRoot = Workspace:FindFirstChild(RADAR_CONTOUR_ROOT_NAME)
-	local contourCount = 0
-	local roadCount = 0
-	if contourRoot then
-		for _, part in ipairs(contourRoot:GetDescendants()) do
+	local root = Workspace:FindFirstChild("RadarContours")
+	local count = 0
+	if root then
+		-- This is intentionally direct children only: the author-owned folder has
+		-- six lightweight outline parts, never imported building descendants.
+		for _, part in ipairs(root:GetChildren()) do
 			if part:IsA("BasePart") then
-				if isRoadContour(part) then
-					roadCount += 1
-					setRoadSegment(getRoadSegment(roadCount), part, min, max)
-				else
-					contourCount += 1
-					setContourSegment(getContourSegment(contourCount), part, min, max)
-				end
+				count += 1
+				setContourSegment(getContourSegment(count), part, min, max)
 			end
 		end
 	end
-	for index = contourCount + 1, #contourSegments do contourSegments[index].Visible = false end
-	for index = roadCount + 1, #roadSegments do roadSegments[index].Visible = false end
+	for index = count + 1, #contourSegments do contourSegments[index].Visible = false end
 end
 
 local function displayName(instance)
@@ -786,31 +822,46 @@ local function refreshRadarContacts()
 	local min, max = mapBounds()
 	updateCornerCoordinates(min, max)
 	local monsterCount = 0
+	local hostileDotCount = 0
 	local guardianCount = 0
+	local secretShaftGuardianCount = 0
 	local playerCount = 0
 	local otherPlayerDotCount = 0
 	local landmarkCount = 0
 	local typeCounts = {}
+	local contourCount = 0
 	if latestServerSnapshot then
 		for _, record in ipairs(latestServerSnapshot) do
-			local dot = getMonsterDot(monsterCount + 1)
 			monsterCount += 1
 			typeCounts[record.name] = (typeCounts[record.name] or 0) + 1
-			dot.Position = mapPosition(record.position, min, max)
-			dot.Visible = true
+			local mapped = mapPosition(record.position, min, max)
+			if record.secretShaftGuardian then
+				secretShaftGuardianCount += 1
+				local guardianDot = getSecretShaftGuardianDot(secretShaftGuardianCount)
+				guardianDot.Position = mapped
+				guardianDot.Visible = true
+				placeSecretShaftGuardianLabel(getSecretShaftGuardianLabel(secretShaftGuardianCount), mapped)
+			else
+				hostileDotCount += 1
+				local dot = getMonsterDot(hostileDotCount, record.name == ZOMBIE_NAME)
+				dot.Position = mapped
+				dot.Visible = true
+			end
 			if record.guardian then
 				guardianCount += 1
 				local guardianDot = getGuardianDot(guardianCount)
-				guardianDot.Position = dot.Position
+				guardianDot.Position = mapped
 				guardianDot.Visible = true
 			end
 		end
 	else
-	if not latestServerSnapshot then
 	for _, instance in ipairs(roundMonsterModels) do
 		if instance.Parent ~= nil
 			and instance:GetAttribute("RoundManagedMonster") == true
-			and instance:GetAttribute("UndergroundMonster") ~= true
+			and (
+				Workspace:GetAttribute("UndergroundPhaseActive") == true
+				or instance:GetAttribute("UndergroundMonster") ~= true
+			)
 		then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
 			-- Match the round counter's legacy-rig fallback (torso/head/primary part),
@@ -819,19 +870,28 @@ local function refreshRadarContacts()
 			if humanoid and humanoid.Health > 0 and monsterRoot then
 				monsterCount += 1
 				typeCounts[instance.Name] = (typeCounts[instance.Name] or 0) + 1
-				local dot = getMonsterDot(monsterCount)
-				dot.Position = mapPosition(monsterRoot.Position, min, max)
-				dot.Visible = true
+				local mapped = mapPosition(monsterRoot.Position, min, max)
+				if instance:GetAttribute("SecretShaftDoorGuard") == true then
+					secretShaftGuardianCount += 1
+					local guardianDot = getSecretShaftGuardianDot(secretShaftGuardianCount)
+					guardianDot.Position = mapped
+					guardianDot.Visible = true
+					placeSecretShaftGuardianLabel(getSecretShaftGuardianLabel(secretShaftGuardianCount), mapped)
+				else
+					hostileDotCount += 1
+					local dot = getMonsterDot(hostileDotCount, instance.Name == ZOMBIE_NAME)
+					dot.Position = mapped
+					dot.Visible = true
+				end
 			end
 		end
-	end
-	end
-	end
-	for _, instance in ipairs(roundMonsterModels) do
-		if instance:IsA("Model")
+		if instance.Parent ~= nil
 			and instance.Name == "weird monster thing"
 			and instance:GetAttribute("WMTGuardianPet") == true
-			and instance:GetAttribute("UndergroundMonster") ~= true
+			and (
+				Workspace:GetAttribute("UndergroundPhaseActive") == true
+				or instance:GetAttribute("UndergroundMonster") ~= true
+			)
 		then
 			local humanoid = MonsterManager.getMonsterHumanoid(instance)
 			local guardianRoot = instance:FindFirstChild("HumanoidRootPart", true)
@@ -843,7 +903,8 @@ local function refreshRadarContacts()
 			end
 		end
 	end
-	-- Only the six author-owned contour parts are drawn; imported map models are never traversed.
+	end
+	-- Only the six author-owned parts are drawn; imported map models are never traversed.
 	renderAuthoredContours(min, max)
 	local mcdonaldsPosition = getMcDonaldsPosition()
 	if mcdonaldsPosition then
@@ -868,12 +929,15 @@ local function refreshRadarContacts()
 			end
 		end
 	end
-	for index = monsterCount + 1, #monsterDots do monsterDots[index].Visible = false end
+	for index = hostileDotCount + 1, #monsterDots do monsterDots[index].Visible = false end
 	for index = guardianCount + 1, #guardianDots do guardianDots[index].Visible = false end
+	for index = secretShaftGuardianCount + 1, #secretShaftGuardianDots do secretShaftGuardianDots[index].Visible = false end
+	for index = secretShaftGuardianCount + 1, #secretShaftGuardianLabels do secretShaftGuardianLabels[index].Visible = false end
 	for index = otherPlayerDotCount + 1, #playerDots do playerDots[index].Visible = false end
 	for index = otherPlayerDotCount + 1, #playerLabels do playerLabels[index].Visible = false end
 	for index = landmarkCount + 1, #landmarkMarkers do landmarkMarkers[index].Visible = false end
 	for index = landmarkCount + 1, #landmarkLabels do landmarkLabels[index].Visible = false end
+	for index = contourCount + 1, #contourSegments do contourSegments[index].Visible = false end
 	if lastReportedBeaconCount ~= landmarkCount then
 		lastReportedBeaconCount = landmarkCount
 		warn("[RadarTowerHud] radar_detect beacons:", landmarkCount)
@@ -897,21 +961,11 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	selfMarker.Visible = root ~= nil
-	selfFacing.Visible = root ~= nil
 	selfLabel.Visible = root ~= nil
 	if root then
 		local min, max = mapBounds()
 		local mapped = mapPosition(root.Position, min, max)
 		selfMarker.Position = mapped
-		local forward = root.CFrame.LookVector
-		local width = math.max(1, max.X - min.X)
-		local depth = math.max(1, max.Z - min.Z)
-		local mapForward = Vector2.new(forward.X / width, forward.Z / depth)
-		if mapForward.Magnitude > 0 then
-			mapForward = mapForward.Unit
-			selfFacing.Position = UDim2.new(mapped.X.Scale + mapForward.X * 0.022, 0, mapped.Y.Scale + mapForward.Y * 0.022, 0)
-			selfFacing.Rotation = math.deg(math.atan2(mapForward.Y, mapForward.X)) + 90
-		end
 		placeLabel(selfLabel, mapped, "YOU")
 	end
 
@@ -985,9 +1039,7 @@ end)
 
 snapshotEvent.OnClientEvent:Connect(function(records)
 	latestServerSnapshot = typeof(records) == "table" and records or nil
-	if gui.Enabled then
-		refreshRadarContacts()
-	end
+	if gui.Enabled then refreshRadarContacts() end
 end)
 
 player.CharacterAdded:Connect(function()

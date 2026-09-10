@@ -15,6 +15,8 @@ local milestoneEvent = ReplicatedStorage:WaitForChild("MonsterMilestone")
 local playerKillMilestoneEvent = ReplicatedStorage:WaitForChild("PlayerKillMilestone")
 local secretShaftAnnouncementEvent = ReplicatedStorage:WaitForChild("SecretShaftAnnouncement")
 local secretShaftLockedEvent = ReplicatedStorage:WaitForChild("SecretShaftDoorLocked")
+local lavaPoolDoorOpenedEvent = ReplicatedStorage:WaitForChild("LavaPoolDoorOpened")
+local lavaPoolDoorLockedEvent = ReplicatedStorage:WaitForChild("LavaPoolDoorLocked")
 local nightmareEscapeStartedEvent = ReplicatedStorage:WaitForChild("NightmareEscapeStarted")
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
 local INTRODUCTION_COMPLETE_ATTRIBUTE = "NightmareIntroductionComplete"
@@ -145,6 +147,14 @@ end)
 
 secretShaftLockedEvent.OnClientEvent:Connect(function()
 	showAnnouncement("you must kill the door guardian first", LONG_ANNOUNCEMENT_SECONDS)
+end)
+
+lavaPoolDoorLockedEvent.OnClientEvent:Connect(function()
+	showAnnouncement("you must eliminate all monsters first", LONG_ANNOUNCEMENT_SECONDS)
+end)
+
+lavaPoolDoorOpenedEvent.OnClientEvent:Connect(function()
+	showAnnouncement("lava pool door is now open", LONG_ANNOUNCEMENT_SECONDS)
 end)
 
 nightmareEscapeStartedEvent.OnClientEvent:Connect(function(data)

@@ -121,7 +121,7 @@ local function flashSource(source)
 	light.Color = LEMON_GREEN
 	light.Brightness = 16
 	light.Range = 20
-	light.Shadows = true
+	light.Shadows = false
 	light.Parent = part
 
 	task.delay(0.25, function()
@@ -243,45 +243,45 @@ local function checkBigMacProximity()
 				local existingHighlight = character:FindFirstChild("HealFlashHighlight")
 				if existingHighlight then existingHighlight:Destroy() end
 
-	local highlight = Instance.new("Highlight")
+				local highlight = Instance.new("Highlight")
 				highlight.Name = "HealFlashHighlight"
-				highlight.FillColor3 = LEMON_GREEN
-				highlight.OutlineColor3 = LEMON_GREEN
+				highlight.FillColor = LEMON_GREEN
+				highlight.OutlineColor = LEMON_GREEN
 				highlight.FillTransparency = 0.3
 				highlight.OutlineTransparency = 0
-	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	highlight.Parent = character
+				highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+				highlight.Parent = character
 
-	local healLight = Instance.new("PointLight")
-	healLight.Name = "HealFlashLight"
-	healLight.Color = LEMON_GREEN
-	healLight.Brightness = 18
-	healLight.Range = 20
-	healLight.Shadows = true
-	healLight.Parent = root
+				local healLight = Instance.new("PointLight")
+				healLight.Name = "HealFlashLight"
+				healLight.Color = LEMON_GREEN
+				healLight.Brightness = 18
+				healLight.Range = 20
+				healLight.Shadows = false
+				healLight.Parent = root
 
 				-- Flash 1: visible
 				highlight.FillTransparency = 0.3
 				highlight.OutlineTransparency = 0
 				task.delay(0.15, function()
 					if not highlight.Parent then return end
-		-- Gap: invisible
-		highlight.FillTransparency = 1
-		highlight.OutlineTransparency = 1
-		healLight.Brightness = 0
+					-- Gap: invisible
+					highlight.FillTransparency = 1
+					highlight.OutlineTransparency = 1
+					healLight.Brightness = 0
 					task.delay(0.1, function()
 						if not highlight.Parent then return end
-		-- Flash 2: visible
-		highlight.FillTransparency = 0.3
-		highlight.OutlineTransparency = 0
-		healLight.Brightness = 18
-		task.delay(0.15, function()
-			if highlight and highlight.Parent then
-				highlight:Destroy()
-			end
-			if healLight and healLight.Parent then
-				healLight:Destroy()
-			end
+						-- Flash 2: visible
+						highlight.FillTransparency = 0.3
+						highlight.OutlineTransparency = 0
+						healLight.Brightness = 18
+						task.delay(0.15, function()
+							if highlight and highlight.Parent then
+								highlight:Destroy()
+							end
+							if healLight and healLight.Parent then
+								healLight:Destroy()
+							end
 						end)
 					end)
 				end)

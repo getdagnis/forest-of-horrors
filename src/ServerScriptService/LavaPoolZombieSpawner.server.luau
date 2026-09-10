@@ -5,14 +5,22 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local ZOMBIE_NAME = "Drooling Zombie"
 local LADDER_NAME = "Pool Ladder"
-local SPAWN_INTERVAL = 10
+local SPAWN_INTERVAL = 60
 local MAX_MONSTERS = 150
-local STOP_SPAWNING_AT_OR_BELOW = 20
+local STOP_SPAWNING_AT_OR_BELOW = 25
 
 local SIDE_OFFSET = 5
 local BACK_OFFSET = 4
 local HEIGHT_OFFSET = 3
 local RANDOM_JITTER = 2
+local NO_SPAWN_WINDOW_SECONDS = 12 * 60 -- no zombie spawning in the final 12 minutes
+
+local function isInNoSpawnWindow()
+	if Workspace:GetAttribute("GameStopped") == true then return true end
+	local endsAt = tonumber(Workspace:GetAttribute("RoundEndsAt"))
+	if not endsAt then return false end
+	return Workspace:GetServerTimeNow() >= endsAt - NO_SPAWN_WINDOW_SECONDS
+end
 
 local connectedLadders = {}
 local zombieTemplate = nil
@@ -81,7 +89,8 @@ local function getSpawnCFrame(ladder)
 end
 
 local function spawnZombieAtLadder(ladder)
-	if Workspace:GetAttribute("RoundActive") == false then return end
+	if Workspace:GetAttribute("RoundActive") == false or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
+	if isInNoSpawnWindow() then return end
 	local livingCount = countLivingMonsters()
 	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= MAX_MONSTERS then
 		return

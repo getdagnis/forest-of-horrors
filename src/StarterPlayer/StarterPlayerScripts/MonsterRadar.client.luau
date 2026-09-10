@@ -223,6 +223,7 @@ local trackedMonsters = {}
 local radarEntries = {}
 local function isRadarExcluded(model)
 	return model:GetAttribute("UndergroundMonster") == true
+		and workspace:GetAttribute("UndergroundPhaseActive") ~= true
 end
 
 local function track(instance)
@@ -230,13 +231,20 @@ local function track(instance)
 	-- useful friendly reference: it is drawn as a green ring below.
 	if instance:IsA("Model") and not isRadarExcluded(instance) and (
 		MonsterManager.isRoundTracked(instance)
-		or instance.Name == "weird monster thing"
-	) then
+			or instance.Name == "weird monster thing"
+		) then
 		trackedMonsters[instance] = true
+	elseif instance:IsA("Model") then
+		trackedMonsters[instance] = nil
 	end
 end
 for _, instance in ipairs(workspace:GetDescendants()) do track(instance) end
 workspace.DescendantAdded:Connect(track)
+workspace:GetAttributeChangedSignal("UndergroundPhaseActive"):Connect(function()
+	-- This changes only once per game run, so a one-time rescan safely brings
+	-- the previously hidden underground models into the local radar registry.
+	for _, instance in ipairs(workspace:GetDescendants()) do track(instance) end
+end)
 workspace.DescendantRemoving:Connect(function(instance)
 	if instance:IsA("Model") then
 		trackedMonsters[instance] = nil
