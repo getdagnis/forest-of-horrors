@@ -16,7 +16,7 @@ local RANDOM_JITTER = 2
 local NO_SPAWN_WINDOW_SECONDS = 12 * 60 -- no zombie spawning in the final 12 minutes
 
 local function isInNoSpawnWindow()
-	if Workspace:GetAttribute("GameStopped") == true then return true end
+	if Workspace:GetAttribute("RoundState") ~= "Active" then return true end
 	local endsAt = tonumber(Workspace:GetAttribute("RoundEndsAt"))
 	if not endsAt then return false end
 	return Workspace:GetServerTimeNow() >= endsAt - NO_SPAWN_WINDOW_SECONDS
@@ -88,11 +88,15 @@ local function getSpawnCFrame(ladder)
 		* CFrame.new(side * SIDE_OFFSET + jitterX, HEIGHT_OFFSET, BACK_OFFSET + jitterZ)
 end
 
-local function spawnZombieAtLadder(ladder)
-	if Workspace:GetAttribute("RoundActive") == false or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
+local function spawnZombieAtLadder(ladder, generation)
+	if Workspace:GetAttribute("RoundState") ~= "Active"
+		or tonumber(Workspace:GetAttribute("RoundGeneration")) ~= generation
+		or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
 	if isInNoSpawnWindow() then return end
 	local livingCount = countLivingMonsters()
-	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= MAX_MONSTERS then
+	local configuredCap = math.max(1, math.floor(tonumber(Workspace:GetAttribute("MonsterMaxCount")) or MAX_MONSTERS))
+	local effectiveCap = math.min(MAX_MONSTERS, configuredCap)
+	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= effectiveCap then
 		return
 	end
 
@@ -120,9 +124,14 @@ local function connectLadder(ladder)
 
 	task.spawn(function()
 		task.wait(math.random(1, SPAWN_INTERVAL))
+		local generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
 
 		while ladder.Parent do
-			spawnZombieAtLadder(ladder)
+			if generation and Workspace:GetAttribute("RoundState") == "Active"
+				and tonumber(Workspace:GetAttribute("RoundGeneration")) == generation then
+				spawnZombieAtLadder(ladder, generation)
+			end
+			generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
 			task.wait(SPAWN_INTERVAL)
 		end
 

@@ -18,6 +18,11 @@ local RECONCILE_INTERVAL = 1
 local states = {}
 local observedSpawnFolders = {}
 
+local function roundIsActive(generation)
+	return workspace:GetAttribute("RoundState") == "Active"
+		and tonumber(workspace:GetAttribute("RoundGeneration")) == generation
+end
+
 local function getWeaponName(spawnPoint)
 	local attributed = spawnPoint:GetAttribute("WeaponName")
 	if type(attributed) == "string" and WEAPONS[attributed] then
@@ -142,10 +147,13 @@ end
 
 scheduleRespawn = function(state, delay)
 	if state.respawnScheduled then return end
+	local generation = tonumber(workspace:GetAttribute("RoundGeneration"))
+	if not generation or workspace:GetAttribute("RoundState") ~= "Active" then return end
 	state.respawnScheduled = true
 
 	task.delay(delay == nil and RESPAWN_DELAY or delay, function()
 		state.respawnScheduled = false
+		if not roundIsActive(generation) then return end
 		if not state.spawnPoint.Parent or not state.spawnPoint:IsDescendantOf(workspace) then
 			states[state.spawnPoint] = nil
 			return
@@ -211,6 +219,15 @@ end
 workspace.DescendantAdded:Connect(function(instance)
 	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
 		observeSpawnFolder(instance)
+	end
+end)
+
+workspace:GetAttributeChangedSignal("RoundState"):Connect(function()
+	if workspace:GetAttribute("RoundState") ~= "Active" then return end
+	for _, state in pairs(states) do
+		if not state.activeTool and not state.respawnScheduled then
+			scheduleRespawn(state, 0)
+		end
 	end
 end)
 

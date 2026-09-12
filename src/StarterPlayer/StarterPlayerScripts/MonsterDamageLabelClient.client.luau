@@ -16,7 +16,12 @@ local function getDisplayPart(model)
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
-damageLabelEvent.OnClientEvent:Connect(function(model, health, maxHealth)
+damageLabelEvent.OnClientEvent:Connect(function(model, health, maxHealth, generation)
+	if workspace:GetAttribute("RoundState") ~= "Active"
+		or tonumber(generation) ~= tonumber(workspace:GetAttribute("RoundGeneration"))
+	then
+		return
+	end
 	if not model or not model:IsA("Model") or not model.Parent then return end
 	local adornee = getDisplayPart(model)
 	if not adornee then return end

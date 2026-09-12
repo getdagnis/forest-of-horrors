@@ -59,6 +59,12 @@ local HEALTH_BASE_HP = 100
 local currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
 local monsterHistory, recordRows, allTimeBest = {}, {}, nil
 local scoringLeaders, quickestEscape = {}, nil
+local currentRoundGeneration = math.max(0, math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or 0))
+
+local function matchesCurrentGeneration(generation)
+	return tonumber(generation) == currentRoundGeneration
+		and currentRoundGeneration == tonumber(workspace:GetAttribute("RoundGeneration"))
+end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "CombatStatusHud"
@@ -239,8 +245,12 @@ local function renderEvents(now)
 end
 
 radarEvents.OnClientEvent:Connect(function(message)
-	if type(message) == "string" then message = { kind = "message", text = message } end
-	if type(message) ~= "table" then return end
+	if type(message) ~= "table"
+		or not matchesCurrentGeneration(message.roundGeneration)
+		or workspace:GetAttribute("RoundState") ~= "Active"
+	then
+		return
+	end
 	local now = workspace:GetServerTimeNow()
 	local kind = message.kind or "message"
 	local actor = message.actor
@@ -556,8 +566,12 @@ local function renderScoreboard()
 	scoreboardText.Text = table.concat(lines, "\n")
 end
 
-scoreEvent.OnClientEvent:Connect(function(score, kills) currentScore, currentKills = tonumber(score) or 0, tonumber(kills) or currentKills end)
-bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount)
+scoreEvent.OnClientEvent:Connect(function(score, kills, generation)
+	if not matchesCurrentGeneration(generation) then return end
+	currentScore, currentKills = tonumber(score) or 0, tonumber(kills) or currentKills
+end)
+bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount, generation)
+	if not matchesCurrentGeneration(generation) or workspace:GetAttribute("RoundState") ~= "Active" then return end
 	bestSpawnAnnouncementToken += 1
 	local token = bestSpawnAnnouncementToken
 	bestSpawnText.Text = string.format("that was your best spawn! %d / %d", tonumber(points) or 0, tonumber(killCount) or 0)
@@ -581,11 +595,13 @@ bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount)
 		end)
 	end)
 end)
-monsterCountEvent.OnClientEvent:Connect(function(count)
+monsterCountEvent.OnClientEvent:Connect(function(count, generation)
+	if not matchesCurrentGeneration(generation) then return end
 	monstersLeft = math.max(0, tonumber(count) or 0)
 	table.insert(monsterHistory, { time = workspace:GetServerTimeNow(), count = monstersLeft })
 end)
 recordsEvent.OnClientEvent:Connect(function(data)
+	if type(data) ~= "table" or not matchesCurrentGeneration(data.roundGeneration) then return end
 	currentScore = tonumber(data and data.currentScore) or currentScore
 	currentKills = tonumber(data and data.currentKills) or currentKills
 	-- Newer servers send personalBestScore. The fallback keeps older sessions
@@ -625,8 +641,13 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	if elapsed < 0.1 then return end
 	elapsed = 0
 	local endsAt = tonumber(workspace:GetAttribute("RoundEndsAt"))
-	labels.Time.Text = formatTime(endsAt and endsAt - workspace:GetServerTimeNow() or 0)
-	captions.Time.Text = workspace:GetAttribute("RoundPhase") == "Escape" and "ESCAPE" or "REMAINING"
+	local state = workspace:GetAttribute("RoundState")
+	local showRoundClock = state == "Active" or state == "Escape"
+	panels.Time.Visible = showRoundClock
+	if showRoundClock then
+		labels.Time.Text = formatTime(endsAt and endsAt - workspace:GetServerTimeNow() or 0)
+		captions.Time.Text = state == "Escape" and "ESCAPE" or "REMAINING"
+	end
 	local now = workspace:GetServerTimeNow()
 	while #monsterHistory > 0 and monsterHistory[1].time < now - 15 do table.remove(monsterHistory, 1) end
 	local baseline = monsterHistory[1] and monsterHistory[1].count or monstersLeft
@@ -647,4 +668,14 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	layout()
 	renderScoreboard()
 	renderEvents(now)
+end)
+
+workspace:GetAttributeChangedSignal("RoundGeneration"):Connect(function()
+	currentRoundGeneration = math.max(0, math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or 0))
+	currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
+	monsterHistory = {}
+	recentEvents = {}
+	eventsText.Text = ""
+	bestSpawnAnnouncementToken += 1
+	bestSpawnText.Visible = false
 end)

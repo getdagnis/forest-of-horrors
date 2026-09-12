@@ -5,6 +5,7 @@
 local Players = game:GetService("Players")
 local ws = game:GetService("Workspace")
 local rs = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
 local MonsterManager = require(rs:WaitForChild("MonsterManager"))
 local MonsterBombConfig = require(rs:WaitForChild("MonsterBombConfig"))
 local RadarEventBus = require(rs:WaitForChild("RadarEventBus"))
@@ -17,7 +18,6 @@ local spawnKills = {} -- Player -> kills earned during the current life
 local connected = {} -- humanoid -> true (in-memory, so clones re-register)
 local spawns = {} -- model -> {template, cframe, livesRemaining} used for respawning in place
 local managedMonsters = {} -- model -> true; only these models are allowed into the round count
-local roundTemplates = {}
 
 local spawnCounts = {}
 local roundSpawnBases = {}
@@ -27,22 +27,25 @@ local sessionBest = {} -- player -> {score, spawn}
 local completedSpawnBest = {} -- player -> {score, kills, spawn}
 local serverBest = { score = 0, playerName = "-", spawn = 0 }
 local pendingRespawns = 0
-local roundComplete = false
-local roundFailed = false
-local escapeActive = false
 local roundGeneration = 0
 local announcedMonsterMilestones = {}
 local lastBroadcastMonsterCount = nil
 local multikillStates = {}
+local resultGenerationByPlayer = {} -- Player -> generation already sent a terminal result
+local restartCountdownActive = false
+local restartTeleportInProgress = false
 
 local RESPAWN_TIME = 15 -- seconds before a killed monster respawns
 local CORPSE_DISPLAY_TIME = 3 -- separate from respawn time; body remains briefly visible
 local RESPAWN_LIVES = 3 -- initial life plus three server-owned replacements
 local ROUND_DURATION_SECONDS = 44 * 60 + 45
 local ESCAPE_DURATION_SECONDS = 5 * 60
+local RESTART_COUNTDOWN_SECONDS = 30
 local DEFAULT_MONSTER_MAX_COUNT = 180
 local ROUND_STARTED_AT_ATTRIBUTE = "RoundStartedAt"
 local ROUND_ENDS_AT_ATTRIBUTE = "RoundEndsAt"
+local ROUND_STATE_ATTRIBUTE = "RoundState"
+local ROUND_GENERATION_ATTRIBUTE = "RoundGeneration"
 local MONSTER_MAX_COUNT_ATTRIBUTE = "MonsterMaxCount"
 local MANAGED_MONSTER_ATTRIBUTE = "RoundManagedMonster"
 local LIVES_REMAINING_ATTRIBUTE = "RoundLivesRemaining"
@@ -69,7 +72,10 @@ end
 -- respawn pools. This keeps a local generator from multiplying the next round
 -- or changing the ordinary population's lifecycle.
 local function isSpawnerOwnedMonster(model)
-	return model:GetAttribute("NoAutoRespawn") == true
+	-- BombRespawnSystem uses NoAutoRespawn to suppress legacy model-local return
+	-- scripts, but round bombs still belong to this controller's finite lifecycle.
+	return model.Name ~= MonsterBombConfig.MODEL_NAME
+		and model:GetAttribute("NoAutoRespawn") == true
 end
 
 -- A kill should matter much more in a small server. Roll once, immediately
@@ -93,25 +99,36 @@ local function getMonsterMaxCount()
 	return math.floor(configured)
 end
 
-local function resetRoundClock()
-	local now = ws:GetServerTimeNow()
-	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, now)
-	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, now + ROUND_DURATION_SECONDS)
-	ws:SetAttribute("RoundActive", true)
-	ws:SetAttribute("RoundPhase", "Hunt")
+local function setRoundState(state)
+	ws:SetAttribute(ROUND_STATE_ATTRIBUTE, state)
+	-- These two older attributes are projections of the lifecycle, not controls.
+	ws:SetAttribute("RoundActive", state == "Active")
+	ws:SetAttribute("GameStopped", state ~= "Active" and state ~= "Escape")
+	ws:SetAttribute("RoundPhase", state == "Active" and "Hunt" or state)
+end
+
+local function clearRoundClock()
+	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, nil)
+	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, nil)
 	ws:SetAttribute("NightmareEscapeActive", false)
 	ws:SetAttribute("NightmareEscapeEndsAt", nil)
 	ws:SetAttribute("NightmareClearElapsedSeconds", nil)
+	ws:SetAttribute("RoundRestartEndsAt", nil)
+	ws:SetAttribute("ServerRestartEndsAt", nil)
+	ws:SetAttribute("ServerRestarting", false)
 	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, false)
 	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, false)
 end
 
-getMonsterMaxCount()
-if ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE) == nil
-	or tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) == nil
-	or tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) <= ws:GetServerTimeNow() then
-	resetRoundClock()
+local function startRoundClock()
+	local now = ws:GetServerTimeNow()
+	ws:SetAttribute(ROUND_STARTED_AT_ATTRIBUTE, now)
+	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, now + ROUND_DURATION_SECONDS)
 end
+
+getMonsterMaxCount()
+roundGeneration = math.max(0, math.floor(tonumber(ws:GetAttribute(ROUND_GENERATION_ATTRIBUTE)) or 0))
+setRoundState("Starting")
 if ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) == nil then
 	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, false)
 end
@@ -137,9 +154,10 @@ local recordsEvent = getOrCreateRemoteEvent("RecordsUpdate")
 local roundCompleteEvent = getOrCreateRemoteEvent("RoundComplete")
 local nightmareEscapedEvent = getOrCreateRemoteEvent("NightmareEscaped")
 local nightmareEscapeStartedEvent = getOrCreateRemoteEvent("NightmareEscapeStarted")
-local roundRestartedEvent = getOrCreateRemoteEvent("RoundRestarted")
 local roundFailedEvent = getOrCreateRemoteEvent("RoundFailed")
+local roundStartedEvent = getOrCreateRemoteEvent("RoundStarted")
 local restartRoundEvent = getOrCreateRemoteEvent("RestartRound")
+local restartFailedEvent = getOrCreateRemoteEvent("RestartFailed")
 local monsterMilestoneEvent = getOrCreateRemoteEvent("MonsterMilestone")
 local playerKillMilestoneEvent = getOrCreateRemoteEvent("PlayerKillMilestone")
 local bestSpawnAnnouncementEvent = getOrCreateRemoteEvent("BestSpawnAnnouncement")
@@ -198,6 +216,7 @@ local function fireRecords(player)
 		bestEverPlayerName = bestEver.playerName or "-",
 		bestEverSpawn = bestEver.spawn or 0,
 		bestEver = bestEver,
+		roundGeneration = roundGeneration,
 		scoreboard = getScoreboard and getScoreboard() or {},
 	})
 end
@@ -289,6 +308,7 @@ end
 
 local function getPlayerResult(player, elapsedSeconds)
 	return {
+		roundGeneration = roundGeneration,
 		playerName = player.Name,
 		score = scores[player] or 0,
 		kills = kills[player] or 0,
@@ -405,17 +425,14 @@ end
 local beginUndergroundPhase
 
 local function checkRoundComplete(count)
-	if roundComplete or roundFailed then return end
+	if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then return end
 	if pendingRespawns > 0 then return end
 	if count ~= 0 then return end
 
 	-- Clearing the hostile population is the end of combat, not the end of the
 	-- nightmare. Freeze the successful hunt timer and give players one final,
 	-- short escape phase to reach the bedroom portal.
-	roundComplete = true
-	escapeActive = true
-	ws:SetAttribute("RoundActive", false)
-	ws:SetAttribute("RoundPhase", "Escape")
+	setRoundState("Escape")
 	ws:SetAttribute("NightmareEscapeActive", true)
 	local now = ws:GetServerTimeNow()
 	local clearedInSeconds = math.max(0, math.floor(now - (tonumber(ws:GetAttribute(ROUND_STARTED_AT_ATTRIBUTE)) or now)))
@@ -426,6 +443,7 @@ local function checkRoundComplete(count)
 	-- the visible sixty-second escape countdown instead of leaving it at zero.
 	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, escapeEndsAt)
 	nightmareEscapeStartedEvent:FireAllClients({
+		roundGeneration = roundGeneration,
 		clearedInSeconds = clearedInSeconds,
 		escapeEndsAt = escapeEndsAt,
 	})
@@ -444,19 +462,20 @@ local function announceMonsterMilestone(count)
 			and previous > milestone
 			and count <= milestone then
 			announcedMonsterMilestones[milestone] = true
-			monsterMilestoneEvent:FireAllClients(milestone)
+			monsterMilestoneEvent:FireAllClients(milestone, roundGeneration)
 			break
 		end
 	end
 end
 
 local function broadcastMonsterCount()
+	local state = ws:GetAttribute(ROUND_STATE_ATTRIBUTE)
+	if state ~= "Active" and state ~= "Escape" then return end
 	local roundCount = countLivingMonsters()
 	local surfaceCount = countLivingSurfaceMonsters()
 	local undergroundCount = countLivingUndergroundMonsters()
 
-	if not roundComplete
-		and not roundFailed
+	if state == "Active"
 		and pendingRespawns == 0
 		and ws:GetAttribute(UNDERGROUND_PHASE_ATTRIBUTE) ~= true
 		and surfaceCount == 0
@@ -469,7 +488,7 @@ local function broadcastMonsterCount()
 		and undergroundCount
 		or surfaceCount
 	announceMonsterMilestone(displayedCount)
-	monsterCountEvent:FireAllClients(displayedCount)
+	monsterCountEvent:FireAllClients(displayedCount, roundGeneration)
 	checkRoundComplete(roundCount)
 end
 
@@ -605,18 +624,9 @@ local function setDoorsOpen(doors, isOpen)
 	end
 end
 
-local function resetGateDoors()
-	secretShaftOpened = false
-	lavaPoolDoorOpened = false
-	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, false)
-	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, false)
-	setDoorsOpen(secretShaftDoors, false)
-	setDoorsOpen(lavaPoolDoors, false)
-end
-
 -- The marked white creepy opens this gate no matter which authoritative damage
--- source kills it. Unlike the old version, the physical door is hidden rather
--- than destroyed so a restarted game can restore its original locked state.
+-- source kills it. The physical door is hidden rather than destroyed so its
+-- authored state remains recoverable without a server-side reset.
 local function openSecretShaftIfGuard(model)
 	if secretShaftOpened or model:GetAttribute("SecretShaftDoorGuard") ~= true then return end
 	secretShaftOpened = true
@@ -634,7 +644,7 @@ local function openSecretShaftIfGuard(model)
 		warn("[MonsterSystem] SecretShaftGuard sound not found in SoundService")
 	end
 
-	secretShaftAnnouncementEvent:FireAllClients()
+	secretShaftAnnouncementEvent:FireAllClients(roundGeneration)
 end
 
 local function bindGateDoors()
@@ -650,7 +660,7 @@ local function bindGateDoors()
 			rememberDoor(secretShaftDoors, item, prompt)
 			prompt.Triggered:Connect(function(player)
 				if not secretShaftOpened then
-					secretShaftLockedEvent:FireClient(player)
+					secretShaftLockedEvent:FireClient(player, roundGeneration)
 				end
 			end)
 		elseif item:IsA("BasePart") and item.Name == "LavaPoolDoor" and item:GetAttribute("LavaPoolDoor") == true then
@@ -664,7 +674,7 @@ local function bindGateDoors()
 			rememberDoor(lavaPoolDoors, item, prompt)
 			prompt.Triggered:Connect(function(player)
 				if not lavaPoolDoorOpened then
-					lavaPoolDoorLockedEvent:FireClient(player)
+					lavaPoolDoorLockedEvent:FireClient(player, roundGeneration)
 				end
 			end)
 		end
@@ -680,7 +690,7 @@ beginUndergroundPhase = function()
 	lavaPoolDoorOpened = true
 	ws:SetAttribute(UNDERGROUND_PHASE_ATTRIBUTE, true)
 	setDoorsOpen(lavaPoolDoors, true)
-	lavaPoolDoorOpenedEvent:FireAllClients()
+	lavaPoolDoorOpenedEvent:FireAllClients(roundGeneration)
 end
 
 local function updateScoreRecords(player)
@@ -725,7 +735,7 @@ local function playMonsterKillAnnouncement(player)
 	scores[player] = (scores[player] or 0) + MONSTER_KILL_BONUS
 	spawnScores[player] = (spawnScores[player] or 0) + MONSTER_KILL_BONUS
 	setLeaderboardStats(player, scores[player], kills[player] or 0)
-	scoreEvent:FireClient(player, scores[player], kills[player] or 0)
+		scoreEvent:FireClient(player, scores[player], kills[player] or 0, roundGeneration)
 	updateScoreRecords(player)
 	broadcastRecords()
 	return true
@@ -760,10 +770,10 @@ local function awardScore(player, points, isMajorKill)
 	spawnScores[player] = (spawnScores[player] or 0) + points
 	spawnKills[player] = (spawnKills[player] or 0) + 1
 	setLeaderboardStats(player, scores[player], kills[player])
-	scoreEvent:FireClient(player, scores[player], kills[player])
+	scoreEvent:FireClient(player, scores[player], kills[player], roundGeneration)
 	updateScoreRecords(player)
 	if PLAYER_KILL_MILESTONES[kills[player]] then
-		playerKillMilestoneEvent:FireClient(player, kills[player])
+		playerKillMilestoneEvent:FireClient(player, kills[player], roundGeneration)
 	end
 	return registerMultikillKill(player, isMajorKill)
 end
@@ -772,14 +782,15 @@ end
 -- server-owned resurrections. Permanent weapon kills consume every remaining
 -- life, including for bomb monsters.
 local function onMonsterKilled(hum, model)
-	openSecretShaftIfGuard(model)
+	local deathGeneration = roundGeneration
 	local config = MonsterManager.getConfig(model)
 	local shortName = MonsterManager.getShortName(model)
 	local pluralShortName = MonsterManager.getPluralShortName(model)
 	local eventReported = false
 	local fellOffMap = isOutsideMainGround(getMonsterRoot(model))
 
-	if config then
+	if config and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" then
+		openSecretShaftIfGuard(model)
 		local awards = MonsterManager.consumeScoreAwards(hum, config.points)
 		local popupColor = MonsterManager.getLastScoreColor(hum, DEFAULT_SCORE_POPUP_COLOR)
 		local isMajorKill = config.hp >= MAJOR_KILL_MIN_HP
@@ -846,6 +857,7 @@ local function onMonsterKilled(hum, model)
 	if isSpawnerOwnedMonster(model) then
 		spawns[model] = nil
 		task.delay(CORPSE_DISPLAY_TIME, function()
+			if deathGeneration ~= roundGeneration then return end
 			if model.Parent then model:Destroy() end
 			broadcastMonsterCount()
 			broadcastRecords()
@@ -875,8 +887,9 @@ local function onMonsterKilled(hum, model)
 			model.Name == MonsterBombConfig.MODEL_NAME
 				or math.random() < getRespawnChance()
 		)
-		if livesAfterDeath == 0 or not willRespawn or roundFailed or roundComplete or isInNoRespawnWindow() or ws:GetAttribute("GameStopped") == true then
+		if livesAfterDeath == 0 or not willRespawn or isInNoRespawnWindow() or ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then
 			task.delay(CORPSE_DISPLAY_TIME, function()
+				if deathGeneration ~= roundGeneration then return end
 				if model.Parent then
 					model:Destroy()
 				end
@@ -891,6 +904,7 @@ local function onMonsterKilled(hum, model)
 		pendingRespawns += 1
 		local generation = roundGeneration
 		task.delay(CORPSE_DISPLAY_TIME, function()
+			if generation ~= roundGeneration then return end
 			if model.Parent then
 				model:Destroy()
 			end
@@ -905,7 +919,7 @@ local function onMonsterKilled(hum, model)
 				return
 			end
 
-			if roundFailed or roundComplete then
+			if generation ~= roundGeneration or ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then
 				pendingRespawns -= 1
 				broadcastMonsterCount()
 				broadcastRecords()
@@ -955,6 +969,10 @@ local function setupMonster(model)
 	if not config or not MonsterManager.isRoundTracked(model) then return end
 	local hum = MonsterManager.getMonsterHumanoid(model)
 	if not hum then return end
+	-- Respawn clones are registered synchronously before being parented.
+	-- DescendantAdded may then see the same model on the next task;
+	-- do not reapply health or connect duplicate lifecycle handlers.
+	if managedMonsters[model] then return end
 
 	MonsterManager.applyHP(model)
 	if model.Name ~= MonsterBombConfig.MODEL_NAME then
@@ -986,14 +1004,6 @@ local function setupMonster(model)
 	model:SetAttribute(LIVES_REMAINING_ATTRIBUTE, livesRemaining)
 
 	local spawnerOwned = isSpawnerOwnedMonster(model)
-	if not spawnerOwned and not model:GetAttribute("RoundRespawned") then
-		table.insert(roundTemplates, {
-			template = model:Clone(),
-			cframe = model:GetPivot(),
-		})
-		model:SetAttribute("RoundRespawned", true)
-	end
-
 	if not spawnerOwned and not spawns[model] then
 		spawns[model] = {
 			template = model:Clone(),
@@ -1030,6 +1040,7 @@ end
 local function resetScores()
 	for _, player in Players:GetPlayers() do
 		player:SetAttribute("EscapedNightmare", false)
+		player:SetAttribute("EscapedRoundGeneration", nil)
 		player:SetAttribute("RoundDeaths", 0)
 		player:SetAttribute("NewAllTimeScoreRecord", false)
 		roundSpawnBases[player] = spawnCounts[player] or 0
@@ -1039,63 +1050,113 @@ local function resetScores()
 		spawnKills[player] = 0
 		multikillStates[player] = nil
 		setLeaderboardStats(player, 0, 0)
-		scoreEvent:FireClient(player, 0, 0)
+		scoreEvent:FireClient(player, 0, 0, roundGeneration)
 		fireRecords(player)
 	end
 end
 
-local function restartRound()
-	roundGeneration += 1
-	pendingRespawns = 0
-	roundComplete = false
-	roundFailed = false
-	escapeActive = false
-	announcedMonsterMilestones = {}
-	lastBroadcastMonsterCount = nil
-	ws:SetAttribute("GameStopped", false)
-	resetRoundClock()
-	resetGateDoors()
-
-	for _, instance in ws:GetDescendants() do
-		if instance:IsA("Model") and MonsterManager.isRoundTracked(instance) then
-			instance:Destroy()
-		end
+local function stopPlayer(player)
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+	local root = character:FindFirstChild("HumanoidRootPart")
+	humanoid:UnequipTools()
+	humanoid.WalkSpeed = 0
+	humanoid.JumpPower = 0
+	humanoid.JumpHeight = 0
+	humanoid.AutoRotate = false
+	if root then root.Anchored = true end
+	local protection = character:FindFirstChild("RoundLifecycleProtection")
+	if not protection then
+		protection = Instance.new("ForceField")
+		protection.Name = "RoundLifecycleProtection"
+		protection.Visible = false
+		protection.Parent = character
 	end
-
-	spawns = {}
-	connected = {}
-	managedMonsters = {}
-
-	for _, data in ipairs(roundTemplates) do
-		if countLivingMonsters() >= getMonsterMaxCount() then
-			break
-		end
-
-		local clone = data.template:Clone()
-		clone:SetAttribute("RoundRespawned", true)
-		clone:SetAttribute(MANAGED_MONSTER_ATTRIBUTE, true)
-		clone:SetAttribute(LIVES_REMAINING_ATTRIBUTE, RESPAWN_LIVES)
-		clone:PivotTo(data.cframe)
-		clone.Parent = ws
-	end
-
-	resetScores()
-	broadcastMonsterCount()
-	broadcastRecords()
-	roundRestartedEvent:FireAllClients()
 end
 
-restartRoundEvent.OnServerEvent:Connect(function(player)
-	if ws:GetAttribute("GameStopped") == true then
-		restartRound()
-		return
+local function stopAllPlayers()
+	for _, player in Players:GetPlayers() do
+		stopPlayer(player)
 	end
-	if not roundComplete and not roundFailed then return end
-	-- During the escape phase only somebody who has actually entered the portal
-	-- may restart the shared round. It prevents an uninvolved player from
-	-- cancelling another survivor's escape.
-	if escapeActive and player:GetAttribute("EscapedNightmare") ~= true then return end
-	restartRound()
+end
+
+-- A server owns one round only. Starting the initial round deliberately does
+-- not delete/reclone monsters, reset doors, or reload players: those in-place
+-- rewrites were too risky for this legacy place. A fresh server is the reset.
+local function startInitialRound()
+	roundGeneration += 1
+	ws:SetAttribute(ROUND_GENERATION_ATTRIBUTE, roundGeneration)
+	setRoundState("Starting")
+	pendingRespawns = 0
+	announcedMonsterMilestones = {}
+	lastBroadcastMonsterCount = nil
+	clearRoundClock()
+	resultGenerationByPlayer = {}
+	resetScores()
+	startRoundClock()
+	setRoundState("Active")
+	roundStartedEvent:FireAllClients(roundGeneration)
+	broadcastMonsterCount()
+	broadcastRecords()
+end
+
+local function endRound(reason)
+	if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Ended" then return end
+	setRoundState("Ended")
+	ws:SetAttribute("NightmareEscapeActive", false)
+	ws:SetAttribute("NightmareEscapeEndsAt", nil)
+	ws:SetAttribute("RoundRestartEndsAt", nil)
+	ws:SetAttribute("ServerRestartEndsAt", nil)
+	ws:SetAttribute("ServerRestarting", false)
+	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, nil)
+	stopAllPlayers()
+	for _, player in Players:GetPlayers() do
+		if player:GetAttribute("EscapedNightmare") ~= true and resultGenerationByPlayer[player] ~= roundGeneration then
+			resultGenerationByPlayer[player] = roundGeneration
+			local result = getPlayerResult(player)
+			result.message = reason == "escape-timeout"
+				and "You were too late. The nightmare kept you."
+				or "Time ran out. The forest is still hunting."
+			result.roundEndsAt = nil
+			roundFailedEvent:FireClient(player, result)
+		end
+	end
+end
+
+-- Restart means a new Roblox server, never a hand-written reconstruction of
+-- this legacy world. TeleportOptions allocates a fresh reserved instance of
+-- this same place; when this server empties Roblox disposes of it normally.
+local function restartWithFreshServer()
+	if restartTeleportInProgress then return end
+	local players = Players:GetPlayers()
+	if #players == 0 then return end
+
+	restartTeleportInProgress = true
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = true
+	local ok, err = pcall(function()
+		TeleportService:TeleportAsync(game.PlaceId, players, options)
+	end)
+	if ok then return end
+
+	warn("[MonsterSystem] fresh-server restart failed:", err)
+	restartCountdownActive = false
+	restartTeleportInProgress = false
+	ws:SetAttribute("ServerRestarting", false)
+	ws:SetAttribute("ServerRestartEndsAt", nil)
+	for _, player in players do
+		restartFailedEvent:FireClient(player, roundGeneration, "Restart could not begin. Please try again.")
+	end
+end
+
+restartRoundEvent.OnServerEvent:Connect(function(player, generation)
+	if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Ended" then return end
+	if tonumber(generation) ~= roundGeneration then return end
+	if restartCountdownActive or restartTeleportInProgress then return end
+	restartCountdownActive = true
+	ws:SetAttribute("ServerRestarting", true)
+	ws:SetAttribute("ServerRestartEndsAt", ws:GetServerTimeNow() + RESTART_COUNTDOWN_SECONDS)
 end)
 
 
@@ -1105,9 +1166,6 @@ for _, desc in ws:GetDescendants() do
 		setupMonster(desc)
 	end
 end
-
-broadcastMonsterCount()
-broadcastRecords()
 
 -- Handle monsters added later (spawns, respawns)
 ws.DescendantAdded:Connect(function(desc)
@@ -1121,36 +1179,34 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(1)
-		if ws:GetAttribute("GameStopped") == true then
-			-- Game is stopped; do not advance any round logic
-		elseif escapeActive then
+		local state = ws:GetAttribute(ROUND_STATE_ATTRIBUTE)
+		if state == "Ended" and restartCountdownActive then
+				local restartEndsAt = tonumber(ws:GetAttribute("ServerRestartEndsAt")) or 0
+				if ws:GetServerTimeNow() >= restartEndsAt then
+					restartCountdownActive = false
+					restartWithFreshServer()
+				end
+			elseif state == "Escape" then
 			local escapeEndsAt = tonumber(ws:GetAttribute("NightmareEscapeEndsAt")) or 0
-			if ws:GetServerTimeNow() >= escapeEndsAt then
-					escapeActive = false
-					roundFailed = true
-					ws:SetAttribute("NightmareEscapeActive", false)
-					ws:SetAttribute("RoundPhase", "Failed")
-					for _, player in Players:GetPlayers() do
-						local result = getPlayerResult(player)
-						result.message = "You were too late. The nightmare kept you."
-						roundFailedEvent:FireClient(player, result)
-					end
-				broadcastMonsterCount()
+			local everyoneEscaped = #Players:GetPlayers() > 0
+			for _, player in Players:GetPlayers() do
+				if player:GetAttribute("EscapedNightmare") ~= true then
+					everyoneEscaped = false
+					break
+				end
+			end
+			if everyoneEscaped then
+				endRound("all-escaped")
+				broadcastRecords()
+			elseif ws:GetServerTimeNow() >= escapeEndsAt then
+				endRound("escape-timeout")
 				broadcastRecords()
 			end
-		elseif not roundComplete and not roundFailed then
+		elseif state == "Active" then
 			local endsAt = tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE)) or 0
 			if ws:GetServerTimeNow() >= endsAt then
-					roundFailed = true
-					ws:SetAttribute("RoundActive", false)
-					ws:SetAttribute("RoundPhase", "Failed")
-					for _, player in Players:GetPlayers() do
-						local result = getPlayerResult(player)
-						result.roundEndsAt = endsAt
-						roundFailedEvent:FireClient(player, result)
-					end
-				broadcastMonsterCount()
-				broadcastRecords()
+					endRound("timeout")
+					broadcastRecords()
 			end
 		end
 	end
@@ -1162,7 +1218,7 @@ end)
 task.spawn(function()
 	while true do
 		task.wait(3)
-		if not roundComplete and not roundFailed and ws:GetAttribute("GameStopped") ~= true then
+		if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" then
 			for model in pairs(managedMonsters) do
 				if not model.Parent or not model:IsDescendantOf(ws) then
 					managedMonsters[model] = nil
@@ -1184,6 +1240,7 @@ end)
 -- erasing the player's score or kill total for the current game.
 local function onPlayerAdded(player)
 	player:SetAttribute("EscapedNightmare", false)
+	player:SetAttribute("EscapedRoundGeneration", nil)
 	player:SetAttribute("RoundDeaths", 0)
 	player:SetAttribute("NewAllTimeScoreRecord", false)
 	scores[player] = 0
@@ -1196,6 +1253,15 @@ local function onPlayerAdded(player)
 	setupLeaderstats(player)
 
 	player.CharacterAdded:Connect(function()
+		local state = ws:GetAttribute(ROUND_STATE_ATTRIBUTE)
+		if state ~= "Active" and state ~= "Starting" then
+			task.defer(function()
+				if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then
+					stopPlayer(player)
+				end
+			end)
+			return
+		end
 		-- A "best spawn" is judged only after a life has ended. This prevents an
 		-- in-progress run from declaring itself best just because its score rises.
 		local completedSpawn = spawnCounts[player] or 0
@@ -1217,7 +1283,7 @@ local function onPlayerAdded(player)
 			-- second completed spawn onward, announce a genuine new points record
 			-- when the player begins their next life.
 			if completedSpawn >= 2 and isNewBest then
-				bestSpawnAnnouncementEvent:FireClient(player, completedScore, completedKills)
+				bestSpawnAnnouncementEvent:FireClient(player, completedScore, completedKills, roundGeneration)
 			end
 		end
 
@@ -1228,14 +1294,31 @@ local function onPlayerAdded(player)
 		spawnScores[player] = 0
 		spawnKills[player] = 0
 		setLeaderboardStats(player, scores[player] or 0, kills[player] or 0)
-		scoreEvent:FireClient(player, scores[player] or 0, kills[player] or 0)
+		scoreEvent:FireClient(player, scores[player] or 0, kills[player] or 0, roundGeneration)
 		fireRecords(player)
+		if state ~= "Active" then
+			task.defer(function()
+				if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then
+					stopPlayer(player)
+				end
+			end)
+		end
+	end)
+	player:GetAttributeChangedSignal("EscapedNightmare"):Connect(function()
+		if player:GetAttribute("EscapedNightmare") == true and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Escape" then
+			player:SetAttribute("EscapedRoundGeneration", roundGeneration)
+			stopPlayer(player)
+		end
 	end)
 end
 Players.PlayerAdded:Connect(onPlayerAdded)
 for _, player in Players:GetPlayers() do
 	onPlayerAdded(player)
 end
+
+-- All dependencies and player handlers are live before the one server-owned round.
+startInitialRound()
+broadcastRecords()
 
 Players.PlayerRemoving:Connect(function(player)
 	multikillStates[player] = nil

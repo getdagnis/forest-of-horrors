@@ -8,6 +8,16 @@ local TweenService = game:GetService("TweenService")
 local tool = script.Parent
 local shootEvent = tool:WaitForChild("ShootEvent")
 
+local function isPlayerInActiveRound(player)
+	return player
+		and workspace:GetAttribute("RoundState") == "Active"
+		and player:GetAttribute("EscapedNightmare") ~= true
+end
+
+local function isCurrentGeneration(generation)
+	return typeof(generation) == "number" and generation == workspace:GetAttribute("RoundGeneration")
+end
+
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFeedback"))
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
@@ -155,12 +165,13 @@ local function stabilizeToolAssembly()
 	-- player inventory: anchoring during that handoff can pull the player back
 	-- to the world-spawn CFrame through the Tool welds.
 	local held = isInPlayerInventory()
+	local usesPromptPickup = tool:FindFirstChild("MonsterBlasterPickupPrompt", true) ~= nil
 	for _, item in tool:GetDescendants() do
 		if item:IsA("BasePart") then
 			item.Massless = true
 			item.CanCollide = false
 			item.Anchored = not held
-			item.CanTouch = not held and item == handle
+			item.CanTouch = not held and not usesPromptPickup and item == handle
 			if item ~= handle and not hasToolJoint(handle, item) then
 				local weld = Instance.new("WeldConstraint")
 				weld.Name = "MonsterBlasterAssemblyWeld"
@@ -249,7 +260,8 @@ local function getGraceTarget(player, cameraOrigin, direction)
 	return isVisibleMonster(cached.model, cameraOrigin, player) and cached.model or nil
 end
 
-contourTargetEvent.OnServerEvent:Connect(function(player, reportedTool, originOffset, direction, target)
+contourTargetEvent.OnServerEvent:Connect(function(player, reportedTool, originOffset, direction, target, generation)
+	if not isPlayerInActiveRound(player) or not isCurrentGeneration(generation) then return end
 	if reportedTool ~= tool or not isEquippedBy(player) then return end
 	if typeof(direction) ~= "Vector3" or direction.Magnitude < DIRECTION_EPSILON then return end
 	local cameraOrigin = validateCameraOrigin(player, originOffset)
@@ -397,7 +409,7 @@ local function damageMonster(player, model, damage, blastOrigin)
 	if humanoid.Health > 0 then pushMonsterBack(model, blastOrigin) end
 
 	if humanoid.Health > 0 then
-		damageLabelEvent:FireClient(player, model, humanoid.Health, humanoid.MaxHealth)
+		damageLabelEvent:FireClient(player, model, humanoid.Health, humanoid.MaxHealth, workspace:GetAttribute("RoundGeneration"))
 		MonsterHitFeedback.flash(model, Config.FLASH_COLOR, MONSTER_FLASH_DURATION)
 	else
 		MonsterHitFeedback.illuminate(model, Config.FLASH_COLOR, KILL_ILLUMINATION_DURATION)
@@ -534,7 +546,8 @@ local function pushShooterBack(player, direction)
 	root.AssemblyLinearVelocity += -flatDirection.Unit * KNOCKBACK_HORIZONTAL_SPEED + Vector3.new(0, KNOCKBACK_UPWARD_SPEED, 0)
 end
 
-shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outlinedTarget)
+shootEvent.OnServerEvent:Connect(function(player, originOffset, direction, outlinedTarget, generation)
+	if not isPlayerInActiveRound(player) or not isCurrentGeneration(generation) then return end
 	if typeof(direction) ~= "Vector3" or direction.Magnitude < DIRECTION_EPSILON or not isEquippedBy(player) then return end
 	local state = playerState[player] or {}
 	local now = os.clock()

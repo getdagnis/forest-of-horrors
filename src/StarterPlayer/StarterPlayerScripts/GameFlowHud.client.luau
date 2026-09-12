@@ -13,7 +13,8 @@ local player = Players.LocalPlayer
 local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
 AudioPreloader.Start()
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
-local INTRO_MOVEMENT_LOCK_SECONDS = 8
+local INTRO_MOVEMENT_LOCK_SECONDS = 9
+local gameplayStopped = false
 
 -- Disable only Roblox's local walk/run/jump controls during the opening lines.
 -- The character remains fully physical: gravity, animation, camera, damage,
@@ -23,18 +24,24 @@ local playerControls = require(player:WaitForChild("PlayerScripts"):WaitForChild
 local function lockOpeningMovement()
 	playerControls:Disable()
 	task.delay(INTRO_MOVEMENT_LOCK_SECONDS, function()
-		playerControls:Enable()
+		if not gameplayStopped and workspace:GetAttribute("RoundState") == "Active" then
+			playerControls:Enable()
+		end
 	end)
 end
 
 local roundCompleteEvent = ReplicatedStorage:WaitForChild("RoundComplete")
-local roundRestartedEvent = ReplicatedStorage:WaitForChild("RoundRestarted")
+local roundStartedEvent = ReplicatedStorage:WaitForChild("RoundStarted")
 local restartRoundEvent = ReplicatedStorage:WaitForChild("RestartRound")
+local restartFailedEvent = ReplicatedStorage:WaitForChild("RestartFailed")
 local nightmareEscapedEvent = ReplicatedStorage:WaitForChild("NightmareEscaped")
 
 -- Wait for the instance-based GameFlowHud ScreenGui that gets cloned from StarterGui into PlayerGui
 local playerGui = player:WaitForChild("PlayerGui")
 local gui = playerGui:WaitForChild("GameFlowHud")
+-- MonsterMilestoneHud is a sibling ScreenGui at DisplayOrder 10000. Result and
+-- welcome modals must always cover it, even if a stale announcement arrives.
+gui.DisplayOrder = 20000
 
 local welcomeShade = gui:WaitForChild("WelcomePanel")
 local welcomePanel = welcomeShade:WaitForChild("Panel")
@@ -58,7 +65,7 @@ escapeShade.BackgroundColor3 = Color3.fromRGB(2, 0, 7)
 escapeShade.BackgroundTransparency = 0.08
 escapeShade.BorderSizePixel = 0
 escapeShade.Visible = false
-escapeShade.ZIndex = 200
+escapeShade.ZIndex = 2000
 escapeShade.Parent = gui
 
 local escapePanel = Instance.new("Frame")
@@ -69,7 +76,7 @@ escapePanel.Size = UDim2.fromOffset(620, 320)
 escapePanel.BackgroundColor3 = Color3.fromRGB(12, 4, 25)
 escapePanel.BackgroundTransparency = 0.08
 escapePanel.BorderSizePixel = 0
-escapePanel.ZIndex = 201
+escapePanel.ZIndex = 2001
 escapePanel.Parent = escapeShade
 Instance.new("UICorner", escapePanel).CornerRadius = UDim.new(0, 12)
 local escapeStroke = Instance.new("UIStroke")
@@ -92,7 +99,7 @@ escapeTitle.TextSize = 38
 escapeTitle.TextWrapped = true
 escapeTitle.TextXAlignment = Enum.TextXAlignment.Center
 escapeTitle.TextYAlignment = Enum.TextYAlignment.Center
-escapeTitle.ZIndex = 202
+escapeTitle.ZIndex = 2002
 escapeTitle.Parent = escapePanel
 
 local resultName = Instance.new("TextLabel")
@@ -104,7 +111,7 @@ resultName.Font = Enum.Font.GothamBold
 resultName.TextColor3 = Color3.fromRGB(246, 235, 255)
 resultName.TextSize = 20
 resultName.TextXAlignment = Enum.TextXAlignment.Center
-resultName.ZIndex = 202
+resultName.ZIndex = 2002
 resultName.Parent = escapePanel
 
 local resultStats = Instance.new("TextLabel")
@@ -116,7 +123,7 @@ resultStats.Font = Enum.Font.GothamBold
 resultStats.TextColor3 = Color3.fromRGB(209, 174, 255)
 resultStats.TextSize = 16
 resultStats.TextXAlignment = Enum.TextXAlignment.Center
-resultStats.ZIndex = 202
+resultStats.ZIndex = 2002
 resultStats.Parent = escapePanel
 
 local resultRecord = Instance.new("TextLabel")
@@ -129,7 +136,7 @@ resultRecord.TextColor3 = Color3.fromRGB(255, 127, 205)
 resultRecord.TextSize = 14
 resultRecord.TextXAlignment = Enum.TextXAlignment.Center
 resultRecord.Visible = false
-resultRecord.ZIndex = 202
+resultRecord.ZIndex = 2002
 resultRecord.Parent = escapePanel
 
 local escapeDetail = Instance.new("TextLabel")
@@ -142,7 +149,7 @@ escapeDetail.Text = "For now, the forest is quiet."
 escapeDetail.TextColor3 = Color3.fromRGB(173, 224, 255)
 escapeDetail.TextSize = 16
 escapeDetail.TextXAlignment = Enum.TextXAlignment.Center
-escapeDetail.ZIndex = 202
+escapeDetail.ZIndex = 2002
 escapeDetail.Parent = escapePanel
 
 local escapeRestartButton = Instance.new("TextButton")
@@ -156,11 +163,73 @@ escapeRestartButton.Font = Enum.Font.GothamBold
 escapeRestartButton.Text = "WAKE UP AGAIN"
 escapeRestartButton.TextColor3 = Color3.fromRGB(255, 245, 255)
 escapeRestartButton.TextSize = 14
-escapeRestartButton.ZIndex = 202
+escapeRestartButton.ZIndex = 2002
 escapeRestartButton.Parent = escapePanel
 Instance.new("UICorner", escapeRestartButton).CornerRadius = UDim.new(0, 7)
 
 local escapedNightmare = false
+local currentRoundGeneration = math.max(0, math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or 0))
+local restartRequestPending = false
+local pendingRoundStartedGeneration
+local appliedRoundStartedGeneration
+
+local function matchesCurrentGeneration(data)
+	local replicatedGeneration = math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or -1)
+	return type(data) == "table"
+		and tonumber(data.roundGeneration) == currentRoundGeneration
+		and currentRoundGeneration == replicatedGeneration
+end
+
+local function setGameplayStopped(stopped)
+	if gameplayStopped == stopped then return end
+	gameplayStopped = stopped
+	if stopped then
+		playerControls:Disable()
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+		end)
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		if humanoid then humanoid:UnequipTools() end
+	else
+		playerControls:Enable()
+		pcall(function()
+			StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, true)
+		end)
+	end
+end
+
+local function refreshRestartButton()
+	if not escapeShade.Visible then return end
+
+	local state = workspace:GetAttribute("RoundState")
+	restartButton.Visible = false
+	restartButton.Active = false
+
+	-- A player who escaped must not be able to cut short another survivor's
+	-- active escape phase. The shared restart control becomes available once
+	-- that phase has ended for everyone.
+	if state == "Escape" then
+		escapeRestartButton.Text = "SURVIVORS ARE ESCAPING"
+		escapeRestartButton.Active = false
+		return
+	end
+
+	if state == "Ended" then
+		local restartEndsAt = tonumber(workspace:GetAttribute("ServerRestartEndsAt"))
+		if restartEndsAt then
+			local remaining = math.max(0, math.ceil(restartEndsAt - workspace:GetServerTimeNow()))
+			escapeRestartButton.Text = string.format("RESTARTING IN %d:%02d", math.floor(remaining / 60), remaining % 60)
+			escapeRestartButton.Active = false
+		else
+			escapeRestartButton.Text = restartRequestPending and "RESTARTING SERVER..." or "RESTART GAME"
+			escapeRestartButton.Active = not restartRequestPending
+		end
+	else
+		escapeRestartButton.Text = "ROUND UNAVAILABLE"
+		escapeRestartButton.Active = false
+	end
+end
 
 local function resizeEscapePanel()
 	local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
@@ -235,6 +304,28 @@ local function playSound(soundName)
 end
 
 local spawnFlashToken = 0
+local resultAudioToken = 0
+
+-- Result cues must overlap on the modal's timeline. They intentionally skip
+-- the general preloader wait so a long first clip cannot delay its follow-up.
+local function playResultSound(soundName)
+	local source = SoundService:FindFirstChild(soundName, true)
+	if not (source and source:IsA("Sound")) then
+		warn("[GameFlowHud] SoundService." .. soundName .. " is missing")
+		return
+	end
+	local sound = source:Clone()
+	sound.Looped = false
+	sound.Parent = SoundService
+	sound:Play()
+	sound.Ended:Once(function()
+		if sound.Parent then sound:Destroy() end
+	end)
+	task.delay(30, function()
+		if sound.Parent then sound:Destroy() end
+	end)
+end
+
 local function showNewSpawnFlash()
 	spawnFlashToken += 1
 	local token = spawnFlashToken
@@ -331,7 +422,33 @@ end
 
 local function showResult(data)
 	data = data or {}
+	if not matchesCurrentGeneration(data) then return end
+	setGameplayStopped(true)
 	local escaped = data.outcome == "escape"
+	resultAudioToken += 1
+	local audioToken = resultAudioToken
+	if escaped then
+		task.spawn(function()
+			playResultSound("NightmareEscaped")
+		end)
+	else
+		task.spawn(function()
+			playResultSound("NightmareWon")
+		end)
+		task.delay(2.5, function()
+			-- This is tied to the loss modal only; an escaped player never receives
+			-- the follow-up warning. It overlaps NightmareWon by design.
+			if audioToken == resultAudioToken
+				and escapeShade.Visible
+				and workspace:GetAttribute("RoundState") == "Ended"
+			then
+				playResultSound("NotEscaping")
+			end
+		end)
+	end
+	-- Keep every result modal above opening/critical announcements, including
+	-- a stale announcement that arrives on the same frame as the result.
+	gui.DisplayOrder = 40000
 	escapedNightmare = escaped
 	endShade.Visible = false
 	resizeEscapePanel()
@@ -352,19 +469,23 @@ local function showResult(data)
 	resultRecord.Visible = record ~= nil
 	escapeDetail.Text = (data.message)
 		or (escaped and "For now, the forest is quiet." or "Time ran out. The forest is still hunting.")
-	escapeRestartButton.Text = escaped and "WAKE UP AGAIN" or "QUICK RESTART"
+	escapeDetail.Text ..= "\nRestarting creates a completely fresh server and game."
+	refreshRestartButton()
 	escapeShade.Visible = true
+	refreshRestartButton()
 end
 
 local function showRoundFailure(data)
 	if escapedNightmare then return end
 	data = data or {}
+	if not matchesCurrentGeneration(data) then return end
 	data.outcome = "timeout"
 	showResult(data)
 end
 
 roundCompleteEvent.OnClientEvent:Connect(function(data)
 	data = data or {}
+	if not matchesCurrentGeneration(data) then return end
 	data.outcome = "complete"
 	data.message = data.message or "Congrats. The forest is clear."
 	showResult(data)
@@ -372,6 +493,7 @@ end)
 
 local function showEscapedScreen(data)
 	data = data or {}
+	if not matchesCurrentGeneration(data) then return end
 	data.outcome = "escape"
 	showResult(data)
 end
@@ -423,6 +545,7 @@ if UI_TEST and RunService:IsStudio() then
 	timeoutButton.Activated:Connect(function()
 		welcomeShade.Visible = false
 		showRoundFailure({
+			roundGeneration = currentRoundGeneration,
 			message = "Time ran out. The forest is still hunting.",
 			playerName = player.Name,
 			score = 42,
@@ -434,6 +557,7 @@ if UI_TEST and RunService:IsStudio() then
 	escapedButton.Activated:Connect(function()
 		welcomeShade.Visible = false
 		showEscapedScreen({
+			roundGeneration = currentRoundGeneration,
 			playerName = player.Name,
 			score = 42,
 			kills = 9,
@@ -461,19 +585,73 @@ end
 bindRoundFailed(ReplicatedStorage:FindFirstChild("RoundFailed"))
 ReplicatedStorage.ChildAdded:Connect(bindRoundFailed)
 
-roundRestartedEvent.OnClientEvent:Connect(function()
+local function reconcileRoundStarted()
+	local generation = pendingRoundStartedGeneration
+	if not generation or generation == appliedRoundStartedGeneration then return end
+	if generation ~= tonumber(workspace:GetAttribute("RoundGeneration"))
+		or workspace:GetAttribute("RoundState") ~= "Active"
+	then return end
+
+	pendingRoundStartedGeneration = nil
+	appliedRoundStartedGeneration = generation
+	currentRoundGeneration = generation
+	gui.DisplayOrder = 20000
+	restartRequestPending = false
+	setGameplayStopped(false)
 	escapedNightmare = false
 	escapeShade.Visible = false
+	escapeRestartButton.Active = true
 	restartButton.Text = "Continue / Restart"
 	endShade.Visible = false
+	player:SetAttribute("NightmareIntroductionComplete", false)
+end
+
+roundStartedEvent.OnClientEvent:Connect(function(generation)
+	generation = tonumber(generation)
+	if not generation or generation < currentRoundGeneration then return end
+	pendingRoundStartedGeneration = generation
+	reconcileRoundStarted()
 end)
 
-restartButton.MouseButton1Click:Connect(function()
-	restartButton.Text = "Restarting..."
-	restartRoundEvent:FireServer()
+restartFailedEvent.OnClientEvent:Connect(function(generation, message)
+	if tonumber(generation) ~= currentRoundGeneration then return end
+	if workspace:GetAttribute("RoundState") ~= "Ended" then return end
+	restartRequestPending = false
+	escapeDetail.Text = tostring(message or "Restart could not begin. Please try again.")
+	refreshRestartButton()
 end)
 
 escapeRestartButton.MouseButton1Click:Connect(function()
-	escapeRestartButton.Text = "WAKING..."
-	restartRoundEvent:FireServer()
+	if workspace:GetAttribute("RoundState") ~= "Ended" or restartRequestPending then return end
+	restartRequestPending = true
+	refreshRestartButton()
+	restartRoundEvent:FireServer(currentRoundGeneration)
 end)
+
+RunService.RenderStepped:Connect(refreshRestartButton)
+
+workspace:GetAttributeChangedSignal("RoundState"):Connect(function()
+	local state = workspace:GetAttribute("RoundState")
+	restartButton.Visible = false
+	restartButton.Active = false
+	if state ~= "Active" and state ~= "Escape" then
+		setGameplayStopped(true)
+	end
+	reconcileRoundStarted()
+	refreshRestartButton()
+end)
+
+workspace:GetAttributeChangedSignal("RoundGeneration"):Connect(function()
+	-- The replicated generation can advance during Starting. Only RoundStarted
+	-- for that exact Active generation may reopen the local controls or modal.
+	currentRoundGeneration = math.max(0, math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or 0))
+	if pendingRoundStartedGeneration and pendingRoundStartedGeneration < currentRoundGeneration then
+		pendingRoundStartedGeneration = nil
+	end
+	reconcileRoundStarted()
+end)
+
+local initialRoundState = workspace:GetAttribute("RoundState")
+if initialRoundState ~= "Active" and initialRoundState ~= "Escape" then
+	setGameplayStopped(true)
+end

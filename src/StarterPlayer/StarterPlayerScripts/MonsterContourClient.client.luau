@@ -13,26 +13,67 @@ local UPDATE_EVERY = 0.35
 
 local currentMonsterCount = math.huge
 local highlights = {}
+local roundMonsterModels = {}
+local roundMonsterModelSet = {}
+local monsterParts = {}
+
+local function currentGeneration()
+	return math.max(0, math.floor(tonumber(Workspace:GetAttribute("RoundGeneration")) or 0))
+end
+
+local function isActiveRound()
+	return Workspace:GetAttribute("RoundState") == "Active"
+end
 
 local function getCharacter()
 	return player.Character
 end
 
 local function getMonsterPart(model)
+	local cached = monsterParts[model]
+	if cached and cached.Parent then
+		return cached
+	end
+
 	local part = model:FindFirstChild("HumanoidRootPart", true)
 		or model:FindFirstChild("Head", true)
 
 	if part and part:IsA("BasePart") then
+		monsterParts[model] = part
 		return part
 	end
 
 	for _, item in model:GetDescendants() do
 		if item:IsA("BasePart") then
+			monsterParts[model] = item
 			return item
 		end
 	end
 
 	return nil
+end
+
+local function cacheRoundMonster(instance)
+	if instance:IsA("Model")
+		and not roundMonsterModelSet[instance]
+		and MonsterManager.isRoundTracked(instance)
+	then
+		roundMonsterModelSet[instance] = true
+		table.insert(roundMonsterModels, instance)
+	end
+end
+
+local function removeRoundMonster(instance)
+	if not roundMonsterModelSet[instance] then return end
+	roundMonsterModelSet[instance] = nil
+	monsterParts[instance] = nil
+	highlights[instance] = nil
+	for index = #roundMonsterModels, 1, -1 do
+		if roundMonsterModels[index] == instance then
+			table.remove(roundMonsterModels, index)
+			break
+		end
+	end
 end
 
 local function isAliveMonster(model)
@@ -69,7 +110,7 @@ local function getHighlight(model)
 end
 
 local function updateContours()
-	local canShowAny = currentMonsterCount <= SHOW_AT_COUNT
+	local canShowAny = isActiveRound() and currentMonsterCount <= SHOW_AT_COUNT
 
 	for model, highlight in pairs(highlights) do
 		if not model.Parent then
@@ -87,9 +128,9 @@ local function updateContours()
 	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
 	if not playerRoot then return end
 
-	for _, item in Workspace:GetDescendants() do
-		if isAliveMonster(item) then
-			local part = getMonsterPart(item)
+	for _, model in ipairs(roundMonsterModels) do
+		if isAliveMonster(model) then
+			local part = getMonsterPart(model)
 
 			if part then
 				local distance = (part.Position - playerRoot.Position).Magnitude
@@ -98,14 +139,35 @@ local function updateContours()
 				-- clean; guardians stay out because they are not round monsters.
 				local visible = distance >= MIN_DISTANCE and distance <= MAX_DISTANCE
 
-				getHighlight(item).Enabled = visible
+				getHighlight(model).Enabled = visible
 			end
 		end
 	end
 end
 
-monsterCountEvent.OnClientEvent:Connect(function(count)
+Workspace.DescendantAdded:Connect(cacheRoundMonster)
+Workspace.DescendantRemoving:Connect(removeRoundMonster)
+
+-- Build once without blocking the client, then maintain the registry from
+-- instance lifecycle events instead of rescanning the entire map.
+task.spawn(function()
+	for index, instance in ipairs(Workspace:GetDescendants()) do
+		cacheRoundMonster(instance)
+		if index % 200 == 0 then
+			task.wait()
+		end
+	end
+end)
+
+monsterCountEvent.OnClientEvent:Connect(function(count, generation)
+	if tonumber(generation) ~= currentGeneration() or not isActiveRound() then return end
 	currentMonsterCount = tonumber(count) or math.huge
+	updateContours()
+end)
+
+Workspace:GetAttributeChangedSignal("RoundState"):Connect(updateContours)
+Workspace:GetAttributeChangedSignal("RoundGeneration"):Connect(function()
+	currentMonsterCount = math.huge
 	updateContours()
 end)
 

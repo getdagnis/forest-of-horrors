@@ -93,7 +93,7 @@ local conversation = Instance.new("Frame")
 conversation.Name = "GuardianConversation"
 conversation.AnchorPoint = Vector2.new(0.5, 1)
 conversation.Position = UDim2.fromScale(0.5, 0.84)
-conversation.Size = UDim2.fromOffset(260, 34)
+conversation.Size = UDim2.fromOffset(320, 52)
 conversation.BackgroundTransparency = 1
 conversation.Visible = false
 conversation.Parent = gui
@@ -101,18 +101,18 @@ conversation.Parent = gui
 local conversationText = Instance.new("TextLabel")
 conversationText.Name = "Text"
 conversationText.Position = UDim2.fromOffset(0, 0)
-conversationText.Size = UDim2.new(1, 0, 0, 17)
+conversationText.Size = UDim2.new(1, 0, 0, 34)
 conversationText.BackgroundTransparency = 1
 conversationText.Font = Enum.Font.GothamBold
 conversationText.Text = "TALKING"
 conversationText.TextColor3 = GUARDIAN_COLOR
-conversationText.TextSize = 13
+conversationText.TextSize = 28
 conversationText.TextStrokeTransparency = 0.65
 conversationText.Parent = conversation
 
 local bar = Instance.new("Frame")
 bar.Name = "ProgressBar"
-bar.Position = UDim2.fromOffset(0, 23)
+bar.Position = UDim2.fromOffset(0, 42)
 bar.Size = UDim2.new(1, 0, 0, 5)
 bar.BackgroundColor3 = GUARDIAN_COLOR
 bar.BackgroundTransparency = 0.78
@@ -240,7 +240,7 @@ local function startConversation(guardian, duration)
 	if not guardian or not guardian:IsA("Model") then return end
 	if conversationGuardian == guardian and conversation.Visible then return end
 	conversationGuardian = guardian
-	conversationDuration = math.max(0.1, tonumber(duration) or 10)
+	conversationDuration = math.max(0.1, tonumber(duration) or 7)
 	conversationStartedAt = os.clock()
 	conversation.Visible = true
 	fill.Size = UDim2.fromScale(0, 1)
@@ -263,7 +263,7 @@ local function showAnswer(message, persistent)
 		TextStrokeTransparency = 0,
 	}):Play()
 	if persistent then return end
-	task.delay(2.5, function()
+	task.delay(1.25, function()
 		if token ~= answerToken or not answerText.Parent then return end
 		local fade = TweenService:Create(answerText, TweenInfo.new(0.25), {
 			TextTransparency = 1,

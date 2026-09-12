@@ -5,6 +5,7 @@ local Debris = game:GetService("Debris")
 local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
@@ -102,6 +103,7 @@ local depletedMessageToken = 0
 local depletedSoundToken = 0
 local lastChargeUnits
 local pickupSoundPlayed = false
+local pendingChargeAfterEquip = false
 local groundPreview
 local didWarnMissingHud = false
 local didWarnMissingAmbient = false
@@ -126,6 +128,25 @@ end
 
 local function isEquipped()
 	return player.Character and tool.Parent == player.Character
+end
+
+local function equipForCharge()
+	if isEquipped() then return true end
+	local backpack = player:FindFirstChild("Backpack")
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if tool.Parent == backpack and humanoid and humanoid.Health > 0 then
+		pendingChargeAfterEquip = true
+		humanoid:EquipTool(tool)
+	end
+	return false
+end
+
+local function isActiveRound()
+	return Workspace:GetAttribute("RoundState") == "Active"
+end
+
+local function currentGeneration()
+	return Workspace:GetAttribute("RoundGeneration")
 end
 
 local function getHandle()
@@ -194,6 +215,28 @@ local function playPickupSound()
 	sound:Stop()
 	sound.TimePosition = 0
 	sound:Play()
+end
+
+local function playRechargePickupSound()
+	if isEquipped() then
+		playPickupSound()
+		return
+	end
+	-- A Tool in Backpack is not a dependable 3D audio parent. Play this one
+	-- local recharge cue from SoundService so the second-pickup feedback is
+	-- audible even before the player equips the Blaster again.
+	local sound = Instance.new("Sound")
+	sound.Name = "MonsterBlasterRechargePickup"
+	sound.SoundId = PICKUP_SOUND
+	sound.Volume = DEFAULT_SOUND_VOLUME
+	sound.Parent = SoundService
+	sound:Play()
+	sound.Ended:Once(function()
+		if sound.Parent then sound:Destroy() end
+	end)
+	task.delay(10, function()
+		if sound.Parent then sound:Destroy() end
+	end)
 end
 
 local function playDepletedFeedback()
@@ -351,7 +394,11 @@ end
 local function updateChargeHud()
 	local units = getChargeUnits()
 	if chargeLevelTitle then
-		chargeLevelTitle.Text = units == 0 and "BLASTER DEPLETED" or "BLASTER CHARGE LEVEL"
+		if charging then
+			chargeLevelTitle.Text = string.format("CHARGING %d%%", math.floor(getChargeProgress() * 100))
+		else
+			chargeLevelTitle.Text = units == 0 and "BLASTER DEPLETED" or "BLASTER CHARGE LEVEL"
+		end
 	end
 	for index, cell in ipairs(chargeCells) do
 		-- Drain from the left, leaving the rightmost segments bright beside the
@@ -366,13 +413,16 @@ local function updateChargeHud()
 end
 
 local function onChargeChanged()
-	local units = getChargeUnits()
-	if lastChargeUnits and units > lastChargeUnits and isEquipped() then
-		playPickupSound()
-		pickupSoundPlayed = true
-	end
-	lastChargeUnits = units
+	lastChargeUnits = getChargeUnits()
 	updateChargeHud()
+end
+
+local function onRechargePickup()
+	lastChargeUnits = getChargeUnits()
+	updateChargeHud()
+	-- A duplicate pickup is a recharge even while this Tool is in Backpack.
+	playRechargePickupSound()
+	pickupSoundPlayed = true
 end
 
 local function showDepletedMessage()
@@ -417,7 +467,8 @@ local function destroyWeaponHud()
 end
 
 local function startCharge()
-	if not isEquipped() or charging then return end
+	if not isActiveRound() or charging then return end
+	if not equipForCharge() then return end
 	if coolingDown then playCooldownSound() return end
 	if getChargeUnits() < Config.DIRECT_SHOT_CHARGE_UNITS then
 		playDepletedFeedback()
@@ -433,9 +484,11 @@ local function releaseCharge()
 	if not charging then return end
 	local heldSeconds = os.clock() - chargeStartedAt
 	charging = false
+	pendingChargeAfterEquip = false
 	chargeStartedAt = 0
 	stopChargeSound()
-	if heldSeconds < Config.CHARGE_TIME then return end
+	updateChargeHud()
+	if not isActiveRound() or heldSeconds < Config.CHARGE_TIME then return end
 	fireShot()
 end
 
@@ -527,7 +580,7 @@ local function getGroundPreview()
 end
 
 local function updateGroundPreview(chargeProgress)
-	if not charging or not isEquipped() or not GunAim.shouldShowAimHelpers(player) then
+	if not isActiveRound() or not charging or not isEquipped() or not GunAim.shouldShowAimHelpers(player) then
 		if groundPreview then groundPreview.Transparency = 1 end
 		return
 	end
@@ -648,7 +701,7 @@ local function showShotBeam(barrel, endPosition, power)
 end
 
 fireShot = function()
-	if not isEquipped() then return end
+	if not isActiveRound() or not isEquipped() then return end
 	if coolingDown then
 		playCooldownSound()
 		return
@@ -674,7 +727,7 @@ fireShot = function()
 		-- changing the validated server damage or shockwave mechanics.
 		makeImpactLight(endPosition, power)
 	end
-	shootEvent:FireServer(originOffset, direction, target)
+	shootEvent:FireServer(originOffset, direction, target, currentGeneration())
 	coolingDown = true
 	cooldownStartedAt = os.clock()
 	task.delay(Config.COOLDOWN, function()
@@ -684,6 +737,7 @@ end
 
 local function resetState()
 	charging = false
+	pendingChargeAfterEquip = false
 	coolingDown = false
 	chargeStartedAt = 0
 	stopChargeSound()
@@ -733,9 +787,14 @@ tool.Equipped:Connect(function()
 		ambientLoop.Looped = true
 		ambientLoop:Play()
 	end
+	if pendingChargeAfterEquip then
+		pendingChargeAfterEquip = false
+		task.defer(startCharge)
+	end
 end)
 
 tool:GetAttributeChangedSignal(Config.CHARGE_ATTRIBUTE):Connect(onChargeChanged)
+tool:GetAttributeChangedSignal("MonsterBlasterRechargeNonce"):Connect(onRechargePickup)
 
 tool.Unequipped:Connect(function()
 	cleanupWeaponState()
@@ -760,9 +819,14 @@ tool.Destroying:Connect(cleanupWeaponState)
 
 RunService.RenderStepped:Connect(function()
 	if not isEquipped() then return end
+	if not isActiveRound() then
+		if charging then resetState() end
+		return
+	end
 	-- Other legacy UI can restore this property after Equipped fires. Keep the
 	-- native pointer hidden so the Blaster has one unambiguous aim indicator.
 	UserInputService.MouseIconEnabled = false
+	if charging then updateChargeHud() end
 	updateCrosshair()
 	updateGroundPreview(getChargeProgress())
 end)

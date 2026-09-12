@@ -19,6 +19,10 @@ local UPDATE_INTERVAL = 0.25
 local managed = {}
 local stabilizedPhysics = {}
 
+local function isRoundActive()
+	return Workspace:GetAttribute("RoundState") == "Active"
+end
+
 -- These marketplace variants have been observed carrying legacy movers that
 -- fight Humanoid:MoveTo and launch/teleport the assembly. Yellow is stabilized
 -- too even though it is not a configured combat type in this source snapshot.
@@ -86,7 +90,10 @@ local function findNearestPlayerRoot(origin)
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		local root = character and character:FindFirstChild("HumanoidRootPart")
-		if humanoid and root and humanoid.Health > 0 then
+		if humanoid and root and humanoid.Health > 0
+			and Workspace:GetAttribute("RoundState") == "Active"
+			and player:GetAttribute("EscapedNightmare") ~= true
+		then
 			local distance = (root.Position - origin).Magnitude
 			if distance < nearestDistance then
 				nearestRoot = root
@@ -169,6 +176,12 @@ local function setupCreepy(model)
 
 	task.spawn(function()
 		while model.Parent and humanoid.Parent and humanoid.Health > 0 do
+			if not isRoundActive() then
+				-- Preserve the current position; this system owns movement intent only.
+				humanoid:Move(Vector3.zero)
+				task.wait(UPDATE_INTERVAL)
+				continue
+			end
 			if model.Name == "creepyMonsterOrange" then
 				-- A collision should not leave the whole rig spinning or flying after
 				-- its legacy movers have been removed.
@@ -200,7 +213,11 @@ local function setupCreepy(model)
 				if (playerRoot.Position - root.Position).Magnitude <= ATTACK_RANGE and now - state.lastPlayerHit >= PLAYER_HIT_COOLDOWN then
 					local character = playerRoot.Parent
 					local targetHumanoid = character and character:FindFirstChildOfClass("Humanoid")
-					if targetHumanoid and targetHumanoid.Health > 0 then
+					if targetHumanoid and targetHumanoid.Health > 0
+						and Workspace:GetAttribute("RoundState") == "Active"
+						and Players:GetPlayerFromCharacter(character)
+						and Players:GetPlayerFromCharacter(character):GetAttribute("EscapedNightmare") ~= true
+					then
 						targetHumanoid:TakeDamage(playerDamage)
 						state.lastPlayerHit = now
 					end

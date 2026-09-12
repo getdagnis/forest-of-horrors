@@ -42,6 +42,14 @@ local lockTimer = 0
 local activationConnection
 local fireGun
 
+local function isActiveRound()
+	return workspace:GetAttribute("RoundState") == "Active"
+end
+
+local function currentGeneration()
+	return workspace:GetAttribute("RoundGeneration")
+end
+
 local function getGunName(tool)
 	if not tool or not tool:IsA("Tool") then return nil end
 	local weaponName = DEFAULT_COLORS[tool.Name] and tool.Name or tool:GetAttribute("WeaponName")
@@ -141,7 +149,7 @@ local function findLockTarget(tool)
 end
 
 local function refreshLock(deltaTime)
-	if not equippedTool or not GunAim.isCentered(player) then
+	if not isActiveRound() or not equippedTool or not GunAim.isCentered(player) then
 		lockedMonster = nil
 		lockTimer = 0
 		GunAim.setLockedTarget(nil)
@@ -315,7 +323,8 @@ local function releaseImpactEndpoint(endpoint, token)
 	end)
 end
 
-local function renderShot(tool, origin, endPosition, color, hitModel)
+local function renderShot(tool, origin, endPosition, color, hitModel, generation)
+	if not isActiveRound() or generation ~= currentGeneration() then return end
 	local barrel = tool and (tool:FindFirstChild("Barrel", true) or tool:FindFirstChild("Handle", true))
 	if not barrel or not barrel:IsA("BasePart") then return end
 	playShotSound(tool)
@@ -352,7 +361,7 @@ local function renderShot(tool, origin, endPosition, color, hitModel)
 end
 
 fireGun = function(tool)
-	if not tool or tool.Parent ~= player.Character then return end
+	if not isActiveRound() or not tool or tool.Parent ~= player.Character then return end
 	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	local seat = humanoid and humanoid.SeatPart
 	local ancestor = seat
@@ -363,7 +372,7 @@ fireGun = function(tool)
 	local originOffset, direction, target = GunAim.getShotPayload(player, tool)
 	local shootEvent = tool:FindFirstChild("ShootEvent")
 	if originOffset and direction and shootEvent and shootEvent:IsA("RemoteEvent") then
-		shootEvent:FireServer(originOffset, direction, target)
+		shootEvent:FireServer(originOffset, direction, target, currentGeneration())
 	end
 end
 

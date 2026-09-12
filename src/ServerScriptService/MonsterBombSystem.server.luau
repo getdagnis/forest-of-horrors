@@ -10,11 +10,17 @@ local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
+local Workspace = game:GetService("Workspace")
 
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local Config = require(ReplicatedStorage:WaitForChild("MonsterBombConfig"))
 
 local activeBombs = {}
+
+local function roundIsActive(generation)
+	return Workspace:GetAttribute("RoundState") == "Active"
+		and tonumber(Workspace:GetAttribute("RoundGeneration")) == generation
+end
 
 local function isBombMonster(model)
 	return model:IsA("Model") and model.Name == Config.MODEL_NAME
@@ -51,7 +57,7 @@ local function applyWarningSkin(model)
 	end
 end
 
-local function startWarningPulse(model)
+local function startWarningPulse(model, generation)
 	local root = getRoot(model)
 	local light = root and getOrCreateWarningLight(model, root)
 	if not light then
@@ -66,7 +72,7 @@ local function startWarningPulse(model)
 	local startedAt = os.clock()
 
 	task.spawn(function()
-		while active and light.Parent and model.Parent do
+		while active and light.Parent and model.Parent and roundIsActive(generation) do
 			local phase = (math.sin((os.clock() - startedAt) * math.pi * 2 * Config.WARNING_LIGHT_PULSE_HZ) + 1) * 0.5
 			light.Brightness = Config.WARNING_LIGHT_MIN_BRIGHTNESS
 				+ (Config.WARNING_LIGHT_MAX_BRIGHTNESS - Config.WARNING_LIGHT_MIN_BRIGHTNESS) * phase
@@ -88,7 +94,7 @@ end
 
 local function playWarningSound(model)
 	local root = getRoot(model)
-	if not root or not root:IsA("BasePart") then return end
+	if not root or not root:IsA("BasePart") then return nil end
 
 	local sound = Instance.new("Sound")
 	sound.SoundId = "rbxassetid://357644762"
@@ -101,8 +107,9 @@ local function playWarningSound(model)
 	sound.Parent = root
 	sound:Play()
 	sound.Ended:Once(function()
-		sound:Destroy()
+		if sound.Parent then sound:Destroy() end
 	end)
+	return sound
 end
 
 local function playExplosionSound(model, position)
@@ -210,7 +217,8 @@ local function fadeAndRemoveBomb(model)
 	end
 end
 
-local function damagePlayers(position)
+local function damagePlayers(position, generation)
+	if not roundIsActive(generation) then return end
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -221,7 +229,8 @@ local function damagePlayers(position)
 	end
 end
 
-local function damageMonsters(sourceModel, position)
+local function damageMonsters(sourceModel, position, generation)
+	if not roundIsActive(generation) then return 0 end
 	local killed = 0
 	for _, model in workspace:GetDescendants() do
 		if model:IsA("Model")
@@ -260,9 +269,18 @@ local function setupBomb(model)
 	if existingWarningLight then existingWarningLight.Enabled = false end
 	local exploded = false
 	local warningActive = false
+	local warningGeneration = nil
+	local warningSound
 	local stopWarningPulse = function() end
+	local function stopWarningSound()
+		if warningSound and warningSound.Parent then
+			warningSound:Stop()
+			warningSound:Destroy()
+		end
+		warningSound = nil
+	end
 	local function explode()
-		if exploded then return end
+		if exploded or not warningGeneration or not roundIsActive(warningGeneration) then return end
 		exploded = true
 		warningActive = false
 		model:SetAttribute("BombWarningActive", false)
@@ -270,10 +288,11 @@ local function setupBomb(model)
 		local root = getRoot(model)
 		local position = root and root.Position or model:GetPivot().Position
 		stopWarningPulse()
+		stopWarningSound()
 		makeExplosionVisual(position)
 		playExplosionSound(model, position)
-		damagePlayers(position)
-		damageMonsters(model, position)
+		damagePlayers(position, warningGeneration)
+		damageMonsters(model, position, warningGeneration)
 		-- Each killed monster publishes its own passive bomb-cause event from
 		-- MonsterSystem. Avoid a second aggregate row that obscures the victims.
 		fadeAndRemoveBomb(model)
@@ -286,18 +305,23 @@ local function setupBomb(model)
 	end
 
 	local function beginWarning()
-		if warningActive or exploded or not model.Parent then return end
+		local generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
+		if warningActive or exploded or not model.Parent or not generation or not roundIsActive(generation) then return end
 		warningActive = true
+		warningGeneration = generation
 		model:SetAttribute("BombWarningActive", true)
-		stopWarningPulse = startWarningPulse(model)
-		playWarningSound(model)
-		task.delay(Config.WARNING_TIME, explode)
+		stopWarningPulse = startWarningPulse(model, generation)
+		warningSound = playWarningSound(model)
+		task.delay(Config.WARNING_TIME, function()
+			if roundIsActive(generation) then explode() end
+		end)
 	end
 
 	-- A bomb takes four MG1 hits to arm. Player weapons record LastAttackerId
 	-- before changing Health, which keeps incidental NPC damage from activating
 	-- the warning sequence.
 	humanoid.HealthChanged:Connect(function(health)
+		if Workspace:GetAttribute("RoundState") ~= "Active" then return end
 		local damageTaken = humanoid.MaxHealth - health
 		if not warningActive and not exploded
 			and damageTaken >= Config.PLAYER_ARM_DAMAGE
@@ -308,17 +332,21 @@ local function setupBomb(model)
 	end)
 
 	humanoid.Died:Connect(function()
+		if Workspace:GetAttribute("RoundState") ~= "Active" then return end
 		if warningActive then return end
 		if humanoid:GetAttribute("LastAttackerId") then
 			beginWarning()
 		else
-			explode()
+			-- Non-player deaths retain their immediate blast, but only inside the
+			-- currently active round generation.
+			warningGeneration = tonumber(Workspace:GetAttribute("RoundGeneration"))
+			if warningGeneration then explode() end
 		end
 	end)
 
 	task.spawn(function()
 		task.wait(math.random(Config.MIN_WAIT, Config.MAX_WAIT))
-		if exploded or not model.Parent or humanoid.Health <= 0 then return end
+		if exploded or not model.Parent or humanoid.Health <= 0 or Workspace:GetAttribute("RoundState") ~= "Active" then return end
 
 		-- The imported warning asset is a complete spoken five-to-one countdown,
 		-- not a one-second beep. Start it once and let the announcement finish.
@@ -327,7 +355,23 @@ local function setupBomb(model)
 
 	model.Destroying:Connect(function()
 		stopWarningPulse()
+		stopWarningSound()
 		activeBombs[model] = nil
+	end)
+
+	local roundStateConnection
+	roundStateConnection = Workspace:GetAttributeChangedSignal("RoundState"):Connect(function()
+		if Workspace:GetAttribute("RoundState") == "Active" then return end
+		-- A phase change cancels this warning rather than allowing an old timer to
+		-- detonate during the next generation.
+		stopWarningPulse()
+		stopWarningSound()
+		warningActive = false
+		warningGeneration = nil
+		model:SetAttribute("BombWarningActive", false)
+	end)
+	model.Destroying:Once(function()
+		if roundStateConnection then roundStateConnection:Disconnect() end
 	end)
 end
 

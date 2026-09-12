@@ -2,6 +2,7 @@
 
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
 local event = ReplicatedStorage:FindFirstChild("RadarEvents")
 if not event then
@@ -18,6 +19,7 @@ function RadarEventBus.publish(payload)
 		payload = { kind = "message", text = payload }
 	end
 	if type(payload) ~= "table" then return end
+	payload.roundGeneration = tonumber(Workspace:GetAttribute("RoundGeneration")) or 0
 	event:FireAllClients(payload)
 end
 

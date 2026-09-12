@@ -72,7 +72,7 @@ end
 
 while true do
 	task.wait(UPDATE_EVERY)
-	if not ENABLED then continue end
+	if not ENABLED or Workspace:GetAttribute("RoundState") ~= "Active" then continue end
 
 	for _, model in Workspace:GetDescendants() do
 		if model:IsA("Model")

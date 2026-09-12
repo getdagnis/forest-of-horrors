@@ -18,7 +18,7 @@ local DEFAULT_HEIGHT_OFFSET = 6
 local NO_SPAWN_WINDOW_SECONDS = 12 * 60 -- no zombie spawning in the final 12 minutes
 
 local function isInNoSpawnWindow()
-	if Workspace:GetAttribute("GameStopped") == true then return true end
+	if Workspace:GetAttribute("RoundState") ~= "Active" then return true end
 	local endsAt = tonumber(Workspace:GetAttribute("RoundEndsAt"))
 	if not endsAt then return false end
 	return Workspace:GetServerTimeNow() >= endsAt - NO_SPAWN_WINDOW_SECONDS
@@ -70,13 +70,17 @@ local function getSpawnCFrame(spawnPoint)
 	return spawnPoint.CFrame * CFrame.new(0, spawnPoint.Size.Y * 0.5 + height, 0)
 end
 
-local function spawnZombie(spawnPoint)
-	if Workspace:GetAttribute("RoundActive") == false or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
+local function spawnZombie(spawnPoint, generation)
+	if Workspace:GetAttribute("RoundState") ~= "Active"
+		or tonumber(Workspace:GetAttribute("RoundGeneration")) ~= generation
+		or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
 	if isInNoSpawnWindow() then return end
 	local livingCount = countLivingMonsters()
+	local configuredCap = math.max(1, math.floor(tonumber(Workspace:GetAttribute("MonsterMaxCount")) or MAX_LIVING_MONSTERS))
+	local effectiveCap = math.min(MAX_LIVING_MONSTERS, configuredCap)
 	-- The late-round population is intentionally allowed to shrink. Do not
 	-- refill the last twenty canonical hostile contacts from this generator.
-	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= MAX_LIVING_MONSTERS then return end
+	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= effectiveCap then return end
 
 	local template = findZombieTemplate()
 	if not template then
@@ -101,9 +105,14 @@ local function startSpawnPoint(spawnPoint)
 	task.spawn(function()
 		-- Stagger startup so the central monster and zombie owners can register the
 		-- original population before the first generated zombie enters Workspace.
+		local generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
 		task.wait(SPAWN_INTERVAL)
 		while spawnPoint.Parent and spawnPoint:IsDescendantOf(Workspace) do
-			spawnZombie(spawnPoint)
+			if generation and Workspace:GetAttribute("RoundState") == "Active"
+				and tonumber(Workspace:GetAttribute("RoundGeneration")) == generation then
+				spawnZombie(spawnPoint, generation)
+			end
+			generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
 			task.wait(SPAWN_INTERVAL)
 		end
 		activeSpawnPoints[spawnPoint] = nil

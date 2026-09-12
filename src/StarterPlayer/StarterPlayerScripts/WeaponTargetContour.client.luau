@@ -34,7 +34,16 @@ local lastTrustAimAt = 0
 local lastTrustAimTarget
 local TRUST_AIM_UPDATE_INTERVAL = 0.10
 
+local function isActiveRound()
+	return workspace:GetAttribute("RoundState") == "Active"
+end
+
+local function currentGeneration()
+	return workspace:GetAttribute("RoundGeneration")
+end
+
 local function reportDirectContour(weapon, target)
+	if not isActiveRound() then return end
 
 	local now = os.clock()
 	if weapon == lastContourWeapon and target == lastContourTarget
@@ -50,10 +59,11 @@ local function reportDirectContour(weapon, target)
 	lastContourUpdateAt = now
 	lastContourWeapon = weapon
 	lastContourTarget = target
-	event:FireServer(weapon, ray.Origin - root.Position, ray.Direction.Unit, target)
+	event:FireServer(weapon, ray.Origin - root.Position, ray.Direction.Unit, target, currentGeneration())
 end
 
 local function reportGuardianTrustAim(weapon, target)
+	if not isActiveRound() then return end
 	if target.Name ~= "weird monster thing" or target:GetAttribute("WMTGuardianPet") == true then return end
 	if not trustAimEvent or not trustAimEvent.Parent then
 		trustAimEvent = ReplicatedStorage:FindFirstChild("WMTGuardianTrustAim")
@@ -71,7 +81,7 @@ local function reportGuardianTrustAim(weapon, target)
 	lastTrustAimTarget = target
 	-- The server re-casts this exact camera ray and owns every trust timer. This
 	-- pulse exists only while the same direct, visible weapon contour is shown.
-	trustAimEvent:FireServer(target, weapon, ray.Origin - root.Position, ray.Direction.Unit)
+	trustAimEvent:FireServer(target, weapon, ray.Origin - root.Position, ray.Direction.Unit, currentGeneration())
 end
 
 local function getEquippedWeapon()
@@ -101,6 +111,13 @@ local function getMonsterModelFromHit(instance)
 end
 
 RunService.RenderStepped:Connect(function()
+	if not isActiveRound() then
+		highlight.Enabled = false
+		highlight.Adornee = nil
+		lastContourTarget = nil
+		lastTrustAimTarget = nil
+		return
+	end
 	local weapon = getEquippedWeapon()
 	if not weapon then
 		highlight.Enabled = false

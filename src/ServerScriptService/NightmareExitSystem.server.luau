@@ -6,6 +6,8 @@ local Workspace = game:GetService("Workspace")
 
 local PORTAL_ATTRIBUTE = "NightmareExitPortal"
 local ESCAPE_ACTIVE_ATTRIBUTE = "NightmareEscapeActive"
+local ROUND_STATE_ATTRIBUTE = "RoundState"
+local ROUND_GENERATION_ATTRIBUTE = "RoundGeneration"
 
 local portalRecords = setmetatable({}, { __mode = "k" })
 local connectedParts = setmetatable({}, { __mode = "k" })
@@ -42,6 +44,7 @@ end
 
 local function refreshAllPortals()
 	local open = Workspace:GetAttribute(ESCAPE_ACTIVE_ATTRIBUTE) == true
+		and Workspace:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Escape"
 	for portal in pairs(portalRecords) do
 		if portal.Parent then
 			setPortalOpen(portal, open)
@@ -56,10 +59,15 @@ local function connectPortalPart(part)
 	connectedParts[part] = true
 	part.CanTouch = true
 	part.Touched:Connect(function(hit)
-		if Workspace:GetAttribute(ESCAPE_ACTIVE_ATTRIBUTE) ~= true then return end
+		if Workspace:GetAttribute(ESCAPE_ACTIVE_ATTRIBUTE) ~= true or Workspace:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Escape" then return end
 		local player = getLivingPlayer(hit)
 		if not player or player:GetAttribute("EscapedNightmare") == true then return end
 
+		-- Publish the generation first. ScoreHistorySystem listens for the
+		-- EscapedNightmare transition and requires this value to already be
+		-- present; setting it second creates a connection-order race that can
+		-- permanently swallow the escape result.
+		player:SetAttribute("EscapedRoundGeneration", tonumber(Workspace:GetAttribute(ROUND_GENERATION_ATTRIBUTE)) or 0)
 		player:SetAttribute("EscapedNightmare", true)
 	end)
 end
@@ -101,7 +109,7 @@ local function registerPortal(portal)
 
 	portalRecords[portal] = { highlight = highlight, effects = effects }
 	for _, part in ipairs(parts) do connectPortalPart(part) end
-	setPortalOpen(portal, Workspace:GetAttribute(ESCAPE_ACTIVE_ATTRIBUTE) == true)
+	setPortalOpen(portal, Workspace:GetAttribute(ESCAPE_ACTIVE_ATTRIBUTE) == true and Workspace:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Escape")
 	warn("[NightmareExitSystem] portal registered:", portal:GetFullName())
 end
 
@@ -116,3 +124,4 @@ Workspace.DescendantAdded:Connect(function(instance)
 	task.defer(inspect, instance)
 end)
 Workspace:GetAttributeChangedSignal(ESCAPE_ACTIVE_ATTRIBUTE):Connect(refreshAllPortals)
+Workspace:GetAttributeChangedSignal(ROUND_STATE_ATTRIBUTE):Connect(refreshAllPortals)

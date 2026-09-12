@@ -12,6 +12,11 @@ local store = DataStoreService:GetDataStore("ForestOfHorrorsScoreHistoryV1")
 local leaders = {}
 local quickestEscape = { elapsedSeconds = nil, names = {} }
 local saveQueued = false
+local escapeGenerationByPlayer = {} -- Player -> generation already recorded
+
+local function currentGeneration()
+	return tonumber(Workspace:GetAttribute("RoundGeneration")) or 0
+end
 
 local function sortLeaders()
 	table.sort(leaders, function(a, b)
@@ -54,7 +59,11 @@ task.spawn(function()
 	end
 	sortLeaders()
 	for _, player in ipairs(Players:GetPlayers()) do
-		task.defer(function() if player.Parent then recordsEvent:FireClient(player, { scoringLeaders = leaders, quickestEscape = quickestEscape }) end end)
+		task.defer(function()
+			if player.Parent then
+				recordsEvent:FireClient(player, { scoringLeaders = leaders, quickestEscape = quickestEscape, roundGeneration = currentGeneration() })
+			end
+		end)
 	end
 end)
 
@@ -84,12 +93,14 @@ local function publish(player)
 		scoreboard = currentRows(),
 		scoringLeaders = leaders,
 		quickestEscape = quickestEscape,
+		roundGeneration = currentGeneration(),
 	})
 end
 
 local function observeScore(player, value)
 	if not value:IsA("IntValue") or value.Name ~= "Score" then return end
 	value.Changed:Connect(function()
+		if Workspace:GetAttribute("RoundState") ~= "Active" then return end
 		if player:GetAttribute("Difficulty") == "Easy" then return end
 		local score, kills = getStats(player)
 		local existing
@@ -122,6 +133,14 @@ local function bindPlayer(player)
 	player.ChildAdded:Connect(function(child) if child.Name == "leaderstats" then bindStats(child) end end)
 	player:GetAttributeChangedSignal("EscapedNightmare"):Connect(function()
 		if player:GetAttribute("EscapedNightmare") ~= true then return end
+		local generation = currentGeneration()
+		if Workspace:GetAttribute("RoundState") ~= "Escape"
+			or tonumber(player:GetAttribute("EscapedRoundGeneration")) ~= generation
+			or escapeGenerationByPlayer[player] == generation
+		then
+			return
+		end
+		escapeGenerationByPlayer[player] = generation
 		local elapsed = math.max(0, math.floor(Workspace:GetServerTimeNow() - (tonumber(Workspace:GetAttribute("RoundStartedAt")) or Workspace:GetServerTimeNow())))
 		local newEscapeRecord = not quickestEscape.elapsedSeconds or elapsed < quickestEscape.elapsedSeconds
 		local recordChanged = newEscapeRecord
@@ -138,6 +157,7 @@ local function bindPlayer(player)
 		end
 		local score, kills = getStats(player)
 		escapedEvent:FireClient(player, {
+			roundGeneration = generation,
 			playerName = player.Name,
 			score = score,
 			kills = kills,
@@ -161,3 +181,6 @@ end
 
 for _, player in ipairs(Players:GetPlayers()) do bindPlayer(player) end
 Players.PlayerAdded:Connect(bindPlayer)
+Players.PlayerRemoving:Connect(function(player)
+	escapeGenerationByPlayer[player] = nil
+end)

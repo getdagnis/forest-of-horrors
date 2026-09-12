@@ -6,6 +6,8 @@
 -- Tool when the normal pickup sequence has finished.
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MonsterBlasterConfig = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 
 local UNIQUE_WEAPONS = {
 	["MonsterGun"] = true,
@@ -21,6 +23,7 @@ local MONSTER_GUN_TIERS = {
 	MonsterGun3 = 3,
 }
 local SPEED_COIL_DURATION_SECONDS = 60
+local BLASTER_RECHARGE_NONCE_ATTRIBUTE = "MonsterBlasterRechargeNonce"
 
 local incumbentByPlayer = {}
 local boundTools = {}
@@ -72,6 +75,14 @@ local function rechargeSpeedCoil(tool, duration)
 	tool:SetAttribute("SpeedCoilRemaining", duration)
 	local nonce = (tonumber(tool:GetAttribute("SpeedCoilRechargeNonce")) or 0) + 1
 	tool:SetAttribute("SpeedCoilRechargeNonce", nonce)
+end
+
+local function rechargeMonsterBlaster(player, tool)
+	if tool.Name ~= "MonsterBlaster" then return end
+	player:SetAttribute(MonsterBlasterConfig.PLAYER_CHARGE_ATTRIBUTE, MonsterBlasterConfig.MAX_CHARGE_UNITS)
+	tool:SetAttribute(MonsterBlasterConfig.CHARGE_ATTRIBUTE, MonsterBlasterConfig.MAX_CHARGE_UNITS)
+	local nonce = (tonumber(tool:GetAttribute(BLASTER_RECHARGE_NONCE_ATTRIBUTE)) or 0) + 1
+	tool:SetAttribute(BLASTER_RECHARGE_NONCE_ATTRIBUTE, nonce)
 end
 
 local function reconcileSpeedCoils(player)
@@ -131,6 +142,11 @@ local function rejectIncomingDuplicate(player, incoming, incumbent)
 	if not wasEquipped and player.Character and incumbent.Parent == player.Character then
 		wasEquipped = true
 	end
+	-- Default Tool pickup can equip the incoming duplicate while it moves the
+	-- incumbent into Backpack. That still counts as an equipped pickup.
+	if not wasEquipped and player.Character and incoming.Parent == player.Character then
+		wasEquipped = true
+	end
 	if incoming.Name == "SpeedCoil" and incumbent.Name == "SpeedCoil" then
 		rechargeSpeedCoil(incumbent, getSpeedCoilDuration(incoming))
 		incoming:Destroy()
@@ -140,6 +156,9 @@ local function rejectIncomingDuplicate(player, incoming, incumbent)
 			task.delay(0.1, restoreEquippedWeapon, player, incumbent)
 		end
 		return
+	end
+	if incoming.Name == "MonsterBlaster" and incumbent.Name == "MonsterBlaster" then
+		rechargeMonsterBlaster(player, incumbent)
 	end
 	incoming:Destroy()
 	if wasEquipped then

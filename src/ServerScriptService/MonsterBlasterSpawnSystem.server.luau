@@ -3,14 +3,21 @@
 -- ServerStorage.WeaponTemplates.MonsterBlaster Tool.
 
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local templates = ServerStorage:WaitForChild("WeaponTemplates")
+local MonsterBlasterConfig = require(ReplicatedStorage:WaitForChild("MonsterBlasterConfig"))
 local WEAPON_NAME = "MonsterBlaster"
 local RESPAWN_DELAY = 12
 local RECONCILE_RADIUS = 2
 local states = {}
 local observedSpawnFolders = {}
+
+local function roundIsActive(generation)
+	return workspace:GetAttribute("RoundState") == "Active"
+		and tonumber(workspace:GetAttribute("RoundGeneration")) == generation
+end
 
 local LEGACY_BLASTER_SPAWNER_NAMES = {
 	BlasterSpawner = true,
@@ -101,15 +108,69 @@ end
 
 local scheduleRespawn
 
+local function findOwnedBlaster(player)
+	for _, container in ipairs({ player.Character, player:FindFirstChild("Backpack") }) do
+		if container then
+			for _, item in ipairs(container:GetChildren()) do
+				if item:IsA("Tool") and item.Name == WEAPON_NAME then
+					return item
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function rechargeBlaster(player, tool)
+	player:SetAttribute(MonsterBlasterConfig.PLAYER_CHARGE_ATTRIBUTE, MonsterBlasterConfig.MAX_CHARGE_UNITS)
+	tool:SetAttribute(MonsterBlasterConfig.CHARGE_ATTRIBUTE, MonsterBlasterConfig.MAX_CHARGE_UNITS)
+	local nonce = (tonumber(tool:GetAttribute("MonsterBlasterRechargeNonce")) or 0) + 1
+	tool:SetAttribute("MonsterBlasterRechargeNonce", nonce)
+end
+
 local function bindWorldTool(state, tool)
 	state.activeTool = tool
 	if not prepareTool(tool, false) then return end
+	local handle = tool:FindFirstChild("Handle", true)
+	if not handle or not handle:IsA("BasePart") then return end
+	handle.CanTouch = false
+	local prompt = handle:FindFirstChild("MonsterBlasterPickupPrompt")
+	if not prompt then
+		prompt = Instance.new("ProximityPrompt")
+		prompt.Name = "MonsterBlasterPickupPrompt"
+		prompt.ActionText = "Pick up"
+		prompt.ObjectText = "Monster Blaster"
+		prompt.HoldDuration = 0
+		prompt.MaxActivationDistance = 10
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = handle
+	end
+	prompt.Enabled = workspace:GetAttribute("RoundState") == "Active"
+	prompt.Triggered:Connect(function(player)
+		if state.activeTool ~= tool or workspace:GetAttribute("RoundState") ~= "Active" then return end
+		local incumbent = findOwnedBlaster(player)
+		if incumbent then
+			-- A second pickup is a recharge, not a Tool transfer. Keep the incumbent
+			-- in its current container/equipped state and consume only the world copy.
+			rechargeBlaster(player, incumbent)
+			tool:Destroy()
+			return
+		end
+		local backpack = player:FindFirstChild("Backpack")
+		if not backpack then return end
+		prompt.Enabled = false
+		tool:SetAttribute("BlasterChargeFromLoadout", false)
+		if not prepareTool(tool, true) then return end
+		tool.Parent = backpack
+		local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 then humanoid:EquipTool(tool) end
+	end)
 	tool.AncestryChanged:Connect(function()
+		if state.activeTool ~= tool or state.respawnScheduled then return end
 		task.defer(function()
 			if state.activeTool ~= tool or state.respawnScheduled then return end
-			-- A first pickup enters the player's Backpack. A later recharge pickup
-			-- can be immediately destroyed by the unique-weapon guard instead.
-			-- Both outcomes consume this world copy and must schedule its replacement.
+			-- A first pickup enters the player's Backpack. A recharge consumes the
+			-- world copy. Both outcomes schedule its replacement.
 			if isHeldByPlayer(tool) then prepareTool(tool, true) end
 			if isHeldByPlayer(tool) or tool.Parent == nil then
 				state.activeTool = nil
@@ -121,9 +182,12 @@ end
 
 scheduleRespawn = function(state, delay)
 	if state.respawnScheduled then return end
+	local generation = tonumber(workspace:GetAttribute("RoundGeneration"))
+	if not generation or workspace:GetAttribute("RoundState") ~= "Active" then return end
 	state.respawnScheduled = true
 	task.delay(delay == nil and RESPAWN_DELAY or delay, function()
 		state.respawnScheduled = false
+		if not roundIsActive(generation) then return end
 		if not state.spawnPoint.Parent then
 			states[state.spawnPoint] = nil
 			return
@@ -192,5 +256,18 @@ workspace.DescendantAdded:Connect(function(instance)
 	disableLegacySpawner(instance)
 	if instance.Name == "WeaponSpawnPoints" and (instance:IsA("Folder") or instance:IsA("Model")) then
 		observeSpawnFolder(instance)
+	end
+end)
+
+workspace:GetAttributeChangedSignal("RoundState"):Connect(function()
+	local active = workspace:GetAttribute("RoundState") == "Active"
+	for _, state in pairs(states) do
+		local tool = state.activeTool
+		local handle = tool and tool:FindFirstChild("Handle", true)
+		local prompt = handle and handle:FindFirstChild("MonsterBlasterPickupPrompt")
+		if prompt and prompt:IsA("ProximityPrompt") then prompt.Enabled = active end
+		if active and not state.activeTool and not state.respawnScheduled then
+			scheduleRespawn(state, 0)
+		end
 	end
 end)

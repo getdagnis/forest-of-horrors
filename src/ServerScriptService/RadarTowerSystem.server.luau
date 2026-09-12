@@ -115,6 +115,10 @@ end
 
 local function showRadar(player, source, kind)
 	if not (player and source and source.Parent) then return end
+	-- Radar owns input and aim while open. Unequip on the server so every Tool
+	-- begins cleanly when the player deliberately selects it again afterwards.
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then humanoid:UnequipTools() end
 	activeSources[player] = { source = source, kind = kind }
 	event:FireClient(player, true, source.Parent)
 	sendRadarSnapshot(player)

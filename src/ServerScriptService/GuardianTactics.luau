@@ -10,6 +10,7 @@ Tactics.Config = {
 	TargetLock = 2, FailedTargetCooldown = 20, NoHitTimeout = 10,
 	OwnerRetrySeconds = 3, GangLimit = 3,
 	StuckDistance = 70, StuckSeconds = 30, StuckMovement = 4,
+	NoFollowRadius = 4,
 }
 local C = Tactics.Config
 local phrases = {
@@ -103,11 +104,75 @@ local function chooseTarget(state, root, ownerRoot, now, api)
 	return best, priority
 end
 
-local function noFollowZone(instance)
+local noFollowZones = {}
+
+local function refreshNoFollowZone(instance)
+	if not (instance:IsA("Model") or instance:IsA("BasePart")) then return end
+	if instance:GetAttribute("GuardianNoFollow") == true then
+		noFollowZones[instance] = true
+	else
+		noFollowZones[instance] = nil
+	end
+end
+
+for _, instance in ipairs(Workspace:GetDescendants()) do
+	refreshNoFollowZone(instance)
+	end
+Workspace.DescendantAdded:Connect(function(instance)
+	refreshNoFollowZone(instance)
+	if instance:IsA("Model") or instance:IsA("BasePart") then
+		instance:GetAttributeChangedSignal("GuardianNoFollow"):Connect(function()
+			refreshNoFollowZone(instance)
+		end)
+	end
+end)
+Workspace.DescendantRemoving:Connect(function(instance)
+	noFollowZones[instance] = nil
+end)
+
+local function markedAncestor(instance)
 	local current = instance
 	while current and current ~= Workspace do
 		if current:GetAttribute("GuardianNoFollow") == true then return current end
 		current = current.Parent
+	end
+	return nil
+end
+
+local function distanceToNoFollowZone(position, zone)
+	if zone:IsA("BasePart") then
+		local localPosition = zone.CFrame:PointToObjectSpace(position)
+		local half = zone.Size * 0.5
+		local closest = Vector3.new(
+			math.clamp(localPosition.X, -half.X, half.X),
+			math.clamp(localPosition.Y, -half.Y, half.Y),
+			math.clamp(localPosition.Z, -half.Z, half.Z)
+		)
+		return (localPosition - closest).Magnitude
+	end
+
+	local ok, boxCFrame, boxSize = pcall(function()
+		return zone:GetBoundingBox()
+	end)
+	if not ok then return math.huge end
+	local localPosition = boxCFrame:PointToObjectSpace(position)
+	local half = boxSize * 0.5
+	local closest = Vector3.new(
+		math.clamp(localPosition.X, -half.X, half.X),
+		math.clamp(localPosition.Y, -half.Y, half.Y),
+		math.clamp(localPosition.Z, -half.Z, half.Z)
+	)
+	return (localPosition - closest).Magnitude
+end
+
+local function noFollowZone(instance)
+	local marked = markedAncestor(instance)
+	if marked then return marked end
+	if not instance:IsA("BasePart") then return nil end
+	for zone in pairs(noFollowZones) do
+		if zone.Parent and distanceToNoFollowZone(instance.Position, zone) <= C.NoFollowRadius then
+			return zone
+		end
 	end
 	return nil
 end

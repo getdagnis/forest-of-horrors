@@ -50,6 +50,17 @@ local function getHumanoid(model)
 	return model:FindFirstChildOfClass("Humanoid")
 end
 
+local function isPlayerInActiveRound(character)
+	local player = character and Players:GetPlayerFromCharacter(character)
+	return player ~= nil
+		and workspace:GetAttribute("RoundState") == "Active"
+		and player:GetAttribute("EscapedNightmare") ~= true
+end
+
+local function isRoundActive()
+	return workspace:GetAttribute("RoundState") == "Active"
+end
+
 local function getPlayerCharacterFromHit(hit)
 	local current = hit
 
@@ -107,6 +118,12 @@ ZombieAI.new = function(model, navigation)
 
 	local function moveTo(destination, usePathfinding)
 		if not destination then return end
+		if not isRoundActive() then
+			-- The Humanoid remains the sole movement owner.  Cancelling its intent
+			-- pauses this brain without moving a living monster anywhere.
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 		-- A bat strike earns the player a brief escape window.  This is a local
 		-- movement pause, never a relocation or a new target decision.
 		if (model:GetAttribute("BatStaggeredUntil") or 0) > workspace:GetServerTimeNow() then
@@ -134,6 +151,10 @@ ZombieAI.new = function(model, navigation)
 	local searchTarget = nil
 
 	SearchState.Action = function()
+		if not isRoundActive() then
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 		local root = getRoot(model)
 		if not root then return end
 
@@ -161,6 +182,10 @@ ZombieAI.new = function(model, navigation)
 	local PursueState = StateMachine.NewState()
 	PursueState.Name = "Pursue"
 	PursueState.Action = function()
+		if not isRoundActive() then
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 		local root = getRoot(model)
 
 		if ZombieTarget and root and ZombieTarget:FindFirstChild("HumanoidRootPart") then
@@ -187,6 +212,10 @@ ZombieAI.new = function(model, navigation)
 	end
 
 	AttackState.Action = function()
+		if not isRoundActive() then
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 		if (model:GetAttribute("BatStaggeredUntil") or 0) > workspace:GetServerTimeNow() then
 			model.Humanoid:Move(Vector3.zero)
 			return
@@ -221,6 +250,10 @@ ZombieAI.new = function(model, navigation)
 	local HuntState = StateMachine.NewState()
 	HuntState.Name = "Hunt"
 	HuntState.Action = function()
+		if not isRoundActive() then
+			model.Humanoid:Move(Vector3.zero)
+			return
+		end
 		if ZombieTargetLastLocation then
 			moveTo(ZombieTargetLastLocation, true)
 		end
@@ -232,6 +265,7 @@ ZombieAI.new = function(model, navigation)
 	local CanSeeTarget = StateMachine.NewCondition()
 	CanSeeTarget.Name = "CanSeeTarget"
 	CanSeeTarget.Evaluate = function()
+		if not isRoundActive() then return false end
 		local root = getRoot(model)
 		if not root then return false end
 
@@ -426,6 +460,7 @@ ZombieAI.new = function(model, navigation)
 	local lastHit = os.time()
 
 	local function handleHit(other)
+		if not isRoundActive() then return end
 		if (model:GetAttribute("BatStaggeredUntil") or 0) > workspace:GetServerTimeNow() then
 			return
 		end
@@ -433,7 +468,9 @@ ZombieAI.new = function(model, navigation)
 			local character = getPlayerCharacterFromHit(other)
 			local enemyHumanoid = character and getHumanoid(character)
 
-			if enemyHumanoid and enemyHumanoid.WalkSpeed > 0 and enemyHumanoid.Health > 0 then
+			if enemyHumanoid and enemyHumanoid.WalkSpeed > 0 and enemyHumanoid.Health > 0
+				and isPlayerInActiveRound(character)
+			then
 				enemyHumanoid:TakeDamage(configs["Damage"])
 				canHit = false
 			end
@@ -457,6 +494,13 @@ ZombieAI.new = function(model, navigation)
 		while model.Parent do
 			task.wait(1)
 			if stopRequested then return end
+			if not isRoundActive() then
+				model.Humanoid:Move(Vector3.zero)
+				activeDestination = nil
+				ZombieTarget = nil
+				cachedVisiblePlayerTarget = nil
+				continue
+			end
 
 			local root = getRoot(model)
 			if not root then continue end

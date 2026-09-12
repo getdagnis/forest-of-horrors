@@ -26,6 +26,15 @@ local barrelRound = {}
 local lastReceiptLogAt = {}
 local lastDiagnosticLogAt = {}
 
+local function isPlayerInActiveRound(player)
+	return player and workspace:GetAttribute("RoundState") == "Active"
+		and player:GetAttribute("EscapedNightmare") ~= true
+end
+
+local function isCurrentGeneration(generation)
+	return typeof(generation) == "number" and generation == workspace:GetAttribute("RoundGeneration")
+end
+
 warn("[TurretCombat] server started; RemoteEvent ready:", shotEvent:GetFullName())
 
 local function setStatus(turret, status, detail)
@@ -124,13 +133,17 @@ local function hitMonster(player, model)
 	humanoid:TakeDamage(damage)
 
 	if humanoid.Health > 0 then
-		damageLabelEvent:FireClient(player, model, humanoid.Health, humanoid.MaxHealth)
+		damageLabelEvent:FireClient(player, model, humanoid.Health, humanoid.MaxHealth, workspace:GetAttribute("RoundGeneration"))
 	end
 	MonsterHitFeedback.flash(model, Config.ShotColor, Config.FlashSeconds)
 end
 
-shotEvent.OnServerEvent:Connect(function(player, turret, aimPoint)
-	if typeof(turret) ~= "Instance" or not turret:IsA("Model") then return end
+shotEvent.OnServerEvent:Connect(function(player, turret, aimPoint, generation)
+	if typeof(turret) ~= "Instance" or not turret:IsA("Model") or turret:GetAttribute("Turret") ~= true then return end
+	if not isPlayerInActiveRound(player) or not isCurrentGeneration(generation) then
+		setStatus(turret, "Rejected: inactive or stale round")
+		return
+	end
 	local now = os.clock()
 	if now - (lastReceiptLogAt[player] or 0) >= 1 then
 		lastReceiptLogAt[player] = now

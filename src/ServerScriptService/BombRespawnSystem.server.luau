@@ -16,6 +16,11 @@ local MAX_RETURNS = 3
 
 local states = {}
 
+local function roundIsActive(generation)
+	return Workspace:GetAttribute("RoundState") == "Active"
+		and tonumber(Workspace:GetAttribute("RoundGeneration")) == generation
+end
+
 local function isBomb(model)
 	return model:IsA("Model") and model.Name == Config.MODEL_NAME
 end
@@ -58,6 +63,11 @@ local function registerBomb(model)
 
 	local function scheduleReturn()
 		if state.queued or state.returnsRemaining <= 0 then return end
+		-- MonsterSystem owns every registered round bomb. This compatibility owner
+		-- is only for an unregistered legacy bomb outside that lifecycle.
+		if model:GetAttribute("RoundManagedMonster") == true then return end
+		local generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
+		if not generation or not roundIsActive(generation) then return end
 		state.queued = true
 		state.returnsRemaining -= 1
 		model:SetAttribute(RETURNS_ATTRIBUTE, state.returnsRemaining)
@@ -66,6 +76,7 @@ local function registerBomb(model)
 			:format(model:GetFullName(), Config.RESPAWN_TIME, state.returnsRemaining))
 
 		task.delay(Config.RESPAWN_TIME, function()
+			if not roundIsActive(generation) then return end
 			if not state.parent or not state.parent.Parent then return end
 
 			local replacement = state.template:Clone()
@@ -80,7 +91,7 @@ local function registerBomb(model)
 	-- explosion script setting Health to zero; no dependence on a particular
 	-- Died-event order or on a legacy model-local script.
 	humanoid.HealthChanged:Connect(function(health)
-		if health <= 0 then
+		if health <= 0 and Workspace:GetAttribute("RoundState") == "Active" then
 			scheduleReturn()
 		end
 	end)

@@ -14,6 +14,16 @@ local DEFAULT_BURST_DELAY = 0.08
 local MIN_FIRE_INTERVAL = 0.08
 local HIT_COLOR = Color3.fromRGB(212, 159, 162)
 
+local function isPlayerInActiveRound(player)
+	return player
+		and workspace:GetAttribute("RoundState") == "Active"
+		and player:GetAttribute("EscapedNightmare") ~= true
+end
+
+local function isCurrentGeneration(generation)
+	return typeof(generation) == "number" and generation == workspace:GetAttribute("RoundGeneration")
+end
+
 local GUNS = {
 	MonsterGun = { damage = 40, color = HIT_COLOR, shots = 1, interval = 0.10 },
 	MonsterGun2 = { damage = 60, color = Color3.fromRGB(255, 125, 200), shots = 1, interval = 0.10 },
@@ -148,7 +158,8 @@ local function isEquippedBy(player, tool)
 	return tool.Parent == player.Character
 end
 
-contourTargetEvent.OnServerEvent:Connect(function(player, tool, originOffset, direction, target)
+contourTargetEvent.OnServerEvent:Connect(function(player, tool, originOffset, direction, target, generation)
+	if not isPlayerInActiveRound(player) or not isCurrentGeneration(generation) then return end
 	if not getGunConfig(tool) or not isEquippedBy(player, tool) then return end
 	if typeof(direction) ~= "Vector3" or direction.Magnitude < 0.01 then return end
 	local cameraOrigin = validateCameraOrigin(player, originOffset)
@@ -218,7 +229,7 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 	if not monsterModel and not muzzleBlocked then monsterModel = graceTarget end
 	-- Every accepted ray is sent to every client, including misses.  The client
 	-- owns only short-lived visuals; no client result can affect combat.
-	shotVisualEvent:FireAllClients(tool, origin, endPosition, config.color, monsterModel)
+	shotVisualEvent:FireAllClients(tool, origin, endPosition, config.color, monsterModel, workspace:GetAttribute("RoundGeneration"))
 	if not monsterModel then return end
 	-- Once a bomb is armed, preserve its countdown and planned blast instead of
 	-- letting extra fire kill it before the warning finishes.
@@ -248,7 +259,7 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 
 	humanoid:TakeDamage(damage)
 	if humanoid.Health > 0 then
-		damageLabelEvent:FireClient(player, monsterModel, humanoid.Health, humanoid.MaxHealth)
+		damageLabelEvent:FireClient(player, monsterModel, humanoid.Health, humanoid.MaxHealth, workspace:GetAttribute("RoundGeneration"))
 	end
 end
 
@@ -272,7 +283,8 @@ local function bindTool(tool)
 	if not shootEvent:IsA("RemoteEvent") or boundEvents[shootEvent] then return end
 	boundEvents[shootEvent] = true
 
-	shootEvent.OnServerEvent:Connect(function(player, originOffset, shotDirection, outlinedTarget)
+	shootEvent.OnServerEvent:Connect(function(player, originOffset, shotDirection, outlinedTarget, generation)
+		if not isPlayerInActiveRound(player) or not isCurrentGeneration(generation) then return end
 		local currentConfig = getGunConfig(tool)
 		if not currentConfig or not isEquippedBy(player, tool) then return end
 		if typeof(shotDirection) ~= "Vector3" or shotDirection.Magnitude < 0.01 then return end
@@ -288,7 +300,7 @@ local function bindTool(tool)
 		resolveShot(player, tool, currentConfig, cameraOrigin, direction, graceTarget)
 		if currentConfig.shots == 2 then
 			task.delay(currentConfig.burstDelay, function()
-				if not isEquippedBy(player, tool) then return end
+				if not isPlayerInActiveRound(player) or not isCurrentGeneration(generation) or not isEquippedBy(player, tool) then return end
 				resolveShot(player, tool, currentConfig, cameraOrigin, direction, graceTarget)
 			end)
 		end

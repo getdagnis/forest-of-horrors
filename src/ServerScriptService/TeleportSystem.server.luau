@@ -85,6 +85,40 @@ local function canCompleteTeleport(player, character, root, source, destination)
 		and source:IsDescendantOf(Workspace) and destination:IsDescendantOf(Workspace)
 end
 
+-- Touched is intentionally the activation signal, but it does not know whether
+-- the contact came from the playable side of a portal. A trigger that is close
+-- to a wall can therefore fire while a character is standing on the other side
+-- of that wall. Require a clear server-side ray to the nearest point on the
+-- trigger volume. This keeps an actual shaft opening usable without adding a
+-- proximity radius or moving the authored portal part.
+local function hasClearApproach(character, root, source)
+	if not source:IsA("BasePart") then return true end
+	local localRoot = source.CFrame:PointToObjectSpace(root.Position)
+	local halfSize = source.Size * 0.5
+	local nearestLocal = Vector3.new(
+		math.clamp(localRoot.X, -halfSize.X, halfSize.X),
+		math.clamp(localRoot.Y, -halfSize.Y, halfSize.Y),
+		math.clamp(localRoot.Z, -halfSize.Z, halfSize.Z)
+	)
+	local target = source.CFrame:PointToWorldSpace(nearestLocal)
+	local offset = target - root.Position
+	if offset.Magnitude <= 0.05 then return true end
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { character, source }
+	rayParams.IgnoreWater = true
+	return Workspace:Raycast(root.Position, offset, rayParams) == nil
+end
+
+local function requiresClearApproach(source)
+	-- Keep legacy portal behavior unchanged by default. Only the authored
+	-- McDonald's shaft entrance needs the wall-occlusion protection; other
+	-- routes (for example OneWayEntrance9) must remain simple Touched portals.
+	return source:GetAttribute("RequireClearApproach") == true
+		or source.Name == "OneWayEntrance12"
+end
+
 local function setRouteLights(instance, brightness)
 	local root = instance
 	local model = instance:FindFirstAncestorOfClass("Model")
@@ -147,7 +181,10 @@ local function connectEntrance(entrance, route)
 	entrance.CanQuery = true
 	entrance.Touched:Connect(function(hit)
 		local character, root = getPlayerCharacter(hit)
-		if not character or characterCooldowns[character] then return end
+		if not character or characterCooldowns[character]
+			or (requiresClearApproach(entrance) and not hasClearApproach(character, root, entrance)) then
+			return
+		end
 		local exit = nearestExit(route, entrance)
 		if not exit then
 			warn("[TeleportSystem] no exit for route:", route, "entrance:", entrance:GetFullName())
@@ -197,7 +234,10 @@ local function configureChainedPort(source, part)
 		part.CanQuery = true
 		part.Touched:Connect(function(hit)
 			local character, root = getPlayerCharacter(hit)
-			if not character or characterCooldowns[character] then return end
+			if not character or characterCooldowns[character]
+				or (requiresClearApproach(part) and not hasClearApproach(character, root, part)) then
+				return
+			end
 			local destinationList = chainedPortsByName[destinationName]
 			local destination = destinationList and destinationList[1] and destinationList[1].part
 			if not destination or not destination.Parent then

@@ -48,7 +48,7 @@ local GANG_DURATION = 120
 local GANG_COOLDOWN = 180
 local GANG_INVITATION_RETRY_SECONDS = 30
 local GANG_INVITATION_INTERVAL = 4
-local OFFER_PROMPT_DELAY = 4
+local OFFER_PROMPT_DELAY = 2
 local SHIELD_DURATION = 30
 local SHIELD_COOLDOWN = 45
 local UPDATE_INTERVAL = 0.25
@@ -70,10 +70,10 @@ local GUARDIAN_HOSTILE_ATTACK_RANGE = 6
 local GUARDIAN_HOSTILE_ATTACK_COOLDOWN = 1
 
 -- A pet is earned through one simple, readable action: keep the weapon ray on
--- an unharmed WMT through a brief silent consideration, then ten visible
+-- an unharmed WMT through a brief silent consideration, then seven visible
 -- seconds. Do not add a battle/proximity prerequisite; those hidden gates made
 -- the offer effectively impossible to discover.
-local TRUST_AIM_SECONDS = 10
+local TRUST_AIM_SECONDS = 7
 -- The guardian first considers the player in silence. Only after this brief
 -- beat does the visible ten-second conversation begin.
 local TRUST_CONVERSATION_DELAY_SECONDS = 3
@@ -117,6 +117,14 @@ local statusEvent = getOrCreateRemoteEvent("WMTGuardianStatus")
 local guardians = {}
 local guardianKillTimes = {}
 local playerThreatActive = {}
+
+local function isRoundActive()
+	return Workspace:GetAttribute("RoundState") == "Active"
+end
+
+local function isCurrentGeneration(generation)
+	return typeof(generation) == "number" and generation == Workspace:GetAttribute("RoundGeneration")
+end
 
 local function getLivingPlayerRoot(player)
 	local character = player and player.Character
@@ -291,6 +299,7 @@ local function resetPetPath(state)
 end
 
 local function damageMonster(state, targetModel, amount, cooldown)
+	if not isRoundActive() then return 0 end
 	if not isEligibleMonster(targetModel, state.model) then return 0 end
 	local targetHumanoid = MonsterManager.getMonsterHumanoid(targetModel)
 	local now = os.clock()
@@ -675,6 +684,7 @@ local function presentOffer(state, player)
 	state.offerArrivalDistance = math.max(OFFER_DISTANCE, state.offerStartDistance - OFFER_MIN_PROGRESS)
 	state.model:SetAttribute("WMTOfferReady", false)
 	state.offerConnection = rescueResponseEvent.OnServerEvent:Connect(function(sender, guardian, accepted)
+		if not isRoundActive() then return end
 		if sender ~= player or guardian ~= state.model or typeof(accepted) ~= "boolean" then return end
 		if accepted then
 			local succeeded, reason = acceptOffer(state, sender)
@@ -695,6 +705,7 @@ local function connectPart(state, part)
 	if not part:IsA("BasePart") or state.parts[part] then return end
 	state.parts[part] = true
 	part.Touched:Connect(function(hit)
+		if not isRoundActive() then return end
 		local attacker = getMonsterFromHit(hit)
 		if isEligibleMonster(attacker, state.model) then
 			local playerRoot = getLivingPlayerRoot(state.helpPlayer)
@@ -784,7 +795,7 @@ local function updateTrustRitual(state, now)
 			if not isOfferAreaPeaceful(playerRoot, state.model) then
 				record.blockedUntilAimBreak = true
 				answerConversation(state, player, "they are still near", true)
-				task.delay(2.5, function()
+				task.delay(1.25, function()
 					if record.blockedUntilAimBreak then stopConversation(state, player) end
 				end)
 			elseif elapsed >= TRUST_CONVERSATION_DELAY_SECONDS + TRUST_AIM_SECONDS then
@@ -832,7 +843,8 @@ local function validateTrustAim(player, state, tool, originOffset, direction)
 	return result and getMonsterFromHit(result.Instance) == state.model or false
 end
 
-trustAimEvent.OnServerEvent:Connect(function(player, guardian, tool, originOffset, direction)
+trustAimEvent.OnServerEvent:Connect(function(player, guardian, tool, originOffset, direction, generation)
+	if not isRoundActive() or not isCurrentGeneration(generation) then return end
 	local state = guardians[guardian]
 	if not state or not validateTrustAim(player, state, tool, originOffset, direction) then return end
 	getTrustRecord(state, player).lastAimAt = os.clock()
@@ -846,6 +858,13 @@ local tacticsAPI = {
 
 local function updateGuardian(state)
 	while state.model.Parent and state.humanoid.Parent and state.humanoid.Health > 0 do
+		if not isRoundActive() then
+			-- Stop only this system's movement intent; never move a living guardian
+			-- to satisfy lifecycle state, preserving its physical world position.
+			state.humanoid:Move(Vector3.zero)
+			task.wait(UPDATE_INTERVAL)
+			continue
+		end
 		local now = os.clock()
 		if now - state.lastDamagedAt >= GUARDIAN_REGEN_DELAY
 			and state.humanoid.Health < state.humanoid.MaxHealth
@@ -1095,6 +1114,7 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 local function callForHelp(player)
+	if not isRoundActive() then return end
 	local playerRoot = getLivingPlayerRoot(player)
 	if not playerRoot then return end
 	local now = os.clock()
@@ -1117,6 +1137,11 @@ local function monitorPlayerThreat(player, character)
 	-- every second and turn every WMT into a guaranteed bodyguard.
 	task.spawn(function()
 		while player.Parent and player.Character == character do
+			if not isRoundActive() then
+				playerThreatActive[player] = nil
+				task.wait(HELP_THREAT_CHECK_INTERVAL)
+				continue
+			end
 			local playerRoot = getLivingPlayerRoot(player)
 			local threatened = playerRoot
 				and hasHostileMonsterNearby(playerRoot.Position, HELP_THREAT_RADIUS, nil)

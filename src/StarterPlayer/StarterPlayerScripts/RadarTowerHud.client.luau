@@ -19,18 +19,18 @@ local snapshotEvent = ReplicatedStorage:WaitForChild("RadarTowerSnapshot")
 -- Tune this to the loop's real beep interval if its audio is trimmed later.
 local PULSE_INTERVAL = 2.0
 -- The tower is a tactical snapshot rather than a live GPS feed.
-local REFRESH_INTERVAL = 10.0
+local REFRESH_INTERVAL = 10
 local AMBIENT_RANGE = 30
 local AMBIENT_UPDATE_INTERVAL = 0.4
 local TOP_THREAT_TYPES = 4
 local RADAR_VALUE_FONT_SIZE = 16
-local RADAR_DETAIL_FONT_SIZE = 8
+local RADAR_DETAIL_FONT_SIZE = 12
 -- Only Drooling Zombies use the compact battle-radar contact size. Other
 -- hostiles retain the larger tower-radar contact size for quick triage.
 local ZOMBIE_NAME = "Drooling Zombie"
-local ZOMBIE_DOT_SIZE = 6
+local ZOMBIE_DOT_SIZE = 5
 local HOSTILE_DOT_SIZE = 10
-local SECRET_SHAFT_GUARDIAN_DOT_SIZE = 8
+local SECRET_SHAFT_GUARDIAN_DOT_SIZE = 10
 local MCDONALDS_LOGO_IMAGE = "rbxassetid://102275809524944"
 
 local COLORS = {
@@ -40,7 +40,8 @@ local COLORS = {
 	phosphor = Color3.fromRGB(198, 117, 255),
 	cyan = Color3.fromRGB(157, 129, 255),
 	threat = Color3.fromRGB(255, 52, 117),
-	monsterGun1 = Color3.fromRGB(255, 105, 180),
+	shaftGuard = Color3.fromRGB(200, 195, 191),
+	myself = Color3.fromRGB(255, 254, 211),
 	friendly = Color3.fromRGB(186, 180, 203),
 	guardian = Color3.fromRGB(220, 240, 210),
 	text = Color3.fromRGB(244, 235, 255),
@@ -235,19 +236,19 @@ mcdonaldsLogoMarker.ZIndex = 5
 mcdonaldsLogoMarker.Visible = false
 mcdonaldsLogoMarker.Parent = plot
 
-local selfMarker = makeFrame("You", plot, COLORS.text, 0)
+local selfMarker = makeFrame("- you", plot, COLORS.myself, 0)
 selfMarker.AnchorPoint = Vector2.new(0.5, 0.5)
 selfMarker.Size = UDim2.fromOffset(14, 14)
 Instance.new("UICorner", selfMarker).CornerRadius = UDim.new(1, 0)
 local selfStroke = Instance.new("UIStroke")
-selfStroke.Color = COLORS.phosphor
-selfStroke.Thickness = 2
+selfStroke.Color = COLORS.cyan
+selfStroke.Thickness = 1
 selfStroke.Parent = selfMarker
-local selfLabel = makeText("PlayerName", plot, "YOU", 20, COLORS.cyan, Enum.Font.MontserratBold)
+local selfLabel = makeText("PlayerName", plot, "- you", 18, COLORS.myself, Enum.Font.MontserratBold)
 selfLabel.AnchorPoint = Vector2.new(0, 0.5)
 selfLabel.Size = UDim2.fromOffset(90, 16)
 selfLabel.TextXAlignment = Enum.TextXAlignment.Left
-selfLabel.ZIndex = 4
+selfLabel.ZIndex = 99
 
 local threatReadout = makeFrame("ThreatReadout", plot, COLORS.background, 0.29)
 threatReadout.Position = UDim2.fromOffset(12, 12)
@@ -466,8 +467,8 @@ end
 local function getSecretShaftGuardianDot(index)
 	local dot = secretShaftGuardianDots[index]
 	if dot then return dot end
-	dot = makeFrame("SecretShaftGuardian", monsterLayer, COLORS.monsterGun1, 0)
-	dot.AnchorPoint = Vector2.new(0.5, 0.5)
+	dot = makeFrame("SecretShaftGuardian", monsterLayer, COLORS.shaftGuard, 0)
+	dot.AnchorPoint = Vector2.new(1.25, 1.25)
 	dot.Size = UDim2.fromOffset(SECRET_SHAFT_GUARDIAN_DOT_SIZE, SECRET_SHAFT_GUARDIAN_DOT_SIZE)
 	dot.ZIndex = 6
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
@@ -478,7 +479,7 @@ end
 local function getSecretShaftGuardianLabel(index)
 	local label = secretShaftGuardianLabels[index]
 	if label then return label end
-	label = makeText("SecretShaftGuardianName", monsterLayer, "secret shaft guardian", RADAR_VALUE_FONT_SIZE, COLORS.monsterGun1, Enum.Font.MontserratBold)
+	label = makeText("SecretShaftGuardianName", monsterLayer, "secret shaft guardian", RADAR_VALUE_FONT_SIZE, COLORS.shaftGuard, Enum.Font.MontserratBold)
 	label.AnchorPoint = Vector2.new(1, 0)
 	label.Size = UDim2.fromOffset(220, 24)
 	label.TextXAlignment = Enum.TextXAlignment.Right

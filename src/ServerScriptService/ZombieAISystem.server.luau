@@ -58,7 +58,10 @@ local function livingPlayerCharacters()
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		local root = rootOf(character)
-		if humanoid and humanoid.Health > 0 and root then
+		if humanoid and humanoid.Health > 0 and root
+			and Workspace:GetAttribute("RoundState") == "Active"
+			and player:GetAttribute("EscapedNightmare") ~= true
+		then
 			table.insert(characters, character)
 		end
 	end
@@ -162,6 +165,7 @@ end
 
 local function refreshInfightTargets()
 	table.clear(infightTargets)
+	if Workspace:GetAttribute("RoundState") ~= "Active" then return end
 	if math.random() > INFIGHT_CHECK_CHANCE then return end
 
 	local targets = {}
@@ -203,6 +207,7 @@ end
 
 local function refreshPressureTargets()
 	table.clear(pressureTargets)
+	if Workspace:GetAttribute("RoundState") ~= "Active" then return end
 	if not ENABLE_LEGACY_GLOBAL_PRESSURE then return end
 	local roundStartedAt = tonumber(Workspace:GetAttribute("RoundStartedAt"))
 	local elapsed = roundStartedAt and math.max(0, Workspace:GetServerTimeNow() - roundStartedAt) or 0

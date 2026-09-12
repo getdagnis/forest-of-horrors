@@ -25,6 +25,14 @@ local previousMouseIcon = ""
 local crosshairShown = false
 local knownTurrets = {}
 
+local function isActiveRound()
+	return workspace:GetAttribute("RoundState") == "Active"
+end
+
+local function currentGeneration()
+	return workspace:GetAttribute("RoundGeneration")
+end
+
 local function considerTurret(instance)
 	if instance:IsA("Model") and instance:GetAttribute("Turret") == true then
 		knownTurrets[instance] = true
@@ -88,6 +96,11 @@ local function getNearbyMountedTurret()
 end
 
 local function refreshTurret()
+	if not isActiveRound() then
+		firing = false
+		setTurretCrosshair(false)
+		return nil
+	end
 	local turret = getSeatedTurret() or getNearbyMountedTurret()
 	if turret ~= activeTurret then
 		activeTurret = turret
@@ -104,6 +117,7 @@ local function refreshTurret()
 end
 
 local function sendShot()
+	if not isActiveRound() then return end
 	local turret = refreshTurret()
 	if not turret then return end
 	local event = ReplicatedStorage:FindFirstChild("TurretShot")
@@ -115,7 +129,7 @@ local function sendShot()
 	local now = os.clock()
 	if now < nextShotAt then return end
 	nextShotAt = now + FIRE_INTERVAL
-	event:FireServer(turret, mouse.Hit.Position)
+	event:FireServer(turret, mouse.Hit.Position, currentGeneration())
 	turret:SetAttribute("TurretClientLastShotAt", workspace:GetServerTimeNow())
 	if now - lastSendLogAt >= 1 then
 		lastSendLogAt = now
