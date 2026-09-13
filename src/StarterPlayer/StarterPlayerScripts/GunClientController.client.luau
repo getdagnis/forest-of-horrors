@@ -29,7 +29,7 @@ local DEFAULT_COLORS = {
 
 -- Cosmetic timing only. These linger long enough to colour the nearby scene,
 -- but remain well below the regular gun fire interval accumulation threshold.
-local GUN_MUZZLE_LIGHT_LIFETIME = 0.12
+local GUN_MUZZLE_LIGHT_LIFETIME = 0.16
 local GUN_IMPACT_LIGHT_LIFETIME = 0.32
 local GUN_BEAM_LIFETIME = 0.2
 local MAX_FREE_IMPACT_ENDPOINTS = 64
@@ -291,8 +291,10 @@ local function makeImpactEndpoint()
 
 	local light = Instance.new("PointLight")
 	light.Name = "GunImpactLight"
-	light.Brightness = 12
-	light.Range = 24
+	-- Keep the hit glow visible, but remove shadow-map work and use a compact
+	-- radius so rapid fire does not re-light the whole forest.
+	light.Brightness = 8
+	light.Range = 16
 	light.Shadows = false
 	light.Enabled = false
 	light.Parent = part
@@ -332,14 +334,35 @@ local function renderShot(tool, origin, endPosition, color, hitModel, generation
 	local endpoint, endpointToken = acquireImpactEndpoint(endPosition, color)
 
 	local startAttachment, isTemporary = getVisibleBeamStart(tool, barrel)
-	local muzzleLight = Instance.new("PointLight")
-	muzzleLight.Name = "GunMuzzleLight"
+	-- One persistent muzzle light per barrel. Its attachment is separate from
+	-- the short-lived beam attachment, so older shots cannot remove the light.
+	local lightAttachment = barrel:FindFirstChild("GunMuzzleLightAttachment")
+	if not lightAttachment then
+		lightAttachment = Instance.new("Attachment")
+		lightAttachment.Name = "GunMuzzleLightAttachment"
+		lightAttachment.Parent = barrel
+	end
+	lightAttachment.CFrame = barrel.CFrame:ToObjectSpace(startAttachment.WorldCFrame)
+	local muzzleLight = lightAttachment:FindFirstChild("GunMuzzleLight")
+	if not muzzleLight then
+		muzzleLight = Instance.new("SpotLight")
+		muzzleLight.Name = "GunMuzzleLight"
+		muzzleLight.Brightness = 16
+		muzzleLight.Range = 16
+		muzzleLight.Angle = 90
+		muzzleLight.Face = Enum.NormalId.Front
+		muzzleLight.Shadows = false
+		muzzleLight.Parent = lightAttachment
+	end
 	muzzleLight.Color = color
-	muzzleLight.Brightness = 12
-	muzzleLight.Range = 16
-	muzzleLight.Shadows = false
-	muzzleLight.Parent = startAttachment
-	Debris:AddItem(muzzleLight, GUN_MUZZLE_LIGHT_LIFETIME)
+	muzzleLight.Enabled = true
+	local flashToken = (muzzleLight:GetAttribute("FlashToken") or 0) + 1
+	muzzleLight:SetAttribute("FlashToken", flashToken)
+	task.delay(GUN_MUZZLE_LIGHT_LIFETIME, function()
+		if muzzleLight.Parent and muzzleLight:GetAttribute("FlashToken") == flashToken then
+			muzzleLight.Enabled = false
+		end
+	end)
 	local beam = Instance.new("Beam")
 	beam.Attachment0 = startAttachment
 	beam.Attachment1 = endpoint.attachment

@@ -641,9 +641,12 @@ local function muzzleFlash(power)
 	flash.Parent = workspace
 	local light = Instance.new("PointLight")
 	light.Color = Config.FLASH_COLOR
-	light.Brightness = MUZZLE_LIGHT_BRIGHTNESS_MIN + MUZZLE_LIGHT_BRIGHTNESS_GAIN * power
-	light.Range = MUZZLE_LIGHT_RANGE_MIN + MUZZLE_LIGHT_RANGE_GAIN * power
+	-- Preserve the local flash without shadow-map work or a large illumination
+	-- radius; rapid shots should not re-light the whole forest.
+	light.Brightness = 6
+	light.Range = 10
 	light.Shadows = false
+	light.Enabled = true
 	light.Parent = flash
 	Debris:AddItem(flash, MUZZLE_FLASH_LIFETIME)
 end
@@ -661,9 +664,10 @@ local function makeImpactLight(position, power)
 	emitter.Parent = workspace
 	local light = Instance.new("PointLight")
 	light.Color = Config.FLASH_COLOR
-	light.Brightness = IMPACT_LIGHT_BRIGHTNESS_MIN + IMPACT_LIGHT_BRIGHTNESS_GAIN * power
-	light.Range = IMPACT_LIGHT_RANGE_MIN + IMPACT_LIGHT_RANGE_GAIN * power
+	light.Brightness = 6
+	light.Range = 12
 	light.Shadows = false
+	light.Enabled = true
 	light.Parent = emitter
 	Debris:AddItem(emitter, IMPACT_LIGHT_LIFETIME)
 end

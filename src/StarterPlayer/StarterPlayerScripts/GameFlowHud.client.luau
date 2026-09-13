@@ -7,7 +7,7 @@ local StarterGui = game:GetService("StarterGui")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
-local UI_TEST = true -- Studio-only end-screen preview buttons.
+local UI_TEST = true -- Studio-only real round simulation buttons.
 
 local player = Players.LocalPlayer
 local AudioPreloader = require(ReplicatedStorage:WaitForChild("AudioPreloader"))
@@ -500,13 +500,12 @@ end
 
 nightmareEscapedEvent.OnClientEvent:Connect(showEscapedScreen)
 
--- Studio-only visual previews. They use the real client display functions but
--- never contact the server or alter a published session.
+-- Studio-only controls exercise the real server lifecycle and escape portal.
 if UI_TEST and RunService:IsStudio() then
 	local previewBar = Instance.new("Frame")
-	previewBar.Name = "StudioGameFlowPreview"
+	previewBar.Name = "StudioRoundTestControls"
 	previewBar.Position = UDim2.fromOffset(16, 145)
-	previewBar.Size = UDim2.fromOffset(330, 42)
+	previewBar.Size = UDim2.fromOffset(285, 42)
 	previewBar.BackgroundColor3 = Color3.fromRGB(24, 12, 43)
 	previewBar.BorderSizePixel = 0
 	previewBar.ZIndex = 1000
@@ -538,39 +537,16 @@ if UI_TEST and RunService:IsStudio() then
 		return button
 	end
 
-	local timeoutButton = previewButton("TIME ENDED", 112)
-	local escapedButton = previewButton("ESCAPED", 96)
-	local closeButton = previewButton("CLOSE", 96)
+	local testEvent = ReplicatedStorage:WaitForChild("StudioRoundTestRequest")
+	local timeoutButton = previewButton("TIME RUNS OUT", 140)
+	local escapeButton = previewButton("OPEN ESCAPE", 130)
 
 	timeoutButton.Activated:Connect(function()
-		welcomeShade.Visible = false
-		showRoundFailure({
-			roundGeneration = currentRoundGeneration,
-			message = "Time ran out. The forest is still hunting.",
-			playerName = player.Name,
-			score = 42,
-			kills = 9,
-			deaths = 2,
-			newScoreRecord = true,
-		})
+		local mode = workspace:GetAttribute("RoundState") == "Escape" and "escape-timeout" or "timeout"
+		testEvent:FireServer(mode, workspace:GetAttribute("RoundGeneration"))
 	end)
-	escapedButton.Activated:Connect(function()
-		welcomeShade.Visible = false
-		showEscapedScreen({
-			roundGeneration = currentRoundGeneration,
-			playerName = player.Name,
-			score = 42,
-			kills = 9,
-			deaths = 2,
-			elapsedSeconds = 43 * 60 + 46,
-			newScoreRecord = true,
-			newEscapeRecord = true,
-		})
-	end)
-	closeButton.Activated:Connect(function()
-			escapedNightmare = false
-			endShade.Visible = false
-			escapeShade.Visible = false
+	escapeButton.Activated:Connect(function()
+		testEvent:FireServer("escape", workspace:GetAttribute("RoundGeneration"))
 	end)
 end
 

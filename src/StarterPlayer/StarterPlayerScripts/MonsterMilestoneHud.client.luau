@@ -106,10 +106,13 @@ local function playSoundServiceCue(name)
 	Debris:AddItem(clone, math.max(3, clone.TimeLength + 1))
 end
 
--- Match score announcements: restrained white GothamBold with a firm
--- outline. This is deliberately larger for round-level information, not pink
--- or GothamBlack like the retired milestone presentation.
-local function showAnnouncement(message, visibleSeconds, isCritical)
+-- Every announcement uses the same restrained presentation as the opening
+-- lines. Critical sequences are protected from interruption by state, not by
+-- changing their font, weight, size, or wrapping rules.
+local ANNOUNCEMENT_SIZE = UDim2.new(0.72, 0, 0, 68)
+local ANNOUNCEMENT_FONT = Enum.Font.GothamBold
+
+local function showAnnouncement(message, visibleSeconds)
 	visibleSeconds = tonumber(visibleSeconds) or 2.2
 	activeToken += 1
 	local token = activeToken
@@ -120,9 +123,9 @@ local function showAnnouncement(message, visibleSeconds, isCritical)
 	label.Name = "RoundAnnouncement"
 	label.AnchorPoint = Vector2.new(0.5, 0.5)
 	label.Position = UDim2.new(0.5, 0, 0.42, 0)
-	label.Size = isCritical and UDim2.new(0.9, 0, 0, 132) or UDim2.new(0.72, 0, 0, 68)
+	label.Size = ANNOUNCEMENT_SIZE
 	label.BackgroundTransparency = 1
-	label.Font = isCritical and Enum.Font.GothamBlack or Enum.Font.GothamBold
+	label.Font = ANNOUNCEMENT_FONT
 	label.Text = message
 	label.TextColor3 = Color3.new(1, 1, 1)
 	label.TextStrokeTransparency = 0
@@ -260,14 +263,14 @@ lavaPoolDoorOpenedEvent.OnClientEvent:Connect(function(generation)
 	local clearedIn = formatClock(workspace:GetServerTimeNow() - (tonumber(workspace:GetAttribute("RoundStartedAt")) or workspace:GetServerTimeNow()))
 	task.spawn(function()
 		playSoundServiceCue("SecretShaftGuard")
-			showAnnouncement("all overground monsters are killed\n(" .. clearedIn .. ")", 5, true)
+			showAnnouncement("all overground monsters are killed\n(" .. clearedIn .. ")", 5)
 			task.wait(6)
 		if not isCurrentGameplayGeneration(sequenceGeneration) or workspace:GetAttribute("RoundState") ~= "Active" then return end
-			showAnnouncement("lava pool secret door is now open", 4, true)
+			showAnnouncement("lava pool secret door is now open", 4)
 			task.wait(5)
 		if not isCurrentGameplayGeneration(sequenceGeneration) or workspace:GetAttribute("RoundState") ~= "Active" then return end
 		playSoundServiceCue("SuspenseSound")
-			showAnnouncement("some deep monsters remain", 4, true)
+			showAnnouncement("some deep monsters remain", 4)
 		task.wait(4 + ANNOUNCEMENT_FADE_SECONDS)
 		if isCurrentGameplayGeneration(sequenceGeneration) and workspace:GetAttribute("RoundState") == "Active" then
 			criticalSequenceActive = false

@@ -5,6 +5,9 @@ local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+-- Studio reads the shared records for display but never competes with live players.
+local RECORDS_ELIGIBLE = not RunService:IsStudio()
 
 local recordsEvent = ReplicatedStorage:WaitForChild("RecordsUpdate")
 local escapedEvent = ReplicatedStorage:WaitForChild("NightmareEscaped")
@@ -27,6 +30,7 @@ local function sortLeaders()
 end
 
 local function queueSave()
+	if not RECORDS_ELIGIBLE then return end
 	if saveQueued then return end
 	saveQueued = true
 	task.delay(1, function()
@@ -100,6 +104,10 @@ end
 local function observeScore(player, value)
 	if not value:IsA("IntValue") or value.Name ~= "Score" then return end
 	value.Changed:Connect(function()
+		if not RECORDS_ELIGIBLE then
+			for _, other in ipairs(Players:GetPlayers()) do publish(other) end
+			return
+		end
 		if Workspace:GetAttribute("RoundState") ~= "Active" then return end
 		if player:GetAttribute("Difficulty") == "Easy" then return end
 		local score, kills = getStats(player)
@@ -142,11 +150,11 @@ local function bindPlayer(player)
 		end
 		escapeGenerationByPlayer[player] = generation
 		local elapsed = math.max(0, math.floor(Workspace:GetServerTimeNow() - (tonumber(Workspace:GetAttribute("RoundStartedAt")) or Workspace:GetServerTimeNow())))
-		local newEscapeRecord = not quickestEscape.elapsedSeconds or elapsed < quickestEscape.elapsedSeconds
+		local newEscapeRecord = RECORDS_ELIGIBLE and (not quickestEscape.elapsedSeconds or elapsed < quickestEscape.elapsedSeconds)
 		local recordChanged = newEscapeRecord
 		if newEscapeRecord then
 			quickestEscape.elapsedSeconds, quickestEscape.names = elapsed, { player.Name }
-		elseif elapsed == quickestEscape.elapsedSeconds and not table.find(quickestEscape.names, player.Name) then
+		elseif RECORDS_ELIGIBLE and elapsed == quickestEscape.elapsedSeconds and not table.find(quickestEscape.names, player.Name) then
 			table.insert(quickestEscape.names, player.Name)
 			table.sort(quickestEscape.names)
 			recordChanged = true
@@ -168,6 +176,7 @@ local function bindPlayer(player)
 		})
 	end)
 	player:GetAttributeChangedSignal("Difficulty"):Connect(function()
+		if not RECORDS_ELIGIBLE then return end
 		if player:GetAttribute("Difficulty") ~= "Easy" then return end
 		for index = #leaders, 1, -1 do
 			if leaders[index].userId == player.UserId then table.remove(leaders, index) end

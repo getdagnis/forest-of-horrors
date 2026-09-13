@@ -9,8 +9,11 @@ local ESCAPE_ACTIVE_ATTRIBUTE = "NightmareEscapeActive"
 local ROUND_STATE_ATTRIBUTE = "RoundState"
 local ROUND_GENERATION_ATTRIBUTE = "RoundGeneration"
 
-local portalRecords = setmetatable({}, { __mode = "k" })
-local connectedParts = setmetatable({}, { __mode = "k" })
+-- Keep records strongly referenced for the lifetime of the portal. Weak keys
+-- can be collected even while the Instance remains in the DataModel, which
+-- would silently drop the attribute-change refresh and leave a closed portal.
+local portalRecords = {}
+local connectedParts = {}
 
 local function getLivingPlayer(hit)
 	local current = hit
@@ -28,6 +31,8 @@ end
 local function setPortalOpen(portal, isOpen)
 	local record = portalRecords[portal]
 	if not record then return end
+	local state = Workspace:GetAttribute(ROUND_STATE_ATTRIBUTE)
+	local gameplayActive = state == "Active" or state == "Escape"
 	portal:SetAttribute("NightmareExitPortalOpen", isOpen)
 	record.highlight.Enabled = isOpen
 	for _, effect in ipairs(record.effects) do
@@ -40,6 +45,23 @@ local function setPortalOpen(portal, isOpen)
 			end
 		end
 	end
+	if record.dreamCore then
+		record.dreamCore.Looped = true
+		if gameplayActive then
+			if not record.dreamCore.Playing then record.dreamCore:Play() end
+		elseif record.dreamCore.Playing then
+			record.dreamCore:Stop()
+		end
+	end
+	if record.portalOpen then
+		record.portalOpen.Looped = false
+		if isOpen then
+			if not record.wasOpen then record.portalOpen:Play() end
+		elseif record.portalOpen.Playing then
+			record.portalOpen:Stop()
+		end
+	end
+	record.wasOpen = isOpen
 end
 
 local function refreshAllPortals()
@@ -107,7 +129,15 @@ local function registerPortal(portal)
 		end
 	end
 
-	portalRecords[portal] = { highlight = highlight, effects = effects }
+	local dreamCore = portal:FindFirstChild("DreamCore", true)
+	local portalOpen = portal:FindFirstChild("PortalOpen", true)
+	portalRecords[portal] = {
+		highlight = highlight,
+		effects = effects,
+		dreamCore = dreamCore and dreamCore:IsA("Sound") and dreamCore or nil,
+		portalOpen = portalOpen and portalOpen:IsA("Sound") and portalOpen or nil,
+		wasOpen = false,
+	}
 	for _, part in ipairs(parts) do connectPortalPart(part) end
 	setPortalOpen(portal, Workspace:GetAttribute(ESCAPE_ACTIVE_ATTRIBUTE) == true and Workspace:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Escape")
 	warn("[NightmareExitSystem] portal registered:", portal:GetFullName())

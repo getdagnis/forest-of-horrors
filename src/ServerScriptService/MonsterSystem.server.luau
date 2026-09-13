@@ -6,6 +6,7 @@ local Players = game:GetService("Players")
 local ws = game:GetService("Workspace")
 local rs = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
 local MonsterManager = require(rs:WaitForChild("MonsterManager"))
 local MonsterBombConfig = require(rs:WaitForChild("MonsterBombConfig"))
 local RadarEventBus = require(rs:WaitForChild("RadarEventBus"))
@@ -228,6 +229,7 @@ local function broadcastRecords()
 end
 
 local function updateBestEver(player, score, killCount, spawn)
+	if RunService:IsStudio() then return false end
 	if player:GetAttribute("Difficulty") == "Easy" then return false end
 	if score <= (bestEver.score or 0) then return false end
 
@@ -424,11 +426,8 @@ end
 
 local beginUndergroundPhase
 
-local function checkRoundComplete(count)
+local function beginEscapePhase()
 	if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then return end
-	if pendingRespawns > 0 then return end
-	if count ~= 0 then return end
-
 	-- Clearing the hostile population is the end of combat, not the end of the
 	-- nightmare. Freeze the successful hunt timer and give players one final,
 	-- short escape phase to reach the bedroom portal.
@@ -439,14 +438,19 @@ local function checkRoundComplete(count)
 	local escapeEndsAt = now + ESCAPE_DURATION_SECONDS
 	ws:SetAttribute("NightmareClearElapsedSeconds", clearedInSeconds)
 	ws:SetAttribute("NightmareEscapeEndsAt", escapeEndsAt)
-	-- ScoreGui reads RoundEndsAt, so this replaces its original hunt timer with
-	-- the visible sixty-second escape countdown instead of leaving it at zero.
 	ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, escapeEndsAt)
 	nightmareEscapeStartedEvent:FireAllClients({
 		roundGeneration = roundGeneration,
 		clearedInSeconds = clearedInSeconds,
 		escapeEndsAt = escapeEndsAt,
 	})
+end
+
+local function checkRoundComplete(count)
+	if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then return end
+	if pendingRespawns > 0 then return end
+	if count ~= 0 then return end
+	beginEscapePhase()
 end
 
 local function announceMonsterMilestone(count)
@@ -627,8 +631,8 @@ end
 -- The marked white creepy opens this gate no matter which authoritative damage
 -- source kills it. The physical door is hidden rather than destroyed so its
 -- authored state remains recoverable without a server-side reset.
-local function openSecretShaftIfGuard(model)
-	if secretShaftOpened or model:GetAttribute("SecretShaftDoorGuard") ~= true then return end
+local function openSecretShaft()
+	if secretShaftOpened then return end
 	secretShaftOpened = true
 	ws:SetAttribute(SECRET_SHAFT_OPEN_ATTRIBUTE, true)
 	setDoorsOpen(secretShaftDoors, true)
@@ -645,6 +649,12 @@ local function openSecretShaftIfGuard(model)
 	end
 
 	secretShaftAnnouncementEvent:FireAllClients(roundGeneration)
+end
+
+local function openSecretShaftIfGuard(model)
+	if model:GetAttribute("SecretShaftDoorGuard") == true then
+		openSecretShaft()
+	end
 end
 
 local function bindGateDoors()
@@ -1314,6 +1324,50 @@ end
 Players.PlayerAdded:Connect(onPlayerAdded)
 for _, player in Players:GetPlayers() do
 	onPlayerAdded(player)
+end
+
+-- Studio-only lifecycle test controls. These attributes are ignored in a
+-- published server and let a creator exercise the terminal paths without
+-- waiting for a full 44:45 round or manually editing gameplay state. In a
+-- running Studio server, set `workspace:SetAttribute("StudioRoundTest", "timeout")`
+-- or `"escape"`; for an escape deadline use `"escape-timeout"` after that.
+if RunService:IsStudio() then
+	local escapeTestPending = false
+	local testEvent = getOrCreateRemoteEvent("StudioRoundTestRequest")
+	testEvent.OnServerEvent:Connect(function(player, mode, generation)
+		if generation ~= ws:GetAttribute("RoundGeneration") then return end
+		if mode ~= "timeout" and mode ~= "escape" and mode ~= "escape-timeout" then return end
+		-- Clear first so repeating a test request still triggers the attribute hook.
+		ws:SetAttribute("StudioRoundTest", nil)
+		ws:SetAttribute("StudioRoundTest", mode)
+	end)
+	ws:GetAttributeChangedSignal("StudioRoundTest"):Connect(function()
+		local mode = ws:GetAttribute("StudioRoundTest")
+		if mode == "timeout" and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" then
+			ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, ws:GetServerTimeNow() + 3)
+		elseif mode == "escape" and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" then
+			if escapeTestPending then return end
+			escapeTestPending = true
+			local testGeneration = roundGeneration
+			openSecretShaft()
+			task.delay(10, function()
+				escapeTestPending = false
+				if roundGeneration ~= testGeneration or ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then return end
+				beginUndergroundPhase()
+				-- Allow the 16-second overground announcement sequence to finish,
+				-- then leave ten quiet seconds before the all-cleared announcement.
+				escapeTestPending = true
+				task.delay(26, function()
+					escapeTestPending = false
+					if roundGeneration ~= testGeneration or ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active" then return end
+					beginEscapePhase()
+				end)
+			end)
+		elseif mode == "escape-timeout" and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Escape" then
+			ws:SetAttribute("NightmareEscapeEndsAt", ws:GetServerTimeNow() + 3)
+			ws:SetAttribute(ROUND_ENDS_AT_ATTRIBUTE, ws:GetServerTimeNow() + 3)
+		end
+	end)
 end
 
 -- All dependencies and player handlers are live before the one server-owned round.
