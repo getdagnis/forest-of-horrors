@@ -184,11 +184,7 @@ local function stabilizeToolAssembly()
 end
 
 local function getMonsterModelFromHit(instance)
-	local current = instance
-	while current do
-		if current:IsA("Model") and MonsterManager.getConfig(current) then return current end
-		current = current.Parent
-	end
+	return MonsterManager.getDamageableModelFromHit(instance)
 end
 
 local function makeRaycastParams(character, additionalIgnored)
@@ -374,6 +370,11 @@ local function pushMonsterBack(model, blastOrigin)
 end
 
 local function damageMonster(player, model, damage, blastOrigin)
+	if MonsterManager.isZombieTotem(model) then
+		local dealt = MonsterManager.damageTotem(model, player, damage, "MonsterBlaster", Config.FLASH_COLOR)
+		if dealt > 0 then MonsterHitFeedback.flash(model, Config.FLASH_COLOR, MONSTER_FLASH_DURATION) end
+		return
+	end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
 	-- A bonded guardian may be fighting inside either the direct beam or ground

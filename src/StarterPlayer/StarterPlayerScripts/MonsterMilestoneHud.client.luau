@@ -18,6 +18,7 @@ local secretShaftAnnouncementEvent = ReplicatedStorage:WaitForChild("SecretShaft
 local secretShaftLockedEvent = ReplicatedStorage:WaitForChild("SecretShaftDoorLocked")
 local lavaPoolDoorOpenedEvent = ReplicatedStorage:WaitForChild("LavaPoolDoorOpened")
 local lavaPoolDoorLockedEvent = ReplicatedStorage:WaitForChild("LavaPoolDoorLocked")
+local zombieTotemDestroyedAnnouncementEvent = ReplicatedStorage:WaitForChild("ZombieTotemDestroyedAnnouncement")
 local nightmareEscapeStartedEvent = ReplicatedStorage:WaitForChild("NightmareEscapeStarted")
 local roundStartedEvent = ReplicatedStorage:WaitForChild("RoundStarted")
 local WELCOME_ACCEPTED_ATTRIBUTE = "NightmareWelcomeAccepted"
@@ -276,6 +277,12 @@ lavaPoolDoorOpenedEvent.OnClientEvent:Connect(function(generation)
 			criticalSequenceActive = false
 		end
 	end)
+end)
+
+zombieTotemDestroyedAnnouncementEvent.OnClientEvent:Connect(function(_, generation)
+	if not isCurrentGameplayGeneration(generation) or workspace:GetAttribute("RoundState") ~= "Active" then return end
+	if criticalSequenceActive then return end
+	showAnnouncement("zombie spawn point destroyed", LONG_ANNOUNCEMENT_SECONDS)
 end)
 
 nightmareEscapeStartedEvent.OnClientEvent:Connect(function(data)

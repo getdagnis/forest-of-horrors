@@ -49,7 +49,10 @@ end
 local function getMonsterModelFromHit(instance)
 	local current = instance
 	while current do
-		if current:IsA("Model") and MonsterManager.getConfig(current) then
+		if current:IsA("Model") and (MonsterManager.getConfig(current) or MonsterManager.isZombieTotem(current)) then
+			if MonsterManager.isZombieTotem(current) then
+				return (tonumber(current:GetAttribute("TotemHealth")) or 0) > 0 and current or nil
+			end
 			local humanoid = MonsterManager.getMonsterHumanoid(current)
 			return humanoid and humanoid.Health > 0 and current or nil
 		end

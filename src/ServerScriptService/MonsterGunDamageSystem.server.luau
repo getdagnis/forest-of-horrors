@@ -8,6 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local AimConfig = require(ReplicatedStorage:WaitForChild("GunAimConfig"))
+local MonsterHitFeedback = require(ReplicatedStorage:WaitForChild("MonsterHitFeedback"))
 
 local RANGE = AimConfig.Range
 local DEFAULT_BURST_DELAY = 0.08
@@ -69,14 +70,7 @@ local function getGunConfig(tool)
 end
 
 local function getMonsterModelFromHit(instance)
-	local current = instance
-	while current do
-		if current:IsA("Model") and MonsterManager.getConfig(current) then
-			return current
-		end
-		current = current.Parent
-	end
-	return nil
+	return MonsterManager.getDamageableModelFromHit(instance)
 end
 
 local function makeRaycastParams(character, tool, additionalIgnored)
@@ -116,7 +110,10 @@ local function validateCameraOrigin(player, originOffset)
 end
 
 local function isDirectTarget(model, cameraOrigin, direction, character, tool)
-	if not model or not model:IsA("Model") or not MonsterManager.getConfig(model) then return false end
+	if not model or not model:IsA("Model") or not (MonsterManager.getConfig(model) or MonsterManager.isZombieTotem(model)) then return false end
+	if MonsterManager.isZombieTotem(model) then
+		return (tonumber(model:GetAttribute("TotemHealth")) or 0) > 0
+	end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return false end
 	local result = workspace:Raycast(cameraOrigin, direction * RANGE, makeRaycastParams(character, tool))
@@ -130,7 +127,10 @@ local function updateContourGrace(player, tool, submittedTarget, cameraOrigin, d
 end
 
 local function isVisibleMonster(model, cameraOrigin, character, tool)
-	if not model or not MonsterManager.getConfig(model) then return false end
+	if not model or not (MonsterManager.getConfig(model) or MonsterManager.isZombieTotem(model)) then return false end
+	if MonsterManager.isZombieTotem(model) then
+		return (tonumber(model:GetAttribute("TotemHealth")) or 0) > 0
+	end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return false end
 	local targetPart = model:FindFirstChild("HumanoidRootPart", true) or model.PrimaryPart
@@ -231,6 +231,11 @@ local function resolveShot(player, tool, config, cameraOrigin, direction, graceT
 	-- owns only short-lived visuals; no client result can affect combat.
 	shotVisualEvent:FireAllClients(tool, origin, endPosition, config.color, monsterModel, workspace:GetAttribute("RoundGeneration"))
 	if not monsterModel then return end
+	if MonsterManager.isZombieTotem(monsterModel) then
+		local dealt = MonsterManager.damageTotem(monsterModel, player, config.damage, config.weaponName, config.color)
+		if dealt > 0 then MonsterHitFeedback.flash(monsterModel, config.color, 0.25) end
+		return
+	end
 	-- Once a bomb is armed, preserve its countdown and planned blast instead of
 	-- letting extra fire kill it before the warning finishes.
 	if monsterModel.Name == "BombMonster" and monsterModel:GetAttribute("BombWarningActive") == true then return end

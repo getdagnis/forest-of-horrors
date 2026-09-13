@@ -166,6 +166,13 @@ local secretShaftAnnouncementEvent = getOrCreateRemoteEvent("SecretShaftAnnounce
 local secretShaftLockedEvent = getOrCreateRemoteEvent("SecretShaftDoorLocked")
 local lavaPoolDoorOpenedEvent = getOrCreateRemoteEvent("LavaPoolDoorOpened")
 local lavaPoolDoorLockedEvent = getOrCreateRemoteEvent("LavaPoolDoorLocked")
+local zombieTotemDestroyedAnnouncementEvent = getOrCreateRemoteEvent("ZombieTotemDestroyedAnnouncement")
+local zombieTotemScoreAward = rs:FindFirstChild("ZombieTotemScoreAward")
+if not zombieTotemScoreAward then
+	zombieTotemScoreAward = Instance.new("BindableEvent")
+	zombieTotemScoreAward.Name = "ZombieTotemScoreAward"
+	zombieTotemScoreAward.Parent = rs
+end
 
 local DataStoreService = game:GetService("DataStoreService")
 local bestEverStore = DataStoreService:GetDataStore("ForestOfHorrorsBestEver")
@@ -517,6 +524,7 @@ local function showScorePopup(model, awards, color)
 	if #awards == 0 then return end
 
 	local root = model:FindFirstChild("HumanoidRootPart", true) or model:FindFirstChild("Head", true)
+		or model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart", true)
 	if not root or not root:IsA("BasePart") then return end
 
 	local lines = {}
@@ -726,6 +734,34 @@ local function updateScoreRecords(player)
 	updateBestEver(player, currentScore, kills[player] or 0, currentSpawn)
 end
 
+local function creditWeaponPoints(player, weaponName, points)
+	local progressAttribute = weaponName == "MonsterGun" and "MonsterGun1Points"
+		or weaponName == "MonsterGun2" and "MonsterGun2Points"
+		or weaponName == "MonsterGun3" and "MonsterGun3Points"
+	if progressAttribute then
+		player:SetAttribute(progressAttribute, (tonumber(player:GetAttribute(progressAttribute)) or 0) + points)
+	end
+end
+
+zombieTotemScoreAward.Event:Connect(function(player, points, generation, weaponName, model, color)
+	points = math.max(0, math.floor(tonumber(points) or 0))
+	if points <= 0 or not player or not player:IsA("Player")
+		or ws:GetAttribute(ROUND_STATE_ATTRIBUTE) ~= "Active"
+		or tonumber(generation) ~= roundGeneration
+	then return end
+	scores[player] = (scores[player] or 0) + points
+	spawnScores[player] = (spawnScores[player] or 0) + points
+	creditWeaponPoints(player, weaponName, points)
+	setLeaderboardStats(player, scores[player], kills[player] or 0)
+	scoreEvent:FireClient(player, scores[player], kills[player] or 0, roundGeneration)
+	if model and model.Parent then
+		showScorePopup(model, {{ userId = player.UserId, points = points }},
+			typeof(color) == "Color3" and color or DEFAULT_SCORE_POPUP_COLOR)
+	end
+	updateScoreRecords(player)
+	broadcastRecords()
+end)
+
 local function clearMultikill(player, state, token)
 	if multikillStates[player] ~= state or state.token ~= token then return end
 	multikillStates[player] = nil
@@ -797,9 +833,10 @@ local function onMonsterKilled(hum, model)
 	local shortName = MonsterManager.getShortName(model)
 	local pluralShortName = MonsterManager.getPluralShortName(model)
 	local eventReported = false
+	local cascadeKill = model:GetAttribute("TotemCascadeKill") == true
 	local fellOffMap = isOutsideMainGround(getMonsterRoot(model))
 
-	if config and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" then
+	if config and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" and not cascadeKill then
 		openSecretShaftIfGuard(model)
 		local awards = MonsterManager.consumeScoreAwards(hum, config.points)
 		local popupColor = MonsterManager.getLastScoreColor(hum, DEFAULT_SCORE_POPUP_COLOR)
@@ -816,12 +853,7 @@ local function onMonsterKilled(hum, model)
 
 			if attacker then
 				for weaponName, weaponPoints in pairs(award.weaponPoints or {}) do
-					if weaponName == "MonsterGun" or weaponName == "MonsterGun2" or weaponName == "MonsterGun3" then
-						local progressAttribute = weaponName == "MonsterGun" and "MonsterGun1Points"
-							or weaponName == "MonsterGun2" and "MonsterGun2Points"
-							or "MonsterGun3Points"
-						attacker:SetAttribute(progressAttribute, (tonumber(attacker:GetAttribute(progressAttribute)) or 0) + weaponPoints)
-					end
+					creditWeaponPoints(attacker, weaponName, weaponPoints)
 				end
 				if awardScore(attacker, award.points, isMajorKill) then
 					monsterKillAnnounced = true

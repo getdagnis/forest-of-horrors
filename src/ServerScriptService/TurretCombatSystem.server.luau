@@ -54,12 +54,7 @@ local function logDiagnostic(player, turret, status, detail)
 end
 
 local function getMonsterModelFromHit(instance)
-	local current = instance
-	while current do
-		if current:IsA("Model") and MonsterManager.getConfig(current) then return current end
-		current = current.Parent
-	end
-	return nil
+	return MonsterManager.getDamageableModelFromHit(instance)
 end
 
 local function getBarrel(turret)
@@ -117,6 +112,11 @@ local function monsterAtAimPoint(aimPoint)
 end
 
 local function hitMonster(player, model)
+	if MonsterManager.isZombieTotem(model) then
+		local dealt = MonsterManager.damageTotem(model, player, Config.Damage, "Turret", Config.ShotColor)
+		if dealt > 0 then MonsterHitFeedback.flash(model, Config.ShotColor, Config.FlashSeconds) end
+		return
+	end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
 	if model.Name == "BombMonster" and model:GetAttribute("BombWarningActive") == true then return end

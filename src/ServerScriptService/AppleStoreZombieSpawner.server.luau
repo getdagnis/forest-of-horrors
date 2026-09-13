@@ -75,12 +75,14 @@ local function spawnZombie(spawnPoint, generation)
 		or tonumber(Workspace:GetAttribute("RoundGeneration")) ~= generation
 		or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
 	if isInNoSpawnWindow() then return end
+	local burst = (tonumber(spawnPoint:GetAttribute("ZombieTotemBurstUntil")) or 0) > Workspace:GetServerTimeNow()
+	if spawnPoint:GetAttribute("ZombieTotemDestroyed") == true then return end
 	local livingCount = countLivingMonsters()
 	local configuredCap = math.max(1, math.floor(tonumber(Workspace:GetAttribute("MonsterMaxCount")) or MAX_LIVING_MONSTERS))
 	local effectiveCap = math.min(MAX_LIVING_MONSTERS, configuredCap)
 	-- The late-round population is intentionally allowed to shrink. Do not
 	-- refill the last twenty canonical hostile contacts from this generator.
-	if livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= effectiveCap then return end
+	if not burst and (livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= effectiveCap) then return end
 
 	local template = findZombieTemplate()
 	if not template then
@@ -93,6 +95,8 @@ local function spawnZombie(spawnPoint, generation)
 	-- round-restart template list or recursively enter the normal respawn pool.
 	zombie:SetAttribute("AppleStoreSpawned", true)
 	zombie:SetAttribute("NoAutoRespawn", true)
+	local owner = spawnPoint:GetAttribute("ZombieTotemSpawnPoint")
+	if typeof(owner) == "string" and owner ~= "" then zombie:SetAttribute("ZombieTotemSpawnOwner", owner) end
 	zombie:PivotTo(getSpawnCFrame(spawnPoint))
 	zombie.Parent = Workspace
 end
@@ -106,14 +110,19 @@ local function startSpawnPoint(spawnPoint)
 		-- Stagger startup so the central monster and zombie owners can register the
 		-- original population before the first generated zombie enters Workspace.
 		local generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
-		task.wait(SPAWN_INTERVAL)
+		local nextSpawnAt = Workspace:GetServerTimeNow() + SPAWN_INTERVAL
 		while spawnPoint.Parent and spawnPoint:IsDescendantOf(Workspace) do
-			if generation and Workspace:GetAttribute("RoundState") == "Active"
+			local now = Workspace:GetServerTimeNow()
+			local burst = (tonumber(spawnPoint:GetAttribute("ZombieTotemBurstUntil")) or 0) > now
+			if burst and nextSpawnAt > now + 3 then nextSpawnAt = now + 3 end
+			if now >= nextSpawnAt and generation and Workspace:GetAttribute("RoundState") == "Active"
 				and tonumber(Workspace:GetAttribute("RoundGeneration")) == generation then
 				spawnZombie(spawnPoint, generation)
+				burst = (tonumber(spawnPoint:GetAttribute("ZombieTotemBurstUntil")) or 0) > Workspace:GetServerTimeNow()
+				nextSpawnAt = Workspace:GetServerTimeNow() + (burst and 3 or SPAWN_INTERVAL)
 			end
 			generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
-			task.wait(SPAWN_INTERVAL)
+			task.wait(0.5)
 		end
 		activeSpawnPoints[spawnPoint] = nil
 	end)

@@ -87,6 +87,42 @@ function MonsterManager.getMonsterHumanoidFromHit(instance)
 	return nil
 end
 
+function MonsterManager.isZombieTotem(model)
+	return model and model:IsA("Model") and typeof(model:GetAttribute("ZombieTotemPole")) == "string"
+		and model:GetAttribute("ZombieTotemPole") ~= ""
+end
+
+function MonsterManager.getDamageableModelFromHit(instance)
+	local current = instance
+	while current do
+		if current:IsA("Model") and (MonsterManager.getConfig(current) or MonsterManager.isZombieTotem(current)) then
+			return current
+		end
+		current = current.Parent
+	end
+	return nil
+end
+
+function MonsterManager.damageTotem(model, player, requestedDamage, weaponName, scoreColor)
+	if not MonsterManager.isZombieTotem(model) or not player or not player:IsA("Player") then return 0 end
+	local health = tonumber(model:GetAttribute("TotemHealth")) or 0
+	if health <= 0 then return 0 end
+	local damage = math.max(0, tonumber(requestedDamage) or 0)
+	local actual = math.min(health, damage)
+	if actual <= 0 then return 0 end
+	model:SetAttribute("TotemLastAttackerId", player.UserId)
+	model:SetAttribute("TotemLastWeapon", weaponName)
+	model:SetAttribute("TotemLastScoreColor", scoreColor)
+	model:SetAttribute("TotemLastDamageAt", workspace:GetServerTimeNow())
+	local totalDamage = (tonumber(model:GetAttribute("TotemDamageDealt")) or 0) + actual
+	local previousUnits = math.floor((tonumber(model:GetAttribute("TotemDamageDealt")) or 0) / 240)
+	local currentUnits = math.floor(totalDamage / 240)
+	model:SetAttribute("TotemDamageDealt", totalDamage)
+	model:SetAttribute("TotemDamageRewardDelta", math.max(0, currentUnits - previousUnits))
+	model:SetAttribute("TotemHealth", health - actual)
+	return actual
+end
+
 -- Points awarded for killing a monster (0 if not a monster)
 function MonsterManager.getPoints(model)
 	local config = MonsterManager.getConfig(model)
