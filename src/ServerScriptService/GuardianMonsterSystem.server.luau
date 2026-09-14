@@ -17,10 +17,10 @@ local GUARDIAN_NAME = "weird monster thing"
 local MONSTER_DAMAGE_COOLDOWN = 0.8
 -- Unbonded WMTs respond when danger enters a player's immediate space, not
 -- after the player's fragile character has already lost health.
-local HELP_CALL_RANGE = 200
-local HELP_CALL_CHANCE = 0.30
-local HELP_RESPONSE_SECONDS = 6
-local HELP_DEFENSE_RADIUS = 30
+local HELP_CALL_RANGE = 300
+local HELP_CALL_CHANCE = 0.50
+local HELP_RESPONSE_SECONDS = 4
+local HELP_DEFENSE_RADIUS = 40
 local HELP_ARRIVAL_DISTANCE = 12
 local HELP_THREAT_RADIUS = 26
 local HELP_THREAT_CHECK_INTERVAL = 1
@@ -28,9 +28,9 @@ local PET_FOLLOW_TARGET_DISTANCE = 32
 local PET_FOLLOW_WALK_SPEED = 10
 local PET_MAX_HEALTH = 800
 local OFFER_DISTANCE = 15
-local OFFER_MIN_PROGRESS = 5
-local OFFER_TIMEOUT = 20
-local OFFER_RESPONSE_SECONDS = 15
+local OFFER_MIN_PROGRESS = 4
+local OFFER_TIMEOUT = 15
+local OFFER_RESPONSE_SECONDS = 12
 -- Follow MonsterRadar's close-range behaviour, but never let distant search
 -- tiers beyond 70 studs prevent the deliberately discoverable pet offer.
 local OFFER_RADAR_CLOSE_RANGE = 50
@@ -44,7 +44,7 @@ local PET_COMBAT_ROAR_COOLDOWN = 4.5
 local PET_AMBIENT_ROAR_SECONDS = 60
 local GANG_JOIN_RADIUS = 75
 local GANG_JOIN_CHANCE = 0.70
-local GANG_DURATION = 120
+local GANG_DURATION = 360
 local GANG_COOLDOWN = 180
 local GANG_INVITATION_RETRY_SECONDS = 30
 local GANG_INVITATION_INTERVAL = 4
@@ -52,7 +52,7 @@ local OFFER_PROMPT_DELAY = 2
 local SHIELD_DURATION = 30
 local SHIELD_COOLDOWN = 45
 local UPDATE_INTERVAL = 0.25
-local GUARDIAN_CORPSE_DISPLAY_TIME = 60 -- battlefield remains; guardians do not respawn here
+local GUARDIAN_CORPSE_DISPLAY_TIME = 30 -- battlefield remains; guardians do not respawn here
 -- Guardians are resilient living world actors: after escaping combat, they
 -- recover a Bomb hit over roughly forty seconds rather than staying crippled.
 local GUARDIAN_REGEN_DELAY = 8
@@ -70,15 +70,19 @@ local GUARDIAN_HOSTILE_ATTACK_RANGE = 6
 local GUARDIAN_HOSTILE_ATTACK_COOLDOWN = 1
 
 -- A pet is earned through one simple, readable action: keep the weapon ray on
--- an unharmed WMT through a brief silent consideration, then seven visible
+-- a calm WMT through a brief silent consideration, then seven visible
 -- seconds. Do not add a battle/proximity prerequisite; those hidden gates made
 -- the offer effectively impossible to discover.
 local TRUST_AIM_SECONDS = 7
+-- Nearby danger may interrupt only the first five visible talking seconds.
+local TRUST_DANGER_CHECK_SECONDS = 5
 -- The guardian first considers the player in silence. Only after this brief
 -- beat does the visible ten-second conversation begin.
 local TRUST_CONVERSATION_DELAY_SECONDS = 3
 -- Wandering WMT movement must not erase almost-complete deliberate aim.
 local TRUST_AIM_GRACE_SECONDS = 1.5
+local TRUST_ALLOWED_HITS_PER_MINUTE = 2
+local TRUST_HIT_WINDOW_SECONDS = 60
 local TRUST_RAY_RANGE = 400
 local TRUST_AIM_WEAPONS = {
 	MonsterGun = true,
@@ -87,10 +91,10 @@ local TRUST_AIM_WEAPONS = {
 	MonsterBlaster = true,
 }
 
-local PET_BODY_COLOR = Color3.fromRGB(44, 69, 67) -- Earth green
+local PET_BODY_COLOR = Color3.fromRGB(73, 86, 62) -- Earth green
 local GUARDIAN_COLOR = Color3.fromRGB(220, 240, 210)
 local PET_OUTLINE_COLOR = GUARDIAN_COLOR
-local PET_OUTLINE_TRANSPARENCY = 0.35
+local PET_OUTLINE_TRANSPARENCY = 0.5
 
 local function getOrCreateRemoteEvent(name)
 	local event = ReplicatedStorage:FindFirstChild(name)
@@ -113,10 +117,16 @@ local petLostEvent = getOrCreateRemoteEvent("WMTGuardianPetLost")
 -- the decision to offer a bond.
 local conversationEvent = getOrCreateRemoteEvent("WMTGuardianConversation")
 local statusEvent = getOrCreateRemoteEvent("WMTGuardianStatus")
+local petCommandEvent = getOrCreateRemoteEvent("WMTGuardianPetCommand")
+local petCommandResultEvent = getOrCreateRemoteEvent("WMTGuardianPetCommandResult")
+local PET_TALK_DISTANCE = 6
+local OFFER_STALL_SECONDS = 3
 
 local guardians = {}
 local guardianKillTimes = {}
 local playerThreatActive = {}
+local conversationSequence = 0
+local commandTimes = {}
 
 local function isRoundActive()
 	return Workspace:GetAttribute("RoundState") == "Active"
@@ -127,6 +137,7 @@ local function isCurrentGeneration(generation)
 end
 
 local function getLivingPlayerRoot(player)
+	if player and player:GetAttribute("EscapedNightmare") == true then return nil end
 	local character = player and player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -138,7 +149,7 @@ local function isGuardian(model)
 end
 
 local function getRoot(model)
-	local root = model:FindFirstChild("HumanoidRootPart", true)
+	local root = model and model:FindFirstChild("HumanoidRootPart", true)
 	return root and root:IsA("BasePart") and root or nil
 end
 
@@ -317,7 +328,8 @@ local function damageMonster(state, targetModel, amount, cooldown)
 				reportOwner,
 				state.model,
 				"Kill",
-				"your guardian pet killed " .. MonsterManager.getShortName(targetModel)
+				"your guardian pet killed " .. MonsterManager.getShortName(targetModel),
+				Workspace:GetAttribute("RoundGeneration")
 			)
 		end
 	end
@@ -343,8 +355,8 @@ end
 -- Share one bounded perception snapshot across pets, gangs and the existing trust checks.
 local monsterSnapshot = {}
 local nextMonsterSnapshotAt = 0
-local function nearbyMonsters(position, radius, guardian)
-	local nearby = {}
+local function monsterCandidates(guardian)
+	local results = {}
 	local now = os.clock()
 	if now >= nextMonsterSnapshotAt then
 		nextMonsterSnapshotAt = now + 0.5
@@ -356,7 +368,17 @@ local function nearbyMonsters(position, radius, guardian)
 		end
 	end
 	for _, candidate in ipairs(monsterSnapshot) do
-		if candidate.Parent and isEligibleMonster(candidate, guardian) then
+		if candidate.Parent and isEligibleMonster(candidate, guardian) and getRoot(candidate) then
+			table.insert(results, candidate)
+		end
+	end
+	return results
+end
+
+local function nearbyMonsters(position, radius, guardian)
+	local nearby = {}
+	for _, candidate in ipairs(monsterCandidates(guardian)) do
+		if candidate.Parent then
 			local root = getRoot(candidate)
 			local distance = root and (root.Position - position).Magnitude or math.huge
 			if distance <= radius then
@@ -367,6 +389,17 @@ local function nearbyMonsters(position, radius, guardian)
 	table.sort(nearby, function(a, b) return a.distance < b.distance end)
 	local results = {}
 	for _, entry in ipairs(nearby) do table.insert(results, entry.model) end
+	return results
+end
+
+local function huntCandidates(guardian)
+	local results = {}
+	for _, candidate in ipairs(monsterCandidates(guardian)) do
+		if candidate:GetAttribute("UndergroundMonster") ~= true
+			or Workspace:GetAttribute("UndergroundPhaseActive") == true then
+			table.insert(results, candidate)
+		end
+	end
 	return results
 end
 
@@ -497,14 +530,6 @@ local function isOfferAreaPeaceful(playerRoot, guardian)
 	return not hasHostileMonsterNearby(playerRoot.Position, radarRange, guardian)
 end
 
-local function ownerIsAlive(state)
-	local player = state.owner
-	local character = player and player.Character
-	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-	local root = character and character:FindFirstChild("HumanoidRootPart")
-	return player and character and humanoid and humanoid.Health > 0 and root and root or nil
-end
-
 local function setShield(state, enabled)
 	local character = state.owner and state.owner.Character
 	if not character then return end
@@ -521,6 +546,35 @@ local function setShield(state, enabled)
 	end
 end
 
+local function getTrustRecord(state, player)
+	local record = state.trust[player]
+	if not record then
+		record = { aimSince = nil, lastAimAt = 0, talking = false, blockedUntilAimBreak = false }
+		state.trust[player] = record
+	end
+	return record
+end
+
+local function sendConversation(state, player, action, value, keepVisible, persistent)
+	local record = state.trust[player]
+	if not player.Parent or not record or not record.attemptId then return end
+	conversationEvent:FireClient(player, action, state.model, value, keepVisible == true,
+		record.generation, record.attemptId, persistent == true)
+end
+
+local function stopConversation(state, player)
+	local record = state.trust[player]
+	if record and record.talking then
+		record.talking = false
+		sendConversation(state, player, "stop")
+	end
+end
+
+local function answerConversation(state, player, message, persistent)
+	stopConversation(state, player)
+	sendConversation(state, player, "answer", message, false, persistent)
+end
+
 local function clearOffer(state)
 	if state.offerConnection then
 		state.offerConnection:Disconnect()
@@ -531,15 +585,19 @@ local function clearOffer(state)
 	state.offerReady = false
 	state.offerRoarAt = nil
 	state.offerPromptAt = nil
+	state.offerAttemptId = nil
+	state.offerGeneration = nil
+	state.offerProgressPosition = nil
+	state.offerStalled = false
 	state.model:SetAttribute("WMTOfferReady", false)
 end
 
 local function cancelOffer(state, reason)
 	local player = state.offerPlayer
-	local visible = state.offerReady
+	local attemptId, generation = state.offerAttemptId, state.offerGeneration
 	clearOffer(state)
-	if visible and player and player.Parent then
-		rescueResultEvent:FireClient(player, state.model, false, reason or "the offer ended")
+	if player and player.Parent then
+		rescueResultEvent:FireClient(player, state.model, false, reason or "the offer ended", generation, attemptId)
 	end
 end
 
@@ -552,6 +610,7 @@ local function restoreUnbonded(state)
 	setShield(state, false)
 	setPetAppearance(state, false)
 	state.owner = nil
+	state.petBehavior = "Follow"
 	state.mode = "unbonded"
 	state.humanoid.WalkSpeed = state.unbondedWalkSpeed
 	state.shieldEndsAt = 0
@@ -561,6 +620,7 @@ local function restoreUnbonded(state)
 	state.hostilePlayer = nil
 	state.model:SetAttribute("WMTGuardianOwnerUserId", nil)
 	state.model:SetAttribute("WMTGuardianPet", false)
+	state.model:SetAttribute("WMTGuardianBehavior", nil)
 	state.model:SetAttribute("WMTGuardianHostileUserId", nil)
 end
 
@@ -570,7 +630,10 @@ local function makeHostile(state, player)
 
 	-- A nearby pet witnesses the guardian killings too: it abandons its owner
 	-- before joining the local retaliation, so it cannot continue shielding them.
-	clearOffer(state)
+	if state.offerPlayer then cancelOffer(state, "you killed its kind") end
+	for talkingPlayer, record in pairs(state.trust) do
+		if record.talking then answerConversation(state, talkingPlayer, "you killed its kind") end
+	end
 	if state.ownerCharacterConnection then
 		state.ownerCharacterConnection:Disconnect()
 		state.ownerCharacterConnection = nil
@@ -585,6 +648,7 @@ local function makeHostile(state, player)
 	state.humanoid.WalkSpeed = GUARDIAN_HOSTILE_WALK_SPEED
 	state.model:SetAttribute("WMTGuardianOwnerUserId", nil)
 	state.model:SetAttribute("WMTGuardianPet", false)
+	state.model:SetAttribute("WMTGuardianBehavior", nil)
 	state.model:SetAttribute("WMTGuardianHostileUserId", player.UserId)
 end
 
@@ -626,18 +690,20 @@ local function recordGuardianKill(state)
 end
 
 local function acceptOffer(state, player)
-	if state.mode ~= "offering" then return false, "offer is no longer active" end
-	if state.offerPlayer ~= player then return false, "offer belongs to another player" end
-	local root = ownerIsAlive({ owner = player })
+	if state.mode ~= "offering" then return false, "offer ended" end
+	if state.offerPlayer ~= player then return false, "it chose someone else" end
+	local root = getLivingPlayerRoot(player)
 	local guardianRoot = getRoot(state.model)
-	if not root then return false, "player is no longer alive" end
-	if not guardianRoot or state.humanoid.Health <= 0 then return false, "guardian is no longer alive" end
-	if not state.offerReady then return false, "offer prompt is not ready" end
-	if not isOfferAreaPeaceful(root, state.model) then return false, "hostile monster entered the offer area" end
+	if not root then return false, "come back later" end
+	if not guardianRoot or state.humanoid.Health <= 0 then return false, "guardian is gone" end
+	if not state.offerReady then return false, "it must be closer" end
+	if os.clock() >= state.offerDeadline then return false, "offer expired" end
+	-- An offered bond remains valid when monsters arrive nearby.
 
 	clearOffer(state)
 	state.owner = player
 	state.mode = "pet"
+	state.petBehavior = "Follow"
 	-- This is assembly preparation, not repositioning: the guardian still moves
 	-- exclusively through its Humanoid.
 	preparePetMovement(state.model, state.humanoid, guardianRoot)
@@ -663,6 +729,7 @@ local function acceptOffer(state, player)
 	end)
 	state.model:SetAttribute("WMTGuardianOwnerUserId", player.UserId)
 	state.model:SetAttribute("WMTGuardianPet", true)
+	state.model:SetAttribute("WMTGuardianBehavior", "Follow")
 	return true
 end
 
@@ -675,6 +742,9 @@ local function presentOffer(state, player)
 	state.offerReady = false
 	state.offerRoarAt = nil
 	state.offerPromptAt = nil
+	local record = getTrustRecord(state, player)
+	state.offerAttemptId = record.attemptId
+	state.offerGeneration = record.generation
 	local playerRoot = getLivingPlayerRoot(player)
 	local guardianRoot = getRoot(state.model)
 	state.offerStartDistance = playerRoot and guardianRoot and (guardianRoot.Position - playerRoot.Position).Magnitude or OFFER_DISTANCE
@@ -682,9 +752,14 @@ local function presentOffer(state, player)
 	-- once it has made at least five honest studs of progress if terrain blocks a
 	-- closer approach.
 	state.offerArrivalDistance = math.max(OFFER_DISTANCE, state.offerStartDistance - OFFER_MIN_PROGRESS)
+	state.offerProgressPosition = guardianRoot and guardianRoot.Position
+	state.offerProgressAt = os.clock()
+	state.offerStalled = false
+	answerConversation(state, player, "it wants to be your pet...", true)
 	state.model:SetAttribute("WMTOfferReady", false)
-	state.offerConnection = rescueResponseEvent.OnServerEvent:Connect(function(sender, guardian, accepted)
-		if not isRoundActive() then return end
+	state.offerConnection = rescueResponseEvent.OnServerEvent:Connect(function(sender, guardian, accepted, generation, attemptId)
+		if not isRoundActive() or not isCurrentGeneration(generation)
+			or generation ~= state.offerGeneration or attemptId ~= state.offerAttemptId then return end
 		if sender ~= player or guardian ~= state.model or typeof(accepted) ~= "boolean" then return end
 		if accepted then
 			local succeeded, reason = acceptOffer(state, sender)
@@ -693,10 +768,18 @@ local function presentOffer(state, player)
 			else
 				warn(string.format("[GuardianPet] accept rejected for %s: %s", sender.Name, reason or "unknown reason"))
 			end
-			rescueResultEvent:FireClient(sender, state.model, succeeded, reason)
+			if not succeeded then
+				clearOffer(state)
+				state.mode = "unbonded"
+				state.offerUsed = false
+				record.aimSince = nil
+				record.blockedUntilAimBreak = true
+			end
+			rescueResultEvent:FireClient(sender, state.model, succeeded, reason, generation, attemptId)
 		else
 			clearOffer(state)
 			state.mode = "declined"
+			rescueResultEvent:FireClient(sender, state.model, false, "offer refused", generation, attemptId)
 		end
 	end)
 end
@@ -722,43 +805,34 @@ local function connectPart(state, part)
 	end)
 end
 
-local function getTrustRecord(state, player)
-	local record = state.trust[player]
-	if not record then
-		record = { aimSince = nil, lastAimAt = 0, talking = false, blockedUntilAimBreak = false }
-		state.trust[player] = record
+local function hasRecentPlayerAggression(state, player, now)
+	local hits = state.playerHitTimes[player]
+	if not hits then return false end
+	for index = #hits, 1, -1 do
+		if now - hits[index] >= TRUST_HIT_WINDOW_SECONDS then table.remove(hits, index) end
 	end
-	return record
-end
-
-local function stopConversation(state, player)
-	local record = state.trust[player]
-	if record and record.talking then
-		record.talking = false
-		conversationEvent:FireClient(player, "stop", state.model)
-	end
-end
-
-local function answerConversation(state, player, message, keepConversationVisible)
-	if not keepConversationVisible then stopConversation(state, player) end
-	conversationEvent:FireClient(player, "answer", state.model, message, keepConversationVisible == true)
+	if #hits == 0 then state.playerHitTimes[player] = nil end
+	return #hits > TRUST_ALLOWED_HITS_PER_MINUTE
 end
 
 local function resetTrustAfterPlayerHit(state, player)
-	-- The current offer is a promise of trust, so any player damage before the
-	-- prompt appears cancels that attempt. Bomb/NPC damage is filtered by the
-	-- caller and never reaches this function.
-	stopConversation(state, player)
-	state.trust[player] = nil
-	state.hurtByPlayer = state.hurtByPlayer or {}
-	-- A deliberate player wound is permanent for this guardian's remaining life.
-	-- NPC and bomb damage never reaches this branch.
-	state.hurtByPlayer[player] = true
-	if state.mode == "offering" and state.offerPlayer == player and not state.offerReady then
-		clearOffer(state)
+	-- Two incidental hits per rolling minute are tolerated, including while
+	-- talking/offering. Player damage never creates a permanent grievance.
+	-- Bomb/NPC damage is filtered by the caller before entering this function.
+	local now = os.clock()
+	hasRecentPlayerAggression(state, player, now)
+	local hits = state.playerHitTimes[player] or {}
+	state.playerHitTimes[player] = hits
+	table.insert(hits, now)
+	if #hits <= TRUST_ALLOWED_HITS_PER_MINUTE then return end
+	if state.offerPlayer == player then
+		cancelOffer(state, "you hurt it before")
 		state.mode = "unbonded"
 		state.offerUsed = false
+	elseif state.trust[player] and state.trust[player].talking then
+		answerConversation(state, player, "you hurt it before")
 	end
+	state.trust[player] = nil
 end
 
 local function updateTrustRitual(state, now)
@@ -770,7 +844,7 @@ local function updateTrustRitual(state, now)
 		local record = getTrustRecord(state, player)
 		local playerRoot = getLivingPlayerRoot(player)
 		if not playerRoot then
-			stopConversation(state, player)
+			if record.talking then answerConversation(state, player, "come back later") end
 			record.aimSince = nil
 			record.blockedUntilAimBreak = false
 			continue
@@ -778,7 +852,13 @@ local function updateTrustRitual(state, now)
 
 		if now - record.lastAimAt <= TRUST_AIM_GRACE_SECONDS then
 			if record.blockedUntilAimBreak then
-				continue
+				if record.aggressionBlocked and not hasRecentPlayerAggression(state, player, now) then
+					record.blockedUntilAimBreak = false
+					record.aggressionBlocked = false
+					record.aimSince = now
+				else
+					continue
+				end
 			end
 			record.aimSince = record.aimSince or now
 			local elapsed = now - record.aimSince
@@ -788,28 +868,37 @@ local function updateTrustRitual(state, now)
 			if elapsed < TRUST_CONVERSATION_DELAY_SECONDS then
 				continue
 			elseif not record.talking then
+				conversationSequence += 1
+				record.attemptId = conversationSequence
+				record.generation = Workspace:GetAttribute("RoundGeneration")
 				record.talking = true
-				conversationEvent:FireClient(player, "start", state.model, TRUST_AIM_SECONDS)
+				sendConversation(state, player, "start", TRUST_AIM_SECONDS)
 			end
 
-			if not isOfferAreaPeaceful(playerRoot, state.model) then
+			local talkingElapsed = elapsed - TRUST_CONVERSATION_DELAY_SECONDS
+			if talkingElapsed < TRUST_DANGER_CHECK_SECONDS
+				and not isOfferAreaPeaceful(playerRoot, state.model) then
 				record.blockedUntilAimBreak = true
-				answerConversation(state, player, "they are still near", true)
-				task.delay(1.25, function()
-					if record.blockedUntilAimBreak then stopConversation(state, player) end
-				end)
+				answerConversation(state, player, "they are still near")
 			elseif elapsed >= TRUST_CONVERSATION_DELAY_SECONDS + TRUST_AIM_SECONDS then
-				if state.hurtByPlayer and state.hurtByPlayer[player] then
+				if hasRecentPlayerAggression(state, player, now) then
 					record.blockedUntilAimBreak = true
+					record.aggressionBlocked = true
 					answerConversation(state, player, "you hurt me before")
 				else
-					stopConversation(state, player)
 					presentOffer(state, player)
+					-- Another player's simultaneous ritual cannot silently finish.
+					for other, otherRecord in pairs(state.trust) do
+						if other ~= player and otherRecord.talking then
+							answerConversation(state, other, "no")
+							otherRecord.aimSince = nil
+						end
+					end
 				end
 				return
 			end
 		else
-			stopConversation(state, player)
+			if record.talking then answerConversation(state, player, "this was not finished") end
 			record.aimSince = nil
 			record.blockedUntilAimBreak = false
 		end
@@ -851,16 +940,99 @@ trustAimEvent.OnServerEvent:Connect(function(player, guardian, tool, originOffse
 end)
 
 local tacticsAPI = {
-	root = getRoot, humanoid = getLivingMonsterHumanoid, ownerRoot = getLivingPlayerRoot,
+	-- Tactics must also observe a just-dead Humanoid to finish a locked hunt
+	-- and capture its clear-area centre; eligibility still rejects dead targets.
+	root = getRoot, humanoid = MonsterManager.getMonsterHumanoid, ownerRoot = getLivingPlayerRoot,
 	config = MonsterManager.getConfig, eligible = isEligibleMonster, nearby = nearbyMonsters, damage = damageMonster,
-	invite = inviteNearbyGuardians, release = releaseGangMember, status = statusEvent,
+	candidates = huntCandidates,
+	invite = inviteNearbyGuardians, release = releaseGangMember,
+	status = { FireClient = function(_, player, model, label, message)
+		statusEvent:FireClient(player, model, label, message, Workspace:GetAttribute("RoundGeneration"))
+	end },
 }
+
+petCommandEvent.OnServerEvent:Connect(function(player, guardian, command, generation, requestId)
+	if not isRoundActive() or not isCurrentGeneration(generation) then return end
+	if typeof(requestId) ~= "number" or requestId < 1 or requestId > 1e9 or requestId % 1 ~= 0 then return end
+	if command ~= "Open" and command ~= "Follow" and command ~= "Hunt" then return end
+	local now = os.clock()
+	if now - (commandTimes[player] or -math.huge) < 0.15 then
+		petCommandResultEvent:FireClient(player, guardian, false, "try again later",
+			nil, generation, requestId)
+		return
+	end
+	commandTimes[player] = now
+	local state = guardians[guardian]
+	local reason
+	local playerRoot = getLivingPlayerRoot(player)
+	local guardianRoot = state and getRoot(state.model)
+	-- Imported guardians are much taller than players. TALK is measured at a
+	-- reachable point three studs above their feet, not the elevated rig root.
+	local talkPosition = guardianRoot and guardianRoot.Position
+		- guardianRoot.CFrame.UpVector * (state.humanoid.HipHeight + guardianRoot.Size.Y / 2 - 3)
+	if not state or state.mode ~= "pet" or state.owner ~= player then
+		reason = "this is not your guardian pet"
+	elseif not guardianRoot or not state.model:IsDescendantOf(Workspace) or state.humanoid.Health <= 0 then
+		reason = "it must go"
+	elseif not playerRoot then
+		reason = "try again later"
+	elseif (playerRoot.Position - talkPosition).Magnitude > PET_TALK_DISTANCE then
+		reason = "it must be closer"
+	else
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = { player.Character, state.model }
+		params.RespectCanCollide = true
+		local head = player.Character:FindFirstChild("Head")
+		local origin = head and head:IsA("BasePart") and head.Position or playerRoot.Position
+		if Workspace:Raycast(origin, talkPosition - origin, params) then
+			reason = "it must be closer"
+		end
+	end
+	if not reason and command ~= "Open" then
+		Tactics.setBehavior(state, command)
+		state.model:SetAttribute("WMTGuardianBehavior", command)
+	end
+	petCommandResultEvent:FireClient(player, guardian, reason == nil, reason,
+		state and state.petBehavior or "Follow", generation, requestId)
+end)
+
+local function stopRoundActivity()
+	if isRoundActive() then return end
+	for _, state in pairs(guardians) do
+		if state.offerPlayer then
+			cancelOffer(state, "the round has ended")
+			state.mode = "unbonded"
+			state.offerUsed = false
+		end
+		for player, record in pairs(state.trust) do
+			if record.talking then answerConversation(state, player, "the round has ended") end
+			record.aimSince = nil
+			record.lastAimAt = -math.huge
+		end
+		resetPetPath(state)
+		setShield(state, false)
+	end
+end
+Workspace:GetAttributeChangedSignal("RoundState"):Connect(stopRoundActivity)
+Workspace:GetAttributeChangedSignal("RoundGeneration"):Connect(function()
+	for _, state in pairs(guardians) do
+		if state.offerPlayer then
+			cancelOffer(state, "the round has changed")
+			state.mode = "unbonded"
+			state.offerUsed = false
+		end
+		for player, record in pairs(state.trust) do
+			if record.talking then answerConversation(state, player, "the round has changed") end
+		end
+		table.clear(state.trust)
+		resetPetPath(state)
+	end
+end)
 
 local function updateGuardian(state)
 	while state.model.Parent and state.humanoid.Parent and state.humanoid.Health > 0 do
 		if not isRoundActive() then
-			-- Stop only this system's movement intent; never move a living guardian
-			-- to satisfy lifecycle state, preserving its physical world position.
 			state.humanoid:Move(Vector3.zero)
 			task.wait(UPDATE_INTERVAL)
 			continue
@@ -895,27 +1067,52 @@ local function updateGuardian(state)
 			Tactics.step(state, now, tacticsAPI)
 		elseif state.mode == "offering" then
 			local guardianRoot = getRoot(state.model)
-			local playerRoot = ownerIsAlive({ owner = state.offerPlayer })
+			local playerRoot = getLivingPlayerRoot(state.offerPlayer)
 			local record = state.offerPlayer and state.trust[state.offerPlayer]
 			-- The exact WMT contour must remain selected through its approach and
 			-- roar. Once the prompt is visible, the player must be free to move the
 			-- pointer onto Accept without that UI action cancelling the offer.
 			local contourSelected = state.offerReady
 				or (record and now - record.lastAimAt <= TRUST_AIM_GRACE_SECONDS)
-			local peaceful = guardianRoot and playerRoot
-				and isOfferAreaPeaceful(playerRoot, state.model)
 			if not guardianRoot or not playerRoot or now >= state.offerDeadline
-				or not contourSelected or not peaceful
+				or not contourSelected
 			then
-				cancelOffer(state, "the guardian changed its mind")
-				-- Losing this exact contour or having danger enter the current battle
-				-- radar cancels the attempt. The player can deliberately aim again.
+				local reason
+				if not guardianRoot then
+					reason = "i must go now"
+				elseif not playerRoot then
+					reason = "not finished now"
+				elseif now >= state.offerDeadline then
+					reason = state.offerReady and "forget it"
+						or "it must be closer"
+				else
+					reason = "not finished now"
+				end
+				cancelOffer(state, reason)
+				-- Losing this exact contour before the prompt or an unavailable player
+				-- cancels the attempt. Nearby monsters never revoke an offered bond.
 				state.mode = "unbonded"
 				state.offerUsed = false
-				if record then record.aimSince = nil end
+				if record then
+					record.aimSince = nil
+					record.blockedUntilAimBreak = true
+				end
 			else
 				local distance = (guardianRoot.Position - playerRoot.Position).Magnitude
 				if not state.offerRoarAt and distance > (state.offerArrivalDistance or OFFER_DISTANCE) then
+					local moved = state.offerProgressPosition
+						and (guardianRoot.Position - state.offerProgressPosition).Magnitude >= 2
+					if moved then
+						state.offerProgressPosition = guardianRoot.Position
+						state.offerProgressAt = now
+						if state.offerStalled then
+							answerConversation(state, state.offerPlayer, "it wants to be your pet...", true)
+							state.offerStalled = false
+						end
+					elseif not state.offerStalled and now - state.offerProgressAt >= OFFER_STALL_SECONDS then
+						answerConversation(state, state.offerPlayer, "it must be closer", true)
+						state.offerStalled = true
+					end
 					state.humanoid:MoveTo(getPetStandOffDestination(playerRoot, guardianRoot):Lerp(playerRoot.Position, 0.53))
 				elseif not state.offerRoarAt then
 					state.offerRoarAt = now
@@ -928,7 +1125,8 @@ local function updateGuardian(state)
 					state.offerDeadline = now + OFFER_RESPONSE_SECONDS
 					state.model:SetAttribute("WMTOfferReady", true)
 					warn(string.format("[GuardianPet] offer ready: %s <- %s", state.offerPlayer.Name, state.model:GetFullName()))
-					rescueEvent:FireClient(state.offerPlayer, state.model, "It wants to be your pet.")
+					rescueEvent:FireClient(state.offerPlayer, state.model, "it wants to be your pet...",
+						state.offerGeneration, state.offerAttemptId)
 				end
 			end
 		elseif state.mode == "pet" then
@@ -981,7 +1179,10 @@ local function updateGuardian(state)
 
 	resetPetPath(state)
 	if state.ownerCharacterConnection then state.ownerCharacterConnection:Disconnect() end
-	clearOffer(state)
+	if state.offerPlayer then cancelOffer(state, "guardian must leave") end
+	for player, record in pairs(state.trust) do
+		if record.talking then answerConversation(state, player, "guardian must leave") end
+	end
 	setShield(state, false)
 	guardians[state.model] = nil
 end
@@ -1002,10 +1203,11 @@ local function setupGuardian(model)
 		model = model,
 		humanoid = humanoid,
 		mode = "unbonded",
+		petBehavior = "Follow",
 		parts = {},
 		lastMonsterHit = {},
 		trust = {},
-		hurtByPlayer = {},
+		playerHitTimes = {},
 		originalPartColors = {},
 		helpPlayer = nil,
 		helpUntil = 0,
@@ -1072,11 +1274,15 @@ local function setupGuardian(model)
 	end)
 	state.lastHealth = humanoid.Health
 	humanoid.Died:Connect(function()
+		if state.offerPlayer then cancelOffer(state, "guardian must leave") end
+		for player, record in pairs(state.trust) do
+			if record.talking then answerConversation(state, player, "guardian must leave") end
+		end
 		resetPetPath(state)
 		local owner = state.owner
 		if state.mode == "pet" and owner and owner.Parent then
 			playGuardianSound(model, "GuardianDeath", "GuardianRoar")
-			petLostEvent:FireClient(owner)
+			petLostEvent:FireClient(owner, model, Workspace:GetAttribute("RoundGeneration"))
 		end
 		recordGuardianKill(state)
 		-- Guardians are intentionally outside MonsterSystem's respawn ledger.
@@ -1106,10 +1312,12 @@ Workspace.DescendantAdded:Connect(function(item)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
+	commandTimes[player] = nil
 	guardianKillTimes[player] = nil
 	playerThreatActive[player] = nil
 	for _, state in pairs(guardians) do
 		state.trust[player] = nil
+		state.playerHitTimes[player] = nil
 	end
 end)
 
@@ -1137,11 +1345,6 @@ local function monitorPlayerThreat(player, character)
 	-- every second and turn every WMT into a guaranteed bodyguard.
 	task.spawn(function()
 		while player.Parent and player.Character == character do
-			if not isRoundActive() then
-				playerThreatActive[player] = nil
-				task.wait(HELP_THREAT_CHECK_INTERVAL)
-				continue
-			end
 			local playerRoot = getLivingPlayerRoot(player)
 			local threatened = playerRoot
 				and hasHostileMonsterNearby(playerRoot.Position, HELP_THREAT_RADIUS, nil)

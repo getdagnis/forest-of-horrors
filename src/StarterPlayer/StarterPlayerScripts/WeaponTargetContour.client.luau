@@ -81,7 +81,7 @@ local function reportGuardianTrustAim(weapon, target)
 	lastTrustAimTarget = target
 	-- The server re-casts this exact camera ray and owns every trust timer. This
 	-- pulse exists only while the same direct, visible weapon contour is shown.
-	trustAimEvent:FireServer(target, weapon, ray.Origin - root.Position, ray.Direction.Unit, currentGeneration())
+	trustAimEvent:FireServer(target, weapon, ray.Origin - root.Position, ray.Direction.Unit, workspace:GetAttribute("RoundGeneration"))
 end
 
 local function getEquippedWeapon()

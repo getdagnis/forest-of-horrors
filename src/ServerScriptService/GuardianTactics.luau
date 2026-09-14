@@ -11,12 +11,15 @@ Tactics.Config = {
 	OwnerRetrySeconds = 3, GangLimit = 3,
 	StuckDistance = 70, StuckSeconds = 30, StuckMovement = 4,
 	NoFollowRadius = 4,
+	HuntClearRadius = 70, HuntProgressSeconds = 30, HuntProgressDistance = 4,
+	HuntRecoverySeconds = 6,
 }
 local C = Tactics.Config
 local phrases = {
 	Follow = "I'm with you.", Cover = "I'm covering you.", Engage = "Protecting you.",
 	Recruit = "Gathering help.", Regroup = "Coming back to you.",
 	HoldAndHunt = "I'll wait for you.", Recover = "Finding another way.",
+	Hunt = "Going hunting.", Clear = "Clearing this area.", HuntFailed = "I couldn't reach it.",
 }
 
 local function flat(v) return Vector3.new(v.X, 0, v.Z) end
@@ -43,6 +46,7 @@ Tactics.announce = announce
 function Tactics.reset(state)
 	Navigation.stop(state)
 	state.combatTarget = nil
+	state.targetPriority = nil
 	state.failedTargets = {}
 	state.ownerRetryAt = 0
 	state.holdOrigin = nil
@@ -51,8 +55,27 @@ function Tactics.reset(state)
 	state.spokenState = nil
 	state.escortMoving = false
 	state.failedOwnerPosition = nil
+	state.huntSweepCenter = nil
+	state.huntPhase = nil
+	state.huntTargetLastPosition = nil
+	state.huntProgressAnchor = nil
+	state.huntLastProgressAt = nil
+	state.huntRecoveryUntil = nil
+	state.huntRecoveryAttempted = nil
+	state.huntMeleeSince = nil
 	state.model:SetAttribute("GuardianTarget", nil)
 	state.model:SetAttribute("GuardianState", nil)
+end
+
+-- Behavior is deliberately separate from the pet/gang lifecycle. Resetting a
+-- path after an owner respawns must never silently change the owner's choice.
+function Tactics.setBehavior(state, behavior)
+	if behavior ~= "Follow" and behavior ~= "Hunt" then return false end
+	if state.petBehavior == behavior then return true end
+	Tactics.reset(state)
+	state.petBehavior = behavior
+	state.model:SetAttribute("WMTGuardianBehavior", behavior)
+	return true
 end
 
 local function dropTarget(state, now, blocked)
@@ -175,6 +198,184 @@ local function noFollowZone(instance)
 		end
 	end
 	return nil
+end
+
+local function targetIsLiveAndAllowed(state, target, api)
+	local targetRoot = target and api.root(target)
+	return targetRoot and api.eligible(target, state.model) and not noFollowZone(targetRoot), targetRoot
+end
+
+-- This selection is intentionally made only at the beginning of a hunt leg.
+-- Do not recompute it while a target lives: the owner moving is not a reason
+-- to abandon a monster that the guardian has already committed to hunting.
+local function chooseHuntTarget(state, root, ownerRoot, now, api, sweepCenter)
+	local best, bestScore
+	for _, target in ipairs(api.candidates(state.model)) do
+		local targetRoot = api.root(target)
+		if targetRoot and api.eligible(target, state.model) and not avoidFailed(state, target, now)
+			and not noFollowZone(targetRoot)
+		then
+			local score
+			if sweepCenter then
+				if distance(targetRoot.Position, sweepCenter) <= C.HuntClearRadius then
+					score = distance(targetRoot.Position, root.Position)
+				end
+			else
+				score = distance(targetRoot.Position, ownerRoot.Position)
+					- distance(targetRoot.Position, root.Position) * 0.3
+			end
+			if score and (not best or (sweepCenter and score < bestScore) or (not sweepCenter and score > bestScore)) then
+				best, bestScore = target, score
+			end
+		end
+	end
+	return best
+end
+
+local function clearHuntTransient(state)
+	state.combatTarget = nil
+	state.targetPriority = nil
+	state.huntTargetLastPosition = nil
+	state.huntProgressAnchor = nil
+	state.huntLastProgressAt = nil
+	state.huntRecoveryUntil = nil
+	state.huntRecoveryAttempted = nil
+	state.huntMeleeSince = nil
+	state.model:SetAttribute("GuardianTarget", nil)
+	Navigation.stop(state)
+end
+
+local function finishHuntTarget(state)
+	local center = state.huntTargetLastPosition
+	local wasSweeping = state.huntPhase == "sweep"
+	clearHuntTransient(state)
+	if wasSweeping then
+		state.huntPhase = "sweep"
+	elseif center then
+		state.huntSweepCenter = center
+		state.huntPhase = "sweep"
+	end
+end
+
+local function abandonHuntTarget(state, now, api, explain)
+	local old = state.combatTarget
+	if old then state.failedTargets[old] = now + C.FailedTargetCooldown end
+	clearHuntTransient(state)
+	if explain then announce(state, "HuntFailed", now, api) end
+end
+
+local function startHuntTarget(state, target, root, now)
+	Navigation.stop(state)
+	state.combatTarget = target
+	state.targetPriority = "hunt"
+	state.huntTargetLastPosition = nil
+	state.huntProgressAnchor = root.Position
+	state.huntLastProgressAt = now
+	state.huntRecoveryUntil = nil
+	state.huntRecoveryAttempted = false
+	state.model:SetAttribute("GuardianTarget", target.Name)
+end
+
+local function updateHuntProgress(state, root, now)
+	if not state.huntProgressAnchor or distance(root.Position, state.huntProgressAnchor) >= C.HuntProgressDistance then
+		state.huntProgressAnchor = root.Position
+		state.huntLastProgressAt = now
+		-- A recovery route has proved useful. Continue the already-locked hunt
+		-- instead of abandoning a guardian that is making real progress.
+		if state.huntRecoveryUntil then state.huntRecoveryUntil = nil end
+	end
+end
+
+local function beginHuntRecovery(state, now)
+	Navigation.reset(state)
+	state.huntRecoveryAttempted = true
+	state.huntRecoveryUntil = now + C.HuntRecoverySeconds
+	-- Keep the latest real position as the recovery baseline. A nil baseline
+	-- would falsely count the next idle update as progress.
+	state.huntLastProgressAt = now
+end
+
+local function engageHunt(state, root, now, api)
+	local target = state.combatTarget
+	local live, targetRoot = targetIsLiveAndAllowed(state, target, api)
+	if not live then
+		local targetHumanoid = target and api.humanoid(target)
+		if targetHumanoid and targetHumanoid.Health <= 0 then finishHuntTarget(state) else clearHuntTransient(state) end
+		return
+	end
+	state.huntTargetLastPosition = targetRoot.Position
+	updateHuntProgress(state, root, now)
+	if state.huntRecoveryUntil and now >= state.huntRecoveryUntil then
+		abandonHuntTarget(state, now, api, true)
+		return
+	end
+	local offset = targetRoot.Position - root.Position
+	local inRange = flat(offset).Magnitude <= C.AttackRange and math.abs(offset.Y) <= C.AttackHeight
+	if inRange and Navigation.clear(state.model, root.Position, targetRoot.Position, target) then
+		Navigation.stop(state)
+		state.huntMeleeSince = state.huntMeleeSince or now
+		state.humanoid.WalkSpeed = C.CombatWalkSpeed
+		if now >= (state.nextStrikeAt or 0) then
+			state.nextStrikeAt = now + C.AttackCooldown
+			local dealt = api.damage(state, target, C.Damage, C.AttackCooldown)
+			if dealt and dealt > 0 then
+				state.lastSuccessfulHitAt = now
+				state.model:SetAttribute("GuardianLastHitAt", Workspace:GetServerTimeNow())
+				local targetHumanoid = api.humanoid(target)
+				if targetHumanoid and targetHumanoid.Health <= 0 then finishHuntTarget(state); return end
+			end
+		end
+		-- No-hit timing starts only after genuine melee contact, never during a
+		-- long cross-map approach.
+		if now - (state.lastSuccessfulHitAt or state.huntMeleeSince) >= C.NoHitTimeout
+			and now - state.huntMeleeSince >= C.NoHitTimeout
+		then
+			if state.huntRecoveryAttempted then abandonHuntTarget(state, now, api, true)
+			else beginHuntRecovery(state, now) end
+		end
+		return
+	end
+	state.huntMeleeSince = nil
+	state.humanoid.WalkSpeed = needsCombatSprint(target, api) and C.CombatSprintSpeed or C.CombatWalkSpeed
+	local result = Navigation.move(state, root, targetRoot.Position, target, now)
+	if result == "failed" then
+		if state.huntRecoveryAttempted then abandonHuntTarget(state, now, api, true)
+		else beginHuntRecovery(state, now) end
+		return
+	end
+	if now - (state.huntLastProgressAt or now) >= C.HuntProgressSeconds then
+		if state.huntRecoveryAttempted then abandonHuntTarget(state, now, api, true)
+		else beginHuntRecovery(state, now) end
+	end
+end
+
+local function updateHunt(state, root, ownerRoot, now, api)
+	state.petBehavior = "Hunt"
+	api.invite(state, now)
+	if state.combatTarget then
+		announce(state, state.huntPhase == "sweep" and "Clear" or "Hunt", now, api)
+		engageHunt(state, root, now, api)
+		return
+	end
+	if state.huntSweepCenter then
+		local localTarget = chooseHuntTarget(state, root, ownerRoot, now, api, state.huntSweepCenter)
+		if localTarget then
+			state.huntPhase = "sweep"
+			startHuntTarget(state, localTarget, root, now)
+			announce(state, "Clear", now, api)
+			return
+		end
+		state.huntSweepCenter = nil
+		state.huntPhase = nil
+	end
+	local target = chooseHuntTarget(state, root, ownerRoot, now, api)
+	if target then
+		startHuntTarget(state, target, root, now)
+		announce(state, "Hunt", now, api)
+	else
+		Navigation.stop(state)
+		announce(state, "HoldAndHunt", now, api)
+	end
 end
 
 local function recover(state, root, now, api)
@@ -312,6 +513,12 @@ function Tactics.step(state, now, api)
 	if changedOwner then
 		Tactics.reset(state)
 		state.lastOwnerRoot = ownerRoot
+	end
+	-- Hunt intentionally bypasses escort/no-follow/rejoin checks. It is an
+	-- explicit owner command, not an accidental consequence of distance.
+	if state.petBehavior == "Hunt" then
+		updateHunt(state, root, ownerRoot, now, api)
+		return
 	end
 	local ownerDistance = distance(root.Position, ownerRoot.Position)
 	-- Stay outside deliberately marked interiors. A guardian is a companion,
