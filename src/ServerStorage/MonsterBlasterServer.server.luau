@@ -199,6 +199,18 @@ local function makeRaycastParams(character, additionalIgnored)
 	return params
 end
 
+local function raycastPastFriendlyGang(player, origin, direction, distance, additionalIgnored)
+	local ignored = table.clone(additionalIgnored or {})
+	while true do
+		local result = workspace:Raycast(origin, direction * distance, makeRaycastParams(player.Character, ignored))
+		local model = result and getMonsterModelFromHit(result.Instance)
+		if not model or not MonsterManager.isGuardianGangMemberForPlayer(model, player) then
+			return result, ignored
+		end
+		table.insert(ignored, model)
+	end
+end
+
 local function getMuzzlePosition()
 	local muzzle = tool:FindFirstChild("Muzzle", true)
 	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
@@ -225,9 +237,10 @@ end
 
 local function isDirectTarget(model, cameraOrigin, direction, player)
 	if not model or not model:IsA("Model") or not MonsterManager.getConfig(model) then return false end
+	if MonsterManager.isGuardianGangMemberForPlayer(model, player) then return false end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return false end
-	local result = workspace:Raycast(cameraOrigin, direction * Config.RANGE, makeRaycastParams(player.Character))
+	local result = raycastPastFriendlyGang(player, cameraOrigin, direction, Config.RANGE)
 	return result and getMonsterModelFromHit(result.Instance) == model
 end
 
@@ -239,6 +252,7 @@ end
 
 local function isVisibleMonster(model, cameraOrigin, player)
 	if not model or not MonsterManager.getConfig(model) then return false end
+	if MonsterManager.isGuardianGangMemberForPlayer(model, player) then return false end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return false end
 	local targetPart = model:FindFirstChild("HumanoidRootPart", true) or model.PrimaryPart
@@ -246,7 +260,7 @@ local function isVisibleMonster(model, cameraOrigin, player)
 	if not targetPart or not targetPart:IsA("BasePart") then return false end
 	local offset = targetPart.Position - cameraOrigin
 	if offset.Magnitude < DIRECTION_EPSILON then return false end
-	local result = workspace:Raycast(cameraOrigin, offset, makeRaycastParams(player.Character))
+	local result = raycastPastFriendlyGang(player, cameraOrigin, offset.Unit, offset.Magnitude)
 	return result and getMonsterModelFromHit(result.Instance) == model
 end
 
@@ -266,20 +280,21 @@ contourTargetEvent.OnServerEvent:Connect(function(player, reportedTool, originOf
 end)
 
 local function getServerShotResult(player, cameraOrigin, direction)
-	local params = makeRaycastParams(player.Character)
 	-- Let the exact crosshair ray win. Only an actual miss receives forgiving
-	-- Spherecast assistance, which ignores WMTs so a nearby guardian cannot
-	-- bend a Blaster shot away from the intended hostile target.
-	local result = workspace:Raycast(cameraOrigin, direction * Config.RANGE, params)
+	-- Spherecast assistance. The owner's active gang is passed through so it
+	-- cannot absorb a direct shot meant for a hostile or zombie totem.
+	local result, ignored = raycastPastFriendlyGang(player, cameraOrigin, direction, Config.RANGE)
+	local params = makeRaycastParams(player.Character, ignored)
 	if not result then
-		local ignored = {}
 		while true do
 			result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * Config.RANGE,
 				makeRaycastParams(player.Character, ignored))
 			local candidate = result and getMonsterModelFromHit(result.Instance)
-			if not candidate or MonsterManager.isWeaponAimAssistTarget(candidate) then break end
+			if not candidate or (MonsterManager.isWeaponAimAssistTarget(candidate)
+				and not MonsterManager.isGuardianGangMemberForPlayer(candidate, player)) then break end
 			table.insert(ignored, candidate)
 		end
+		params = makeRaycastParams(player.Character, ignored)
 	end
 	local endPosition = result and result.Position or (cameraOrigin + direction * Config.RANGE)
 	local muzzle = getMuzzlePosition()
@@ -377,6 +392,7 @@ local function damageMonster(player, model, damage, blastOrigin)
 	end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return end
+	if MonsterManager.isGuardianGangMemberForPlayer(model, player) then return end
 	-- A bonded guardian may be fighting inside either the direct beam or ground
 	-- shockwave. MonsterGun damage remains deliberately reduced through
 	-- MonsterManager, but the high-powered Blaster must never hurt or push a pet.

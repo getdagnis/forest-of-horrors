@@ -16,10 +16,10 @@ Tactics.Config = {
 }
 local C = Tactics.Config
 local phrases = {
-	Follow = "I'm with you.", Cover = "I'm covering you.", Engage = "Protecting you.",
-	Recruit = "Gathering help.", Regroup = "Coming back to you.",
-	HoldAndHunt = "I'll wait for you.", Recover = "Finding another way.",
-	Hunt = "Going hunting.", Clear = "Clearing this area.", HuntFailed = "I couldn't reach it.",
+	Follow = "i am with you", Cover = "i will protect", Engage = "protecting you",
+	Recruit = "gathering other guardians to help", Regroup = "i need to get back to you",
+	HoldAndHunt = "i will wait for you", Recover = "i need to find another way",
+	Hunt = "going hunting now", Clear = "clearing this area", HuntFailed = "i failed to reach it",
 }
 
 local function flat(v) return Vector3.new(v.X, 0, v.Z) end
@@ -37,7 +37,7 @@ local function announce(state, label, now, api)
 		state.spokenState = label
 		state.nextStatusAt = now + 8
 		state.lastStatus[label] = now
-		local message = label == "Engage" and state.holdOrigin and "Clearing this area." or phrases[label]
+		local message = label == "Engage" and state.holdOrigin and "clearing this area" or phrases[label]
 		api.status:FireClient(state.owner, state.model, label, message)
 	end
 end
@@ -221,10 +221,12 @@ local function chooseHuntTarget(state, root, ownerRoot, now, api, sweepCenter)
 					score = distance(targetRoot.Position, root.Position)
 				end
 			else
+				-- A hunt starts with the monster nearest the owner. The follow-up
+				-- sweep below already clears the closest survivors around that first
+				-- fight, so a pet never needs to cross the map for a distant target.
 				score = distance(targetRoot.Position, ownerRoot.Position)
-					- distance(targetRoot.Position, root.Position) * 0.3
 			end
-			if score and (not best or (sweepCenter and score < bestScore) or (not sweepCenter and score > bestScore)) then
+			if score and (not best or score < bestScore) then
 				best, bestScore = target, score
 			end
 		end

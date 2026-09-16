@@ -85,6 +85,18 @@ local function makeRaycastParams(character, tool, additionalIgnored)
 	return params
 end
 
+local function raycastPastFriendlyGang(player, origin, direction, distance, character, tool, additionalIgnored)
+	local ignored = table.clone(additionalIgnored or {})
+	while true do
+		local result = workspace:Raycast(origin, direction * distance, makeRaycastParams(character, tool, ignored))
+		local model = result and getMonsterModelFromHit(result.Instance)
+		if not model or not MonsterManager.isGuardianGangMemberForPlayer(model, player) then
+			return result, ignored
+		end
+		table.insert(ignored, model)
+	end
+end
+
 local function getMuzzlePosition(tool)
 	local muzzle = tool:FindFirstChild("Muzzle", true)
 	if muzzle and muzzle:IsA("Attachment") and muzzle.Parent and muzzle.Parent:IsA("BasePart") then
@@ -111,12 +123,13 @@ end
 
 local function isDirectTarget(model, cameraOrigin, direction, character, tool)
 	if not model or not model:IsA("Model") or not (MonsterManager.getConfig(model) or MonsterManager.isZombieTotem(model)) then return false end
+	if MonsterManager.isGuardianGangMemberForPlayer(model, Players:GetPlayerFromCharacter(character)) then return false end
 	if MonsterManager.isZombieTotem(model) then
 		return (tonumber(model:GetAttribute("TotemHealth")) or 0) > 0
 	end
 	local humanoid = MonsterManager.getMonsterHumanoid(model)
 	if not humanoid or humanoid.Health <= 0 then return false end
-	local result = workspace:Raycast(cameraOrigin, direction * RANGE, makeRaycastParams(character, tool))
+	local result = raycastPastFriendlyGang(Players:GetPlayerFromCharacter(character), cameraOrigin, direction, RANGE, character, tool)
 	return result and getMonsterModelFromHit(result.Instance) == model
 end
 
@@ -128,6 +141,7 @@ end
 
 local function isVisibleMonster(model, cameraOrigin, character, tool)
 	if not model or not (MonsterManager.getConfig(model) or MonsterManager.isZombieTotem(model)) then return false end
+	if MonsterManager.isGuardianGangMemberForPlayer(model, Players:GetPlayerFromCharacter(character)) then return false end
 	if MonsterManager.isZombieTotem(model) then
 		return (tonumber(model:GetAttribute("TotemHealth")) or 0) > 0
 	end
@@ -138,7 +152,7 @@ local function isVisibleMonster(model, cameraOrigin, character, tool)
 	if not targetPart or not targetPart:IsA("BasePart") then return false end
 	local offset = targetPart.Position - cameraOrigin
 	if offset.Magnitude < 0.01 then return false end
-	local result = workspace:Raycast(cameraOrigin, offset, makeRaycastParams(character, tool))
+	local result = raycastPastFriendlyGang(Players:GetPlayerFromCharacter(character), cameraOrigin, offset.Unit, offset.Magnitude, character, tool)
 	return result and getMonsterModelFromHit(result.Instance) == model
 end
 
@@ -168,20 +182,21 @@ contourTargetEvent.OnServerEvent:Connect(function(player, tool, originOffset, di
 end)
 
 local function getServerShot(tool, player, cameraOrigin, direction)
-	local params = makeRaycastParams(player.Character, tool)
 	-- A direct crosshair ray always wins. The forgiving Spherecast runs only
-	-- after a true miss, and skips nearby WMTs so it cannot pull a beam away
-	-- from the hostile monster the player actually aimed at.
-	local result = workspace:Raycast(cameraOrigin, direction * RANGE, params)
+	-- after a true miss. The owner's active gang is skipped, so it neither takes
+	-- damage nor blocks a shot at the hostile or totem behind it.
+	local result, ignored = raycastPastFriendlyGang(player, cameraOrigin, direction, RANGE, player.Character, tool)
+	local params = makeRaycastParams(player.Character, tool, ignored)
 	if not result then
-		local ignored = {}
 		while true do
 			result = workspace:Spherecast(cameraOrigin, AimConfig.AimAssistRadius, direction * RANGE,
 				makeRaycastParams(player.Character, tool, ignored))
 			local candidate = result and getMonsterModelFromHit(result.Instance)
-			if not candidate or MonsterManager.isWeaponAimAssistTarget(candidate) then break end
+			if not candidate or (MonsterManager.isWeaponAimAssistTarget(candidate)
+				and not MonsterManager.isGuardianGangMemberForPlayer(candidate, player)) then break end
 			table.insert(ignored, candidate)
 		end
+		params = makeRaycastParams(player.Character, tool, ignored)
 	end
 	local endPosition = result and result.Position or (cameraOrigin + direction * RANGE)
 	local muzzlePosition = getMuzzlePosition(tool)

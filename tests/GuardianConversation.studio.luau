@@ -68,6 +68,7 @@ return function(api)
 
 		s, r = state(p)
 		api.context.peaceful = false
+		r.aimSince = now - 3.1 -- 0.1 visible seconds; still inside danger cutoff.
 		r.aimSince = now - 7.9 -- Three silent seconds plus 4.9 visible seconds.
 		api.update(s, now)
 		check("Nearby danger produces explicit response", last("WMTGuardianConversation")[4] == "they are still near"

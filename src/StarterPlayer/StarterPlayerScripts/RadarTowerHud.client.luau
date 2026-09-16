@@ -30,6 +30,7 @@ local RADAR_DETAIL_FONT_SIZE = 12
 local ZOMBIE_NAME = "Drooling Zombie"
 local ZOMBIE_DOT_SIZE = 5
 local HOSTILE_DOT_SIZE = 10
+local GUARDIAN_PET_DOT_SIZE = 6
 local SECRET_SHAFT_GUARDIAN_DOT_SIZE = 10
 local MCDONALDS_LOGO_IMAGE = "rbxassetid://102275809524944"
 
@@ -453,11 +454,12 @@ local function getGuardianDot(index)
 	if dot then return dot end
 	dot = makeFrame("GuardianPet", monsterLayer, COLORS.guardian, 1)
 	dot.AnchorPoint = Vector2.new(0.5, 0.5)
-	dot.Size = UDim2.fromOffset(13, 13)
+	-- Match the small battle radar: a six-pixel hollow guardian-green ring.
+	dot.Size = UDim2.fromOffset(GUARDIAN_PET_DOT_SIZE, GUARDIAN_PET_DOT_SIZE)
 	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
 	local stroke = Instance.new("UIStroke")
 	stroke.Color = COLORS.guardian
-	stroke.Thickness = 2
+	stroke.Thickness = 1.5
 	stroke.Transparency = 0
 	stroke.Parent = dot
 	guardianDots[index] = dot
@@ -836,7 +838,12 @@ local function refreshRadarContacts()
 			monsterCount += 1
 			typeCounts[record.name] = (typeCounts[record.name] or 0) + 1
 			local mapped = mapPosition(record.position, min, max)
-			if record.secretShaftGuardian then
+			if record.guardian then
+				guardianCount += 1
+				local guardianDot = getGuardianDot(guardianCount)
+				guardianDot.Position = mapped
+				guardianDot.Visible = true
+			elseif record.secretShaftGuardian then
 				secretShaftGuardianCount += 1
 				local guardianDot = getSecretShaftGuardianDot(secretShaftGuardianCount)
 				guardianDot.Position = mapped
@@ -847,12 +854,6 @@ local function refreshRadarContacts()
 				local dot = getMonsterDot(hostileDotCount, record.name == ZOMBIE_NAME)
 				dot.Position = mapped
 				dot.Visible = true
-			end
-			if record.guardian then
-				guardianCount += 1
-				local guardianDot = getGuardianDot(guardianCount)
-				guardianDot.Position = mapped
-				guardianDot.Visible = true
 			end
 		end
 	else

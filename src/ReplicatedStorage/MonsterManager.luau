@@ -125,6 +125,9 @@ end
 
 -- Points awarded for killing a monster (0 if not a monster)
 function MonsterManager.getPoints(model)
+	if model and model:GetAttribute("SecretShaftDoorGuard") == true then
+		return 25
+	end
 	local config = MonsterManager.getConfig(model)
 	return config and config.points or 0
 end
@@ -181,6 +184,19 @@ function MonsterManager.isWeaponAimAssistTarget(model)
 	return model ~= nil
 		and MonsterManager.getConfig(model) ~= nil
 		and model.Name ~= "weird monster thing"
+end
+
+-- Gang membership is server-owned by GuardianMonsterSystem. Only the pet's
+-- owner may fire through an active gang ally; calm WMTs and hostile former
+-- members remain ordinary weapon targets.
+function MonsterManager.isGuardianGangMemberForPlayer(model, player)
+	return model ~= nil
+		and model:IsA("Model")
+		and model.Name == "weird monster thing"
+		and player ~= nil
+		and player:IsA("Player")
+		and model:GetAttribute("WMTGuardianPet") ~= true
+		and tonumber(model:GetAttribute("WMTGuardianGangLeader")) == player.UserId
 end
 
 local function scaledDamageForTarget(model, requestedDamage, healthField)
@@ -314,6 +330,7 @@ function MonsterManager.consumeScoreAwards(humanoid, totalPoints)
 	local awards = {}
 	local log = damageLog[humanoid]
 	damageLog[humanoid] = nil
+	totalPoints = math.max(0, math.floor(tonumber(totalPoints) or 0))
 
 	if not log then
 		local attackerId = humanoid:GetAttribute("LastAttackerId")
@@ -327,18 +344,46 @@ function MonsterManager.consumeScoreAwards(humanoid, totalPoints)
 		return awards
 	end
 
-	local maxHealth = math.max(1, log.maxHealth or humanoid.MaxHealth)
+	local totalDamage = 0
+	for _, playerLog in pairs(log.players) do
+		totalDamage += math.max(0, playerLog.damage or 0)
+	end
+	if totalDamage <= 0 or totalPoints <= 0 then return awards end
 
+	local distributed = 0
 	for userId, playerLog in pairs(log.players) do
-		local damage = playerLog.damage or 0
-		local points = math.ceil(totalPoints * (damage / maxHealth))
-		points = math.max(1, points)
+		local damage = math.max(0, playerLog.damage or 0)
+		local exactPoints = totalPoints * (damage / totalDamage)
+		local points = math.floor(exactPoints)
+		distributed += points
+		table.insert(awards, {
+			userId = userId,
+			points = points,
+			damage = damage,
+			remainder = exactPoints - points,
+			weapons = playerLog.weapons or {},
+		})
+	end
+
+	-- Regenerating monsters can receive more cumulative damage than their max
+	-- health. Allocate the configured reward by contribution, then distribute
+	-- the rounding remainder, so a 25-point shaft guardian remains exactly 25
+	-- points in total regardless of how long the fight lasts.
+	table.sort(awards, function(a, b)
+		if a.remainder == b.remainder then return a.userId < b.userId end
+		return a.remainder > b.remainder
+	end)
+	for index = 1, totalPoints - distributed do
+		awards[index].points += 1
+	end
+
+	for _, award in ipairs(awards) do
 		local weaponPoints = {}
 		local allocated = 0
 		local largestWeapon
 		local largestDamage = -1
-		for weaponName, weaponDamage in pairs(playerLog.weapons or {}) do
-			local allocatedPoints = math.floor(points * (weaponDamage / math.max(1, damage)))
+		for weaponName, weaponDamage in pairs(award.weapons) do
+			local allocatedPoints = math.floor(award.points * (weaponDamage / math.max(1, award.damage)))
 			weaponPoints[weaponName] = allocatedPoints
 			allocated += allocatedPoints
 			if weaponDamage > largestDamage then
@@ -347,15 +392,11 @@ function MonsterManager.consumeScoreAwards(humanoid, totalPoints)
 			end
 		end
 		if largestWeapon then
-			weaponPoints[largestWeapon] += points - allocated
+			weaponPoints[largestWeapon] += award.points - allocated
 		end
-
-		table.insert(awards, {
-			userId = userId,
-			points = points,
-			damage = damage,
-			weaponPoints = weaponPoints,
-		})
+		award.weaponPoints = weaponPoints
+		award.weapons = nil
+		award.remainder = nil
 	end
 
 	table.sort(awards, function(a, b)

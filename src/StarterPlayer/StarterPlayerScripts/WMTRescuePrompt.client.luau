@@ -5,6 +5,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local ContextActionService = game:GetService("ContextActionService")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local GUARDIAN_COLOR = Color3.fromRGB(220, 240, 210)
@@ -113,6 +115,19 @@ lossText.TextSize = 32
 lossText.Visible = false
 lossText.Parent = gui
 local lossToken = 0
+
+-- This clone exists only on the owning player's client, so a pet loss is clear
+-- to its owner without becoming a map-wide audio cue.
+local function playGuardianPetDiedSound()
+	local source = SoundService:FindFirstChild("GuardianPetDied", true)
+	if not source or not source:IsA("Sound") then return end
+
+	local sound = source:Clone()
+	sound.Looped = false
+	sound.Parent = SoundService
+	sound:Play()
+	Debris:AddItem(sound, math.max(3, sound.TimeLength + 1))
+end
 
 -- Quiet ritual feedback: deliberately placed above the standard hotbar rather
 -- than competing with the larger round announcements in the centre of screen.
@@ -612,13 +627,13 @@ petCommandResultEvent.OnClientEvent:Connect(function(guardian, succeeded, reason
 		accept.Text, decline.Text = "FOLLOW ME", "GO HUNT"
 		accept.Active, decline.Active = true, true
 		panel.Visible = true
-		showAnswer(behavior == "Hunt" and '"i hunt for you"' or '"i follow you"', true)
+		showAnswer(behavior == "Hunt" and '"i will hunt them"' or '"i follow you"', true)
 		return
 	end
 	if pending.command == "Follow" or pending.command == "Hunt" then
 		commandWaiting = false
 		clearOfferUi(guardian)
-		showAnswer(behavior == "Hunt" and "i will hunt them down for you" or "i will protect you", false)
+		showAnswer(behavior == "Hunt" and "i will hunt them down" or "i will protect you", false)
 	end
 end)
 
@@ -626,8 +641,9 @@ petLostEvent.OnClientEvent:Connect(function(_guardian, generation)
 	if not isPlayable() or generation ~= activeGeneration() then return end
 	lossToken += 1
 	local token = lossToken
+	playGuardianPetDiedSound()
 	lossText.Visible = true
-	task.delay(3, function()
+	task.delay(6, function()
 		if token == lossToken then lossText.Visible = false end
 	end)
 end)

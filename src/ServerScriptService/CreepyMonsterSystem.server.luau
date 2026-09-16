@@ -12,8 +12,8 @@ local PLAYER_HIT_COOLDOWN = 1
 local MONSTER_HIT_COOLDOWN = 3
 local HUNT_CHECK_MIN = 20
 local HUNT_CHECK_MAX = 35
-local HUNT_CHANCE = 0.10
-local HUNT_DURATION = 5
+local HUNT_CHANCE = 0.20
+local HUNT_DURATION = 10
 local UPDATE_INTERVAL = 0.25
 
 local managed = {}
@@ -206,7 +206,7 @@ local function setupCreepy(model)
 			local retaliationModel, retaliationRoot, retaliationHumanoid = getGuardianPetRetaliationTarget(model)
 			local playerIsCloser = playerRoot and (
 				not retaliationRoot
-				or (playerRoot.Position - root.Position).Magnitude <= (retaliationRoot.Position - root.Position).Magnitude
+					or (playerRoot.Position - root.Position).Magnitude <= (retaliationRoot.Position - root.Position).Magnitude
 			)
 			if playerRoot and playerIsCloser then
 				humanoid:MoveTo(playerRoot.Position)
@@ -225,12 +225,12 @@ local function setupCreepy(model)
 			elseif retaliationRoot and retaliationHumanoid then
 				humanoid:MoveTo(retaliationRoot.Position)
 				if (retaliationRoot.Position - root.Position).Magnitude <= ATTACK_RANGE
-						and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN
+					and now - state.lastMonsterHit >= MONSTER_HIT_COOLDOWN
 				then
 					MonsterManager.damageMonsterTarget(retaliationModel, monsterDamage, model)
 					state.lastMonsterHit = now
 				end
-			elseif now < state.huntUntil then
+				elseif now < state.huntUntil then
 				local huntModel, huntRoot, huntHumanoid = findLowerHealthMonster(model, config.hp, root.Position)
 				if huntRoot and huntHumanoid then
 					humanoid:MoveTo(huntRoot.Position)
@@ -240,7 +240,7 @@ local function setupCreepy(model)
 						MonsterManager.damageMonsterTarget(huntModel, monsterDamage, model)
 						state.lastMonsterHit = now
 					end
-				end
+					end
 			end
 
 			task.wait(UPDATE_INTERVAL)

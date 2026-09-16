@@ -279,10 +279,14 @@ lavaPoolDoorOpenedEvent.OnClientEvent:Connect(function(generation)
 	end)
 end)
 
-zombieTotemDestroyedAnnouncementEvent.OnClientEvent:Connect(function(_, generation)
+zombieTotemDestroyedAnnouncementEvent.OnClientEvent:Connect(function(_, destroyedCount, totalCount, generation)
 	if not isCurrentGameplayGeneration(generation) or workspace:GetAttribute("RoundState") ~= "Active" then return end
 	if criticalSequenceActive then return end
-	showAnnouncement("zombie spawn point destroyed", LONG_ANNOUNCEMENT_SECONDS)
+	showAnnouncement(string.format(
+		"%d/%d zombie spawn points destroyed",
+		math.max(0, math.floor(tonumber(destroyedCount) or 0)),
+		math.max(1, math.floor(tonumber(totalCount) or 1))
+	), LONG_ANNOUNCEMENT_SECONDS)
 end)
 
 nightmareEscapeStartedEvent.OnClientEvent:Connect(function(data)

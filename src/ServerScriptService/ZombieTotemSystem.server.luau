@@ -26,12 +26,21 @@ end
 
 -- These are the tested gameplay values; do not replace them with the earlier
 -- planning guesses without an explicit playtest decision.
-local TOTEM_MAX_HEALTH = 2400
+local TOTEM_MAX_HEALTH = 2800
 local REGEN_RATE_PER_SECOND = 40
 local REGEN_STEP = 1
 local BURST_SECONDS = 10
 
 local states = {}
+
+local function getTotemProgress()
+	local destroyed, total = 0, 0
+	for _, state in pairs(states) do
+		total += 1
+		if state.destroyed then destroyed += 1 end
+	end
+	return destroyed, total
+end
 
 local function findSpawnPoint(pole)
 	for _, item in ipairs(Workspace:GetDescendants()) do
@@ -102,7 +111,13 @@ local function destroyTotem(state)
 		clone:Play()
 		Debris:AddItem(clone, math.max(3, clone.TimeLength + 1))
 	end
-	totemAnnouncementEvent:FireAllClients(state.pole, Workspace:GetAttribute("RoundGeneration"))
+	local destroyedCount, totalCount = getTotemProgress()
+	totemAnnouncementEvent:FireAllClients(
+		state.pole,
+		destroyedCount,
+		totalCount,
+		Workspace:GetAttribute("RoundGeneration")
+	)
 	if state.pole == "Apple" then
 		for _, item in ipairs(Workspace:GetDescendants()) do
 			if item:GetAttribute("AppleTotemLight") == true then

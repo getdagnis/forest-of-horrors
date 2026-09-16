@@ -134,6 +134,11 @@ RunService.RenderStepped:Connect(function()
 
 	local range = weapon.Name == "MonsterBlaster" and MonsterBlasterConfig.RANGE or nil
 	local monster = GunAim.getDirectTarget(player, weapon, nil, range)
+	if MonsterManager.isGuardianGangMemberForPlayer(monster, player) then
+		-- The server passes the owner's active gang through, so do not present an
+		-- ally as a weapon target while the actual shot continues beyond it.
+		monster = nil
+	end
 	if monster then
 		local color = WEAPON_COLORS[weapon.Name]
 		highlight.FillColor = color

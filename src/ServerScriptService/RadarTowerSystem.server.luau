@@ -35,8 +35,13 @@ local trackedMonsters = {}
 
 local function refreshTrackedMonster(instance)
 	if not instance:IsA("Model") then return end
-	local tracked = MonsterManager.isRoundTracked(instance)
+	-- A bonded guardian is friendly and therefore deliberately excluded from the
+	-- round count, but it is still a valid tactical contact for its owner.
+	local trackedRoundMonster = MonsterManager.isRoundTracked(instance)
 		and instance:GetAttribute("RoundManagedMonster") == true
+	local trackedGuardianPet = instance.Name == "weird monster thing"
+		and instance:GetAttribute("WMTGuardianPet") == true
+	local tracked = (trackedRoundMonster or trackedGuardianPet)
 		and (
 			Workspace:GetAttribute("UndergroundPhaseActive") == true
 			or instance:GetAttribute("UndergroundMonster") ~= true
@@ -56,6 +61,9 @@ for _, instance in ipairs(Workspace:GetDescendants()) do
 		instance:GetAttributeChangedSignal("UndergroundMonster"):Connect(function()
 			refreshTrackedMonster(instance)
 		end)
+		instance:GetAttributeChangedSignal("WMTGuardianPet"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
 	end
 end
 Workspace.DescendantAdded:Connect(function(instance)
@@ -68,6 +76,9 @@ Workspace.DescendantAdded:Connect(function(instance)
 			refreshTrackedMonster(instance)
 		end)
 		instance:GetAttributeChangedSignal("UndergroundMonster"):Connect(function()
+			refreshTrackedMonster(instance)
+		end)
+		instance:GetAttributeChangedSignal("WMTGuardianPet"):Connect(function()
 			refreshTrackedMonster(instance)
 		end)
 	end

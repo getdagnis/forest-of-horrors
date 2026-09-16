@@ -59,12 +59,6 @@ local HEALTH_BASE_HP = 100
 local currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
 local monsterHistory, recordRows, allTimeBest = {}, {}, nil
 local scoringLeaders, quickestEscape = {}, nil
-local currentRoundGeneration = math.max(0, math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or 0))
-
-local function matchesCurrentGeneration(generation)
-	return tonumber(generation) == currentRoundGeneration
-		and currentRoundGeneration == tonumber(workspace:GetAttribute("RoundGeneration"))
-end
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "CombatStatusHud"
@@ -245,12 +239,8 @@ local function renderEvents(now)
 end
 
 radarEvents.OnClientEvent:Connect(function(message)
-	if type(message) ~= "table"
-		or not matchesCurrentGeneration(message.roundGeneration)
-		or workspace:GetAttribute("RoundState") ~= "Active"
-	then
-		return
-	end
+	if type(message) == "string" then message = { kind = "message", text = message } end
+	if type(message) ~= "table" then return end
 	local now = workspace:GetServerTimeNow()
 	local kind = message.kind or "message"
 	local actor = message.actor
@@ -520,7 +510,7 @@ local function normalizeRows(data)
 	local result = {}
 	for _, row in ipairs(list) do
 		if type(row) == "table" then
-				table.insert(result, { name = tostring(row.name or row.playerName or row.player or "-"), difficulty = row.difficulty == "Easy" and "Easy" or "Hard", score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, deaths = tonumber(row.deaths) or 0, bestSpawn = tonumber(row.bestSpawn or row.personalBestSpawn or row.spawn) or 0 })
+			table.insert(result, { name = tostring(row.name or row.playerName or row.player or "-"), difficulty = row.difficulty == "Easy" and "Easy" or "Hard", score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, deaths = tonumber(row.deaths) or 0, bestSpawn = tonumber(row.bestSpawn or row.personalBestSpawn or row.spawn) or 0 })
 		end
 	end
 	return result
@@ -538,7 +528,7 @@ local function renderScoreboard()
 			local stats = other:FindFirstChild("leaderstats")
 			local score = stats and stats:FindFirstChild("Score")
 			local kills = stats and stats:FindFirstChild("Kills")
-				table.insert(rows, { name = other.Name, difficulty = other:GetAttribute("Difficulty") == "Easy" and "Easy" or "Hard", score = score and score.Value or 0, kills = kills and kills.Value or 0, deaths = 0, bestSpawn = 0 })
+			table.insert(rows, { name = other.Name, difficulty = other:GetAttribute("Difficulty") == "Easy" and "Easy" or "Hard", score = score and score.Value or 0, kills = kills and kills.Value or 0, deaths = 0, bestSpawn = 0 })
 		end
 		table.sort(rows, function(a, b) return a.score == b.score and a.name < b.name or a.score > b.score end)
 	end
@@ -546,8 +536,8 @@ local function renderScoreboard()
 	local lines = {}
 	for index, row in ipairs(rows) do
 		if index > 8 then break end
-			local displayName = row.name .. (row.difficulty == "Easy" and " [EASY]" or "")
-			local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. displayName .. "</font>" or displayName
+		local displayName = row.name .. (row.difficulty == "Easy" and " [EASY]" or "")
+		local name = row.name == player.Name and '<font color="rgb(190,175,75)">' .. displayName .. "</font>" or displayName
 		table.insert(lines, string.format("<b>%d. %s — %d/%d (%d deaths)</b>", index, name, row.score, row.kills, row.deaths or 0))
 	end
 	if #scoringLeaders > 0 then
@@ -566,15 +556,11 @@ local function renderScoreboard()
 	scoreboardText.Text = table.concat(lines, "\n")
 end
 
-scoreEvent.OnClientEvent:Connect(function(score, kills, generation)
-	if not matchesCurrentGeneration(generation) then return end
-	currentScore, currentKills = tonumber(score) or 0, tonumber(kills) or currentKills
-end)
-bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount, generation)
-	if not matchesCurrentGeneration(generation) or workspace:GetAttribute("RoundState") ~= "Active" then return end
+scoreEvent.OnClientEvent:Connect(function(score, kills) currentScore, currentKills = tonumber(score) or 0, tonumber(kills) or currentKills end)
+bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount)
 	bestSpawnAnnouncementToken += 1
 	local token = bestSpawnAnnouncementToken
-	bestSpawnText.Text = string.format("that was your best spawn! %d / %d", tonumber(points) or 0, tonumber(killCount) or 0)
+	bestSpawnText.Text = string.format("this was your best spawn! \n %d / %d", tonumber(points) or 0, tonumber(killCount) or 0)
 	bestSpawnText.TextTransparency = 1
 	bestSpawnText.Visible = true
 	TweenService:Create(bestSpawnText, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
@@ -595,13 +581,11 @@ bestSpawnAnnouncementEvent.OnClientEvent:Connect(function(points, killCount, gen
 		end)
 	end)
 end)
-monsterCountEvent.OnClientEvent:Connect(function(count, generation)
-	if not matchesCurrentGeneration(generation) then return end
+monsterCountEvent.OnClientEvent:Connect(function(count)
 	monstersLeft = math.max(0, tonumber(count) or 0)
 	table.insert(monsterHistory, { time = workspace:GetServerTimeNow(), count = monstersLeft })
 end)
 recordsEvent.OnClientEvent:Connect(function(data)
-	if type(data) ~= "table" or not matchesCurrentGeneration(data.roundGeneration) then return end
 	currentScore = tonumber(data and data.currentScore) or currentScore
 	currentKills = tonumber(data and data.currentKills) or currentKills
 	-- Newer servers send personalBestScore. The fallback keeps older sessions
@@ -618,19 +602,12 @@ recordsEvent.OnClientEvent:Connect(function(data)
 		scoringLeaders = {}
 		for _, row in ipairs(leaders) do
 			if type(row) == "table" then
-				table.insert(scoringLeaders, {
-					name = tostring(row.playerName or row.name or "-"),
-					score = tonumber(row.score) or 0,
-					kills = tonumber(row.kills) or 0,
-					elapsedSeconds = tonumber(row.elapsedSeconds) or 0,
-				})
+				table.insert(scoringLeaders, { name = tostring(row.playerName or row.name or "-"), score = tonumber(row.score) or 0, kills = tonumber(row.kills) or 0, elapsedSeconds = tonumber(row.elapsedSeconds) or 0 })
 			end
 		end
 	end
-	if type(data and data.quickestEscape) == "table" then
-		quickestEscape = data.quickestEscape
-	end
-	renderScoreboard()
+	if type(data and data.quickestEscape) == "table" then quickestEscape = data.quickestEscape end
+renderScoreboard()
 end)
 player.CharacterAdded:Connect(bindCharacter)
 if player.Character then bindCharacter(player.Character) end
@@ -641,13 +618,8 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	if elapsed < 0.1 then return end
 	elapsed = 0
 	local endsAt = tonumber(workspace:GetAttribute("RoundEndsAt"))
-	local state = workspace:GetAttribute("RoundState")
-	local showRoundClock = state == "Active" or state == "Escape"
-	panels.Time.Visible = showRoundClock
-	if showRoundClock then
-		labels.Time.Text = formatTime(endsAt and endsAt - workspace:GetServerTimeNow() or 0)
-		captions.Time.Text = state == "Escape" and "ESCAPE" or "REMAINING"
-	end
+	labels.Time.Text = formatTime(endsAt and endsAt - workspace:GetServerTimeNow() or 0)
+	captions.Time.Text = workspace:GetAttribute("RoundPhase") == "Escape" and "ESCAPE" or "REMAINING"
 	local now = workspace:GetServerTimeNow()
 	while #monsterHistory > 0 and monsterHistory[1].time < now - 15 do table.remove(monsterHistory, 1) end
 	local baseline = monsterHistory[1] and monsterHistory[1].count or monstersLeft
@@ -668,14 +640,4 @@ RunService.RenderStepped:Connect(function(deltaTime)
 	layout()
 	renderScoreboard()
 	renderEvents(now)
-end)
-
-workspace:GetAttributeChangedSignal("RoundGeneration"):Connect(function()
-	currentRoundGeneration = math.max(0, math.floor(tonumber(workspace:GetAttribute("RoundGeneration")) or 0))
-	currentScore, currentKills, monstersLeft, bestSpawn = 0, 0, 0, 0
-	monsterHistory = {}
-	recentEvents = {}
-	eventsText.Text = ""
-	bestSpawnAnnouncementToken += 1
-	bestSpawnText.Visible = false
 end)

@@ -625,7 +625,13 @@ local function restoreUnbonded(state)
 end
 
 local function makeHostile(state, player)
-	if state.mode == "hostile" or not player or not player.Parent then return end
+	-- A bonded guardian never turns on its owner. Its temporary gang may still
+	-- judge the owner's violence and become hostile independently.
+	if state.mode == "pet" or state.model:GetAttribute("WMTGuardianPet") == true
+		or state.mode == "hostile" or not player or not player.Parent
+	then
+		return
+	end
 	resetPetPath(state)
 
 	-- A nearby pet witnesses the guardian killings too: it abandons its owner
@@ -643,12 +649,16 @@ local function makeHostile(state, player)
 	state.owner = nil
 	state.helpPlayer = nil
 	state.helpUntil = 0
+	state.gangSlot = nil
+	state.gangLeader = nil
+	state.gangUntil = 0
 	state.mode = "hostile"
 	state.hostilePlayer = player
 	state.humanoid.WalkSpeed = GUARDIAN_HOSTILE_WALK_SPEED
 	state.model:SetAttribute("WMTGuardianOwnerUserId", nil)
 	state.model:SetAttribute("WMTGuardianPet", false)
 	state.model:SetAttribute("WMTGuardianBehavior", nil)
+	state.model:SetAttribute("WMTGuardianGangLeader", nil)
 	state.model:SetAttribute("WMTGuardianHostileUserId", player.UserId)
 end
 

@@ -5,6 +5,7 @@
 local Players = game:GetService("Players")
 local ws = game:GetService("Workspace")
 local rs = game:GetService("ReplicatedStorage")
+local Debris = game:GetService("Debris")
 local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
 local MonsterManager = require(rs:WaitForChild("MonsterManager"))
@@ -54,6 +55,8 @@ local RESPAWN_LEVEL_ATTRIBUTE = "MonsterRespawnLevel"
 local UNDERGROUND_PHASE_ATTRIBUTE = "UndergroundPhaseActive"
 local SECRET_SHAFT_OPEN_ATTRIBUTE = "SecretShaftDoorOpen"
 local NO_RESPAWN_WINDOW_SECONDS = 10 * 60 -- no respawns in the final 12 minutes
+local SECRET_SHAFT_GUARD_REGEN_INTERVAL = 1
+local SECRET_SHAFT_GUARD_REGEN_AMOUNT = 40
 
 local function isInNoRespawnWindow()
 	local endsAt = tonumber(ws:GetAttribute(ROUND_ENDS_AT_ATTRIBUTE))
@@ -571,6 +574,10 @@ local function showScorePopup(model, awards, color)
 		yOffset += line.height
 	end
 
+	-- Use Debris as an independent expiry in addition to the delayed callback.
+	-- This prevents score popups from surviving if the scheduler callback is
+	-- interrupted or the owning monster enters a long corpse lifecycle.
+	Debris:AddItem(gui, 2)
 	task.delay(2, function()
 		if gui and gui.Parent then
 			gui:Destroy()
@@ -838,7 +845,7 @@ local function onMonsterKilled(hum, model)
 
 	if config and ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" and not cascadeKill then
 		openSecretShaftIfGuard(model)
-		local awards = MonsterManager.consumeScoreAwards(hum, config.points)
+		local awards = MonsterManager.consumeScoreAwards(hum, MonsterManager.getPoints(model))
 		local popupColor = MonsterManager.getLastScoreColor(hum, DEFAULT_SCORE_POPUP_COLOR)
 		local isMajorKill = config.hp >= MAJOR_KILL_MIN_HP
 		local awardedAny = false
@@ -912,6 +919,7 @@ local function onMonsterKilled(hum, model)
 			hum:GetAttribute("PermanentMonsterKill") == true
 			or hum:GetAttribute("KilledByMonsterBlaster") == true
 			or hum:GetAttribute("KilledByMonsterGun") == true
+			or model:GetAttribute("SecretShaftDoorGuard") == true
 
 		-- BombMonster is an ignitable reusable encounter, not a conventional
 		-- permanently-destroyed weapon target. This also tolerates an older live
@@ -1075,6 +1083,20 @@ local function setupMonster(model)
 		hum.Died:Connect(function()
 			onMonsterKilled(hum, model)
 			broadcastMonsterCount()			
+		end)
+	end
+
+	if model:GetAttribute("SecretShaftDoorGuard") == true then
+		-- The shaft guardian uses a fixed, legible regen amount instead of the
+		-- percentage-based marketplace behavior used by Smiler. This task owns
+		-- only its health; it never moves or recreates the living monster.
+		task.spawn(function()
+			while model.Parent and hum.Parent and hum.Health > 0 do
+				task.wait(SECRET_SHAFT_GUARD_REGEN_INTERVAL)
+				if ws:GetAttribute(ROUND_STATE_ATTRIBUTE) == "Active" and hum.Health > 0 then
+					hum.Health = math.min(hum.MaxHealth, hum.Health + SECRET_SHAFT_GUARD_REGEN_AMOUNT)
+				end
+			end
 		end)
 	end
 end
