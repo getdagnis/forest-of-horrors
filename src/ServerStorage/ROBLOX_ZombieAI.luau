@@ -505,23 +505,9 @@ ZombieAI.new = function(model, navigation)
 			local root = getRoot(model)
 			if not root then continue end
 
-			-- NPC physics remains server-owned. This only cancels impossible motion
-			-- from legacy movers/collisions; normal Humanoid walking is far slower.
-			root.AssemblyAngularVelocity = Vector3.zero
-			local velocity = root.AssemblyLinearVelocity
-			if velocity.Magnitude > math.max(70, model.Humanoid.WalkSpeed * 4) then
-				root.AssemblyLinearVelocity = Vector3.zero
-			end
-
-			local force = root:FindFirstChild("RepulsionForce")
-			if force and (force:IsA("VectorForce") or force:IsA("BodyForce")) then
-				force.Force = Vector3.zero
-				if force:IsA("VectorForce") then force.Enabled = false end
-			end
-
 			-- Eight seconds without three studs of progress is a failed route.
-			-- The system gets two recovery attempts, then reports a retire request
-			-- for MonsterSystem rather than deleting a counted monster here.
+			-- Clear its path and let the state machine choose a fresh local intent;
+			-- a blocked living zombie is never retired as movement correction.
 			if activeDestination then
 				if (root.Position - activeDestination).Magnitude <= 3 then
 					activeDestination = nil
@@ -539,6 +525,7 @@ ZombieAI.new = function(model, navigation)
 					searchTarget = nil
 					ZombieTarget = nil
 					activeDestination = nil
+					PathLib:Abandon()
 
 					if navigation and navigation:ReportStuck(model) then
 						stopRequested = true

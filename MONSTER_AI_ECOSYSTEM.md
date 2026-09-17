@@ -109,3 +109,18 @@ Every stage must demonstrate these outcomes before the next one starts:
 - `Monsters Left` and radar contacts match their shared eligibility rule;
 - local scenes look varied and intelligible rather than synchronised;
 - Studio/Roblox Play evidence, not a source build alone, decides whether the stage is accepted.
+
+## Current motion hardening status (2026-09-17)
+
+The source path now uses floor-projected `PathfindingService:CreatePath` routes
+and Humanoid waypoints only. The former global remote-player pressure assignment
+is off, and zombie code no longer writes root velocity, force, `CFrame`, or
+`PivotTo`. A failed path is abandoned and retried as a fresh intent, never
+corrected by moving the living model.
+
+This has passed source structure checks only. Before release, a fresh Studio
+Play session must observe all four Apple Store spawn points for walking
+animation, uninterrupted ground traversal, blocked-route recovery, and no
+cross-map sliding or terrain sinking. The generator currently finds its clone
+template in `Workspace`; if all initial zombies are removed, Studio must provide
+an explicit stored template before spawning can be considered release-ready.

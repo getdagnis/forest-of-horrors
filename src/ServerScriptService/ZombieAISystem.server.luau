@@ -23,7 +23,7 @@ local PLAYER_OVERRIDE_RADIUS = 80
 -- Phase 1 parks the former global pressure experiment. It made a small set of
 -- remote zombies share one player target; MonsterWorldDirector will later
 -- schedule local centre scenes instead.
-local ENABLE_LEGACY_GLOBAL_PRESSURE = true
+local ENABLE_LEGACY_GLOBAL_PRESSURE = false
 local PRESSURE_INTERVAL = 8
 local MAX_PRESSURE_TOTAL = 24
 local MAX_PRESSURE_PER_PLAYER = 8
