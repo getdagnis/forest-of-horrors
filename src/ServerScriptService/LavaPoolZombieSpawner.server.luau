@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local ZOMBIE_NAME = "Drooling Zombie"
+local ZOMBIE_ALIAS = "DroolingZombie"
 local LADDER_NAME = "Pool Ladder"
 local SPAWN_INTERVAL = 60
 local MAX_MONSTERS = 150
@@ -67,7 +68,7 @@ local function findZombieTemplate()
 	end
 
 	for _, item in Workspace:GetDescendants() do
-		if item:IsA("Model") and item.Name == ZOMBIE_NAME and MonsterManager.getConfig(item) then
+		if item:IsA("Model") and (item.Name == ZOMBIE_NAME or item.Name == ZOMBIE_ALIAS) and MonsterManager.getConfig(item) then
 			zombieTemplate = item:Clone()
 			zombieTemplate.Parent = nil
 			return zombieTemplate

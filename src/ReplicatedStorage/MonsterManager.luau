@@ -26,6 +26,10 @@ local MONSTER_CONFIG = {
 	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 7, damageToPlayers = 7, damageToMonsters = 30, zombieGroupTarget = false },
 }
 
+-- Studio templates have existed under both spellings; gameplay must treat them
+-- as the same zombie for AI, counts, damage, and radar.
+local ZOMBIE_ALIAS = "DroolingZombie"
+
 -- FortressBosses have ambiguous/empty names but contain a "Zombie" Humanoid child.
 local function isFortressBoss(model)
 	local zombieHumanoid = model:FindFirstChild("Zombie")
@@ -34,6 +38,7 @@ end
 
 function MonsterManager.getConfig(model)
 	local config = MONSTER_CONFIG[model.Name]
+	if not config and model.Name == ZOMBIE_ALIAS then config = MONSTER_CONFIG["Drooling Zombie"] end
 	if config then
 		return config
 	end
@@ -47,7 +52,7 @@ end
 
 -- Return the {hp, points} config for a monster model, or nil if it isn't a monster.
 function MonsterManager.getMonsterHumanoid(model)
-	if MONSTER_CONFIG[model.Name] then
+	if MONSTER_CONFIG[model.Name] or model.Name == ZOMBIE_ALIAS then
 		local directHumanoid = model:FindFirstChildOfClass("Humanoid")
 		if directHumanoid then
 			return directHumanoid

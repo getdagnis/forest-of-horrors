@@ -11,6 +11,7 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local SPAWN_POINT_NAME = "AppleStoreZombieSpawnPoint"
 local ZOMBIE_NAME = "Drooling Zombie"
+local ZOMBIE_ALIAS = "DroolingZombie"
 local SPAWN_INTERVAL = 30
 local MAX_LIVING_MONSTERS = 150
 local STOP_SPAWNING_AT_OR_BELOW = 25
@@ -50,7 +51,7 @@ local function findZombieTemplate()
 
 	for _, instance in Workspace:GetDescendants() do
 		if instance:IsA("Model")
-			and instance.Name == ZOMBIE_NAME
+				and (instance.Name == ZOMBIE_NAME or instance.Name == ZOMBIE_ALIAS)
 			and not instance:GetAttribute("AppleStoreSpawned")
 			and MonsterManager.getConfig(instance)
 		then

@@ -8,6 +8,7 @@ local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 local AIUtilities = require(ServerStorage:WaitForChild("ROBLOX_AIUtilities"))
 
 local ZOMBIE_NAME = "Drooling Zombie"
+local ZOMBIE_ALIAS = "DroolingZombie"
 local managed = {}
 local brains = {}
 
@@ -24,11 +25,9 @@ local PLAYER_OVERRIDE_RADIUS = 80
 -- remote zombies share one player target; MonsterWorldDirector will later
 -- schedule local centre scenes instead.
 local ENABLE_LEGACY_GLOBAL_PRESSURE = false
-local PRESSURE_INTERVAL = 8
-local MAX_PRESSURE_TOTAL = 24
-local MAX_PRESSURE_PER_PLAYER = 8
-local INITIAL_LURE_RADIUS = 20
-local LURE_RADIUS_PER_MINUTE = 25
+local PRESSURE_INTERVAL = 20
+local MAX_PRESSURE_TOTAL = 6
+local MAX_PRESSURE_PER_PLAYER = 2
 
 -- Idle browsing must look alive even in the broad central region. Every search
 -- decision gets a different local waypoint, so zombies do not all converge on
@@ -213,7 +212,12 @@ local function refreshPressureTargets()
 	if not ENABLE_LEGACY_GLOBAL_PRESSURE then return end
 	local roundStartedAt = tonumber(Workspace:GetAttribute("RoundStartedAt"))
 	local elapsed = roundStartedAt and math.max(0, Workspace:GetServerTimeNow() - roundStartedAt) or 0
-	local lureRadius = INITIAL_LURE_RADIUS + math.floor(elapsed / 60) * LURE_RADIUS_PER_MINUTE
+	local lureFraction = elapsed < 180 and 0
+		or elapsed < 420 and 0.10
+		or elapsed < 660 and 0.25
+		or elapsed < 1020 and 0.40
+		or 0.70
+	if Workspace:GetAttribute("LateRound") ~= true and lureFraction <= 0 then return end
 
 	local candidates = {}
 	for _, zombie in ipairs(livingManagedZombies()) do
@@ -224,25 +228,20 @@ local function refreshPressureTargets()
 	end
 
 	local assigned = 0
+	local assignmentLimit = math.min(MAX_PRESSURE_TOTAL, math.floor(#candidates * lureFraction))
+	if assignmentLimit <= 0 then return end
 	for _, character in ipairs(livingPlayerCharacters()) do
-		if assigned >= MAX_PRESSURE_TOTAL then break end
+		if assigned >= assignmentLimit then break end
 		local targetRoot = rootOf(character)
 		if targetRoot then
 			table.sort(candidates, function(a, b)
 				return (rootOf(a).Position - targetRoot.Position).Magnitude > (rootOf(b).Position - targetRoot.Position).Magnitude
 			end)
-			local perPlayer = 0
-			local index = #candidates
-			while index >= 1 and perPlayer < MAX_PRESSURE_PER_PLAYER and assigned < MAX_PRESSURE_TOTAL do
-				local zombie = candidates[index]
-				local zombieRoot = rootOf(zombie)
-				if zombieRoot and (zombieRoot.Position - targetRoot.Position).Magnitude <= lureRadius then
-					pressureTargets[zombie] = character
-					 table.remove(candidates, index)
-					perPlayer += 1
-					assigned += 1
-				end
-				index -= 1
+			for _ = 1, math.min(MAX_PRESSURE_PER_PLAYER, assignmentLimit - assigned) do
+				local zombie = table.remove(candidates, 1)
+				if not zombie or assigned >= MAX_PRESSURE_TOTAL then break end
+				pressureTargets[zombie] = character
+				assigned += 1
 			end
 		end
 	end
@@ -258,7 +257,7 @@ local function disableOldLocalZombieScript(model)
 end
 
 local function setupZombie(model)
-	if not model:IsA("Model") or model.Name ~= ZOMBIE_NAME then return end
+	if not model:IsA("Model") or (model.Name ~= ZOMBIE_NAME and model.Name ~= ZOMBIE_ALIAS) then return end
 	if managed[model] then return end
 	if not model:FindFirstChildOfClass("Humanoid") then return end
 	if not model:FindFirstChild("HumanoidRootPart") then return end
