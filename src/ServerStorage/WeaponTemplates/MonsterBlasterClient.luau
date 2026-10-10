@@ -492,9 +492,21 @@ local function releaseCharge()
 	fireShot()
 end
 
+local function bindMobileChargeControl()
+	if not UserInputService.TouchEnabled then return end
+	ContextActionService:BindAction("MonsterBlasterCharge", function(_, inputState)
+		if inputState == Enum.UserInputState.Begin then
+			startCharge()
+		elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
+			releaseCharge()
+		end
+		return Enum.ContextActionResult.Sink
+	end, true, Enum.UserInputType.Touch)
+	ContextActionService:SetTitle("MonsterBlasterCharge", "HOLD CHARGE")
+	ContextActionService:SetPosition("MonsterBlasterCharge", UDim2.new(1, -118, 1, -190))
+end
+
 local function unbindMobileChargeControl()
-	-- Remove the old global touch sink. Tool.Activated/Deactivated already owns
-	-- mouse, touch and gamepad firing through native Tool controls.
 	ContextActionService:UnbindAction("MonsterBlasterCharge")
 end
 
@@ -772,7 +784,7 @@ tool.Equipped:Connect(function()
 	cloneWeaponHud()
 	lastChargeUnits = getChargeUnits()
 	updateChargeHud()
-	unbindMobileChargeControl()
+	bindMobileChargeControl()
 	if not pickupSoundPlayed and tool:GetAttribute(Config.LOADOUT_CHARGE_ATTRIBUTE) ~= true then
 		playPickupSound()
 		pickupSoundPlayed = true

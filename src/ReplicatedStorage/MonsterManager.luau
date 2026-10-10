@@ -26,10 +26,6 @@ local MONSTER_CONFIG = {
 	["Smiler"] = { shortName = "Smiler", pluralShortName = "Smilers", hp = 800, hpVsPlayers = 800, hpVsMonsters = 800, points = 7, damageToPlayers = 7, damageToMonsters = 30, zombieGroupTarget = false },
 }
 
--- Studio templates have existed under both spellings; gameplay must treat them
--- as the same zombie for AI, counts, damage, and radar.
-local ZOMBIE_ALIAS = "DroolingZombie"
-
 -- FortressBosses have ambiguous/empty names but contain a "Zombie" Humanoid child.
 local function isFortressBoss(model)
 	local zombieHumanoid = model:FindFirstChild("Zombie")
@@ -38,7 +34,6 @@ end
 
 function MonsterManager.getConfig(model)
 	local config = MONSTER_CONFIG[model.Name]
-	if not config and model.Name == ZOMBIE_ALIAS then config = MONSTER_CONFIG["Drooling Zombie"] end
 	if config then
 		return config
 	end
@@ -52,7 +47,7 @@ end
 
 -- Return the {hp, points} config for a monster model, or nil if it isn't a monster.
 function MonsterManager.getMonsterHumanoid(model)
-	if MONSTER_CONFIG[model.Name] or model.Name == ZOMBIE_ALIAS then
+	if MONSTER_CONFIG[model.Name] then
 		local directHumanoid = model:FindFirstChildOfClass("Humanoid")
 		if directHumanoid then
 			return directHumanoid
@@ -110,6 +105,13 @@ end
 
 function MonsterManager.damageTotem(model, player, requestedDamage, weaponName, scoreColor)
 	if not MonsterManager.isZombieTotem(model) or not player or not player:IsA("Player") then return 0 end
+	-- Pole7 is the unlock totem. Other poles can be targeted visually, but
+	-- cannot lose health or trigger their burst until Pole7 has been destroyed.
+	local pole = model:GetAttribute("ZombieTotemPole")
+	if pole ~= "Pole7" then
+		local unlockPole = workspace:FindFirstChild("ZombieTotemPole7")
+		if not unlockPole or unlockPole:GetAttribute("ZombieTotemDestroyed") ~= true then return 0 end
+	end
 	local health = tonumber(model:GetAttribute("TotemHealth")) or 0
 	if health <= 0 then return 0 end
 	local damage = math.max(0, tonumber(requestedDamage) or 0)

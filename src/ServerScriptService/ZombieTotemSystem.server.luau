@@ -26,10 +26,11 @@ end
 
 -- These are the tested gameplay values; do not replace them with the earlier
 -- planning guesses without an explicit playtest decision.
-local TOTEM_MAX_HEALTH = 2800
+local POLE7_MAX_HEALTH = 2800
+local REGULAR_TOTEM_MAX_HEALTH = 1200
 local REGEN_RATE_PER_SECOND = 40
 local REGEN_STEP = 1
-local BURST_SECONDS = 10
+local BURST_SECONDS = 12
 
 local states = {}
 
@@ -42,15 +43,23 @@ local function getTotemProgress()
 	return destroyed, total
 end
 
-local function findSpawnPoint(pole)
+local SPAWN_POINT_NAMES = { "AppleStoreZombieSpawnPoint", "creepyMonsterSpawnPoint" }
+
+local function findSpawnPoints(pole)
+	local points = {}
 	for _, item in ipairs(Workspace:GetDescendants()) do
-		if item:IsA("BasePart") and item.Name == "AppleStoreZombieSpawnPoint"
+		if item:IsA("BasePart")
 			and item:GetAttribute("ZombieTotemSpawnPoint") == pole
-		then
-			return item
+			then
+				for _, name in ipairs(SPAWN_POINT_NAMES) do
+					if item.Name == name then
+						table.insert(points, item)
+						break
+					end
+				end
 		end
 	end
-	return nil
+	return points
 end
 
 local function scatterAndDestroy(model)
@@ -77,17 +86,21 @@ end
 local function cascadeKill(state)
 	local pole = state.pole
 	for _, item in ipairs(Workspace:GetDescendants()) do
-		if item:IsA("Model") and item:GetAttribute("ZombieTotemSpawnOwner") == pole then
-			local humanoid = MonsterManager.getMonsterHumanoid(item)
-			if humanoid and humanoid.Health > 0 then
-				item:SetAttribute("TotemCascadeKill", true)
-				item:SetAttribute("NoAutoRespawn", true)
-				humanoid:SetAttribute("PermanentMonsterKill", true)
-				humanoid.Health = 0
+		if item:IsA("Model") then
+			local owner = item:GetAttribute("ZombieTotemSpawnOwner")
+			if owner == nil then owner = item:GetAttribute("creepyMonsterSpawnOwner") end
+			if owner == pole then
+				local humanoid = MonsterManager.getMonsterHumanoid(item)
+				if humanoid and humanoid.Health > 0 then
+					item:SetAttribute("TotemCascadeKill", true)
+					item:SetAttribute("NoAutoRespawn", true)
+					humanoid:SetAttribute("PermanentMonsterKill", true)
+					humanoid.Health = 0
+				end
+				end
 			end
 		end
 	end
-end
 
 local function destroyTotem(state)
 	if state.destroyed then return end
@@ -98,10 +111,14 @@ local function destroyTotem(state)
 		totemScoreAward:Fire(attacker, 10, Workspace:GetAttribute("RoundGeneration"),
 			state.model:GetAttribute("TotemLastWeapon"), state.model, state.model:GetAttribute("TotemLastScoreColor"))
 	end
-	if state.spawnPoint then
-		state.spawnPoint:SetAttribute("ZombieTotemDestroyed", true)
-		state.spawnPoint:SetAttribute("ZombieTotemBurstUntil", nil)
+	for _, sp in ipairs(state.spawnPoints) do
+		sp:SetAttribute("ZombieTotemDestroyed", true)
+		sp:SetAttribute("ZombieTotemBurstUntil", nil)
+		if state.pole == "Pole7" and sp.Name == "creepyMonsterSpawnPoint" then
+			sp:Destroy()
+		end
 	end
+	state.model:SetAttribute("ZombieTotemDestroyed", true)
 	cascadeKill(state)
 	local sound = SoundService:FindFirstChild("ZombieTotemDestroyed", true)
 	if sound and sound:IsA("Sound") then
@@ -143,20 +160,24 @@ end
 local function setup(model)
 	if not MonsterManager.isZombieTotem(model) or states[model] then return end
 	local pole = model:GetAttribute("ZombieTotemPole")
-	local spawnPoint = findSpawnPoint(pole)
-	local state = { model = model, pole = pole, spawnPoint = spawnPoint, destroyed = false }
+	local spawnPoints = findSpawnPoints(pole)
+	local maxHealth = pole == "Pole7" and POLE7_MAX_HEALTH or REGULAR_TOTEM_MAX_HEALTH
+	local state = { model = model, pole = pole, spawnPoints = spawnPoints, maxHealth = maxHealth, destroyed = false }
 	states[model] = state
-	model:SetAttribute("TotemMaxHealth", TOTEM_MAX_HEALTH)
+	model:SetAttribute("ZombieTotemDestroyed", false)
+	model:SetAttribute("TotemMaxHealth", maxHealth)
 	model:SetAttribute("TotemDamageDealt", 0)
 	model:SetAttribute("TotemDamageRewardDelta", 0)
-	if tonumber(model:GetAttribute("TotemHealth")) == nil then model:SetAttribute("TotemHealth", TOTEM_MAX_HEALTH) end
-	if spawnPoint then spawnPoint:SetAttribute("ZombieTotemDestroyed", false) end
+	if tonumber(model:GetAttribute("TotemHealth")) == nil then model:SetAttribute("TotemHealth", maxHealth) end
+	for _, sp in ipairs(spawnPoints) do sp:SetAttribute("ZombieTotemDestroyed", false) end
 	model:GetAttributeChangedSignal("TotemHealth"):Connect(function()
 		if state.destroyed then return end
 		local health = tonumber(model:GetAttribute("TotemHealth")) or 0
 		local lastDamageAt = tonumber(model:GetAttribute("TotemLastDamageAt")) or 0
-		if spawnPoint and Workspace:GetServerTimeNow() - lastDamageAt < 0.25 then
-			spawnPoint:SetAttribute("ZombieTotemBurstUntil", Workspace:GetServerTimeNow() + BURST_SECONDS)
+		if Workspace:GetServerTimeNow() - lastDamageAt < 0.25 then
+			for _, sp in ipairs(spawnPoints) do
+				sp:SetAttribute("ZombieTotemBurstUntil", Workspace:GetServerTimeNow() + BURST_SECONDS)
+			end
 		end
 		if Workspace:GetServerTimeNow() - lastDamageAt < 0.25 then
 			awardDamageThresholds(model)
@@ -164,7 +185,7 @@ local function setup(model)
 			local attackerId = tonumber(model:GetAttribute("TotemLastAttackerId"))
 			local attacker = attackerId and Players:GetPlayerByUserId(attackerId)
 			if attacker then
-				damageLabelEvent:FireClient(attacker, model, health, TOTEM_MAX_HEALTH, Workspace:GetAttribute("RoundGeneration"))
+				damageLabelEvent:FireClient(attacker, model, health, state.maxHealth, Workspace:GetAttribute("RoundGeneration"))
 			end
 		end
 	end)
@@ -173,11 +194,11 @@ local function setup(model)
 			task.wait(REGEN_STEP)
 			if Workspace:GetAttribute("RoundState") == "Active" then
 				local health = tonumber(model:GetAttribute("TotemHealth")) or 0
-				if health > 0 and health < TOTEM_MAX_HEALTH then
-					model:SetAttribute("TotemHealth", math.min(TOTEM_MAX_HEALTH, health + REGEN_RATE_PER_SECOND * REGEN_STEP))
+				if health > 0 and health < state.maxHealth then
+					model:SetAttribute("TotemHealth", math.min(state.maxHealth, health + REGEN_RATE_PER_SECOND * REGEN_STEP))
+				end
 				end
 			end
-		end
 	end)
 end
 

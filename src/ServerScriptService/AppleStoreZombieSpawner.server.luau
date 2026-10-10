@@ -5,21 +5,23 @@
 -- while the round is active and the broad living-monster safety cap permits it.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 local Workspace = game:GetService("Workspace")
 
 local MonsterManager = require(ReplicatedStorage:WaitForChild("MonsterManager"))
 
 local SPAWN_POINT_NAME = "AppleStoreZombieSpawnPoint"
 local ZOMBIE_NAME = "Drooling Zombie"
-local ZOMBIE_ALIAS = "DroolingZombie"
 local SPAWN_INTERVAL = 30
-local MAX_LIVING_MONSTERS = 150
+local BURST_INTERVAL = 5
+local MAX_LIVING_MONSTERS = 120
 local STOP_SPAWNING_AT_OR_BELOW = 25
-local DEFAULT_HEIGHT_OFFSET = 6
+local DEFAULT_HEIGHT_OFFSET = 2
+local DEFAULT_SPAWN_RADIUS = 20 -- studs; random horizontal offset from spawn point center
 local NO_SPAWN_WINDOW_SECONDS = 12 * 60 -- no zombie spawning in the final 12 minutes
 
 local function isInNoSpawnWindow()
-	if Workspace:GetAttribute("RoundState") ~= "Active" then return true end
+	if Workspace:GetAttribute("GameStopped") == true then return true end
 	local endsAt = tonumber(Workspace:GetAttribute("RoundEndsAt"))
 	if not endsAt then return false end
 	return Workspace:GetServerTimeNow() >= endsAt - NO_SPAWN_WINDOW_SECONDS
@@ -49,16 +51,12 @@ end
 local function findZombieTemplate()
 	if zombieTemplate then return zombieTemplate end
 
-	for _, instance in Workspace:GetDescendants() do
-		if instance:IsA("Model")
-				and (instance.Name == ZOMBIE_NAME or instance.Name == ZOMBIE_ALIAS)
-			and not instance:GetAttribute("AppleStoreSpawned")
-			and MonsterManager.getConfig(instance)
-		then
-			zombieTemplate = instance:Clone()
-			zombieTemplate.Parent = nil
-			return zombieTemplate
-		end
+	local template = ServerStorage:FindFirstChild("MonsterTemplates")
+		and ServerStorage.MonsterTemplates:FindFirstChild("Drooling Zombie")
+	if template and template:IsA("Model") then
+		zombieTemplate = template:Clone()
+		zombieTemplate.Parent = nil
+		return zombieTemplate
 	end
 
 	return nil
@@ -66,32 +64,37 @@ end
 
 local function getSpawnCFrame(spawnPoint)
 	local height = tonumber(spawnPoint:GetAttribute("SpawnHeight")) or DEFAULT_HEIGHT_OFFSET
-	-- The marker is deliberately the exact authored interior point. A random
-	-- offset across its old footprint could put a new zombie beyond a shop wall.
-	return spawnPoint.CFrame * CFrame.new(0, spawnPoint.Size.Y * 0.5 + height, 0)
+	local radius = tonumber(spawnPoint:GetAttribute("SpawnRadius")) or DEFAULT_SPAWN_RADIUS
+	-- Pick a random point within a circle of the given radius around the spawn point.
+	local angle = math.random() * math.pi * 2
+	local distance = math.sqrt(math.random()) * radius -- uniform distribution across the disc
+	local offsetX = math.cos(angle) * distance
+	local offsetZ = math.sin(angle) * distance
+	return spawnPoint.CFrame * CFrame.new(offsetX, spawnPoint.Size.Y * 0.5 + height, offsetZ)
 end
 
-local function spawnZombie(spawnPoint, generation)
-	if Workspace:GetAttribute("RoundState") ~= "Active"
-		or tonumber(Workspace:GetAttribute("RoundGeneration")) ~= generation
-		or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
+local function spawnZombie(spawnPoint)
+	if Workspace:GetAttribute("RoundActive") == false or Workspace:GetAttribute("UndergroundPhaseActive") == true then return end
+	if spawnPoint:GetAttribute("ZombieTotemDestroyed") == true then return end
 	if isInNoSpawnWindow() then return end
 	local burst = (tonumber(spawnPoint:GetAttribute("ZombieTotemBurstUntil")) or 0) > Workspace:GetServerTimeNow()
-	if spawnPoint:GetAttribute("ZombieTotemDestroyed") == true then return end
 	local livingCount = countLivingMonsters()
-	local configuredCap = math.max(1, math.floor(tonumber(Workspace:GetAttribute("MonsterMaxCount")) or MAX_LIVING_MONSTERS))
-	local effectiveCap = math.min(MAX_LIVING_MONSTERS, configuredCap)
 	-- The late-round population is intentionally allowed to shrink. Do not
 	-- refill the last twenty canonical hostile contacts from this generator.
-	if not burst and (livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= effectiveCap) then return end
+	if not burst and (livingCount <= STOP_SPAWNING_AT_OR_BELOW or livingCount >= MAX_LIVING_MONSTERS) then return end
 
 	local template = findZombieTemplate()
 	if not template then
-		warn("[AppleStoreZombieSpawner] no live Drooling Zombie is available as a template")
+		warn("[AppleStoreZombieSpawner] ServerStorage.MonsterTemplates.DroolingZombie is not available as a template")
 		return
 	end
 
 	local zombie = template:Clone()
+	-- The template lives in ServerStorage as "Drooling Zombie" but every game
+	-- system (MonsterManager, ZombieAISystem, MonsterSystem) keys on the exact
+	-- name "DroolingZombie (with a space).  Rename the clone so it is
+	-- recognised as a real monster and receives AI, HP, and lifecycle tracking.
+	zombie.Name = ZOMBIE_NAME
 	-- Continuous generator output receives one life. It must not enlarge the
 	-- round-restart template list or recursively enter the normal respawn pool.
 	zombie:SetAttribute("AppleStoreSpawned", true)
@@ -115,12 +118,11 @@ local function startSpawnPoint(spawnPoint)
 		while spawnPoint.Parent and spawnPoint:IsDescendantOf(Workspace) do
 			local now = Workspace:GetServerTimeNow()
 			local burst = (tonumber(spawnPoint:GetAttribute("ZombieTotemBurstUntil")) or 0) > now
-			if burst and nextSpawnAt > now + 3 then nextSpawnAt = now + 3 end
-			if now >= nextSpawnAt and generation and Workspace:GetAttribute("RoundState") == "Active"
-				and tonumber(Workspace:GetAttribute("RoundGeneration")) == generation then
-				spawnZombie(spawnPoint, generation)
+			if burst and nextSpawnAt > now + BURST_INTERVAL then nextSpawnAt = now + BURST_INTERVAL end
+			if now >= nextSpawnAt and Workspace:GetAttribute("RoundActive") == true then
+				spawnZombie(spawnPoint)
 				burst = (tonumber(spawnPoint:GetAttribute("ZombieTotemBurstUntil")) or 0) > Workspace:GetServerTimeNow()
-				nextSpawnAt = Workspace:GetServerTimeNow() + (burst and 3 or SPAWN_INTERVAL)
+				nextSpawnAt = Workspace:GetServerTimeNow() + (burst and BURST_INTERVAL or SPAWN_INTERVAL)
 			end
 			generation = tonumber(Workspace:GetAttribute("RoundGeneration"))
 			task.wait(0.5)
