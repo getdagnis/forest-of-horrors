@@ -1,8 +1,8 @@
 -- MonsterBlasterClient. Place inside the canonical MonsterBlaster Tool.
--- Tool.Activated/Deactivated handles a short charge on mouse, touch, and gamepad.
+-- Desktop/gamepad use Tool.Activated/Deactivated; touch-only devices use the
+-- contextual blaster control created in this script.
 
 local Debris = game:GetService("Debris")
-local ContextActionService = game:GetService("ContextActionService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
@@ -41,6 +41,13 @@ local CROSSHAIR_LINE_THICKNESS = 2
 local CROSSHAIR_GAP = 3
 local CROSSHAIR_Z_INDEX = 10
 local CHARGE_HUD_Z_INDEX = 11
+local MOBILE_FIRE_Z_INDEX = 20
+local MOBILE_FIRE_SIZE = 86
+local MOBILE_FIRE_MARGIN = 34
+local MOBILE_FIRE_BOTTOM = 168
+local MOBILE_FIRE_RING_SEGMENTS = 16
+local MOBILE_FIRE_RING_RADIUS = 34
+local MOBILE_FIRE_RING_THICKNESS = 4
 local CHARGE_HUD_WIDTH = 382
 local CHARGE_HUD_HEIGHT = 58
 local CHARGE_HUD_MARGIN = 24
@@ -98,6 +105,10 @@ local chargeLevelTitle
 local chargeCells = {}
 local chargeHudScale
 local chargeHudViewportConnection
+local mobileFireButton
+local mobileFireRing = {}
+local mobileTouchInput
+local mobileTouchEndedConnection
 local depletedMessage
 local depletedMessageToken = 0
 local depletedSoundToken = 0
@@ -108,6 +119,94 @@ local groundPreview
 local didWarnMissingHud = false
 local didWarnMissingAmbient = false
 local fireShot
+local startCharge
+local releaseCharge
+local getChargeProgress
+
+local function isTouchOnly()
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+
+local function updateMobileFireButton()
+	if not mobileFireButton then return end
+	local progress = charging and getChargeProgress() or 0
+	local activeSegments = math.ceil(progress * #mobileFireRing)
+	for index, segment in ipairs(mobileFireRing) do
+		segment.BackgroundTransparency = index <= activeSegments and 0.05 or 0.78
+		segment.BackgroundColor3 = coolingDown and CHARGE_EMPTY_COLOR or CHARGE_FULL_COLOR
+	end
+	if charging then
+		mobileFireButton.Text = "CHARGE"
+	elseif coolingDown then
+		mobileFireButton.Text = "READY"
+	else
+		mobileFireButton.Text = "BLAST"
+	end
+	mobileFireButton.TextColor3 = coolingDown and Color3.fromRGB(130, 160, 170) or CHARGE_FULL_COLOR
+end
+
+local function createMobileFireButton(parent)
+	if not isTouchOnly() then return end
+
+	mobileFireButton = Instance.new("TextButton")
+	mobileFireButton.Name = "MobileBlasterFireButton"
+	mobileFireButton.AnchorPoint = Vector2.new(1, 1)
+	mobileFireButton.Position = UDim2.new(1, -MOBILE_FIRE_MARGIN, 1, -MOBILE_FIRE_BOTTOM)
+	mobileFireButton.Size = UDim2.fromOffset(MOBILE_FIRE_SIZE, MOBILE_FIRE_SIZE)
+	mobileFireButton.BackgroundColor3 = Color3.fromRGB(5, 18, 28)
+	mobileFireButton.BackgroundTransparency = 0.16
+	mobileFireButton.BorderSizePixel = 0
+	mobileFireButton.AutoButtonColor = false
+	mobileFireButton.Active = true
+	mobileFireButton.Text = "BLAST"
+	mobileFireButton.Font = Enum.Font.GothamBold
+	mobileFireButton.TextSize = 12
+	mobileFireButton.TextColor3 = CHARGE_FULL_COLOR
+	mobileFireButton.TextStrokeColor3 = Color3.fromRGB(0, 12, 22)
+	mobileFireButton.TextStrokeTransparency = 0.35
+	mobileFireButton.ZIndex = MOBILE_FIRE_Z_INDEX
+	mobileFireButton.Parent = parent
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(1, 0)
+	corner.Parent = mobileFireButton
+	local outline = Instance.new("UIStroke")
+	outline.Name = "BlasterOutline"
+	outline.Color = CHARGE_FULL_COLOR
+	outline.Thickness = 2
+	outline.Transparency = 0.15
+	outline.Parent = mobileFireButton
+
+	table.clear(mobileFireRing)
+	for index = 1, MOBILE_FIRE_RING_SEGMENTS do
+		local angle = ((index - 1) / MOBILE_FIRE_RING_SEGMENTS) * math.pi * 2 - math.pi / 2
+		local segment = Instance.new("Frame")
+		segment.Name = "ChargeSegment" .. index
+		segment.AnchorPoint = Vector2.new(0.5, 0.5)
+		segment.Position = UDim2.new(0.5, math.cos(angle) * MOBILE_FIRE_RING_RADIUS, 0.5, math.sin(angle) * MOBILE_FIRE_RING_RADIUS)
+		segment.Size = UDim2.fromOffset(MOBILE_FIRE_RING_THICKNESS, 10)
+		segment.Rotation = math.deg(angle) + 90
+		segment.BackgroundColor3 = CHARGE_FULL_COLOR
+		segment.BackgroundTransparency = 0.78
+		segment.BorderSizePixel = 0
+		segment.ZIndex = MOBILE_FIRE_Z_INDEX + 1
+		segment.Parent = mobileFireButton
+		table.insert(mobileFireRing, segment)
+	end
+
+	mobileFireButton.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.Touch or mobileTouchInput then return end
+		mobileTouchInput = input
+		startCharge()
+	end)
+	mobileTouchEndedConnection = UserInputService.InputEnded:Connect(function(input)
+		if input == mobileTouchInput then
+			mobileTouchInput = nil
+			releaseCharge()
+		end
+	end)
+	updateMobileFireButton()
+end
 
 local function updateChargeHudScale()
 	if not chargeHudScale then return end
@@ -182,7 +281,7 @@ local function getPower()
 	return Config.SHOT_POWER
 end
 
-local function getChargeProgress()
+getChargeProgress = function()
 	if not charging or chargeStartedAt <= 0 then return 0 end
 	return math.clamp((os.clock() - chargeStartedAt) / Config.CHARGE_TIME, 0, 1)
 end
@@ -383,6 +482,7 @@ local function cloneWeaponHud()
 		outline.Parent = cell
 		chargeCells[index] = cell
 	end
+	createMobileFireButton(activeHud)
 
 end
 
@@ -410,6 +510,7 @@ local function updateChargeHud()
 		local outline = cell:FindFirstChild("EmptyOutline")
 		if outline and outline:IsA("UIStroke") then outline.Enabled = unitsInCell < 2 end
 	end
+	updateMobileFireButton()
 end
 
 local function onChargeChanged()
@@ -454,6 +555,9 @@ end
 local function destroyWeaponHud()
 	if chargeHudViewportConnection then chargeHudViewportConnection:Disconnect() end
 	chargeHudViewportConnection = nil
+	if mobileTouchEndedConnection then mobileTouchEndedConnection:Disconnect() end
+	mobileTouchEndedConnection = nil
+	mobileTouchInput = nil
 	chargeHudScale = nil
 	if activeHud then activeHud:Destroy() end
 	local playerGui = player:FindFirstChildOfClass("PlayerGui")
@@ -464,9 +568,11 @@ local function destroyWeaponHud()
 	chargeLevelTitle = nil
 	table.clear(chargeCells)
 	depletedMessage = nil
+	mobileFireButton = nil
+	table.clear(mobileFireRing)
 end
 
-local function startCharge()
+startCharge = function()
 	if not isActiveRound() or charging then return end
 	if not equipForCharge() then return end
 	if coolingDown then playCooldownSound() return end
@@ -480,7 +586,7 @@ local function startCharge()
 	startChargeSound()
 end
 
-local function releaseCharge()
+releaseCharge = function()
 	if not charging then return end
 	local heldSeconds = os.clock() - chargeStartedAt
 	charging = false
@@ -490,24 +596,6 @@ local function releaseCharge()
 	updateChargeHud()
 	if not isActiveRound() or heldSeconds < Config.CHARGE_TIME then return end
 	fireShot()
-end
-
-local function bindMobileChargeControl()
-	if not UserInputService.TouchEnabled then return end
-	ContextActionService:BindAction("MonsterBlasterCharge", function(_, inputState)
-		if inputState == Enum.UserInputState.Begin then
-			startCharge()
-		elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
-			releaseCharge()
-		end
-		return Enum.ContextActionResult.Sink
-	end, true, Enum.UserInputType.Touch)
-	ContextActionService:SetTitle("MonsterBlasterCharge", "HOLD CHARGE")
-	ContextActionService:SetPosition("MonsterBlasterCharge", UDim2.new(1, -118, 1, -190))
-end
-
-local function unbindMobileChargeControl()
-	ContextActionService:UnbindAction("MonsterBlasterCharge")
 end
 
 local function clearLegacyChargeHud()
@@ -764,7 +852,6 @@ local function cleanupWeaponState()
 	if ambientLoop then ambientLoop:Stop() end
 	ambientLoop = nil
 	resetState()
-	unbindMobileChargeControl()
 	depletedSoundToken += 1
 	destroyWeaponHud()
 	clearLegacyChargeHud()
@@ -772,10 +859,12 @@ local function cleanupWeaponState()
 end
 
 tool.Activated:Connect(function()
+	if isTouchOnly() then return end
 	startCharge()
 end)
 
 tool.Deactivated:Connect(function()
+	if isTouchOnly() then return end
 	releaseCharge()
 end)
 
@@ -784,7 +873,6 @@ tool.Equipped:Connect(function()
 	cloneWeaponHud()
 	lastChargeUnits = getChargeUnits()
 	updateChargeHud()
-	bindMobileChargeControl()
 	if not pickupSoundPlayed and tool:GetAttribute(Config.LOADOUT_CHARGE_ATTRIBUTE) ~= true then
 		playPickupSound()
 		pickupSoundPlayed = true
@@ -822,9 +910,8 @@ end)
 
 player.CharacterRemoving:Connect(cleanupWeaponState)
 
--- Roblox can remove a Tool during respawn without firing Unequipped. The
--- ContextActionService button is client-global, so explicitly clean it when
--- this Tool leaves both the Character and Backpack.
+-- Roblox can remove a Tool during respawn without firing Unequipped. Clean up
+-- the weapon state when this Tool leaves both the Character and Backpack.
 tool.AncestryChanged:Connect(function()
 	if not isEquipped() then
 		cleanupWeaponState()
@@ -843,6 +930,7 @@ RunService.RenderStepped:Connect(function()
 	-- native pointer hidden so the Blaster has one unambiguous aim indicator.
 	UserInputService.MouseIconEnabled = false
 	if charging then updateChargeHud() end
+	updateMobileFireButton()
 	updateCrosshair()
 	updateGroundPreview(getChargeProgress())
 end)

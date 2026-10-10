@@ -67,8 +67,8 @@ function GunAim.isCentered(player)
 end
 
 -- Desktop helpers are intentional aim feedback, not permanent free-mouse UI.
--- Touch has no RMB, so it keeps the centred helper path until mobile gets its
--- own dedicated combat pass.
+-- Mobile uses a dedicated blaster action control, while the camera-centred ray
+-- keeps aiming predictable during that hold.
 function GunAim.isFocused(player)
 	return player:GetAttribute("WeaponShoulderAim") == true
 		or player:GetAttribute("WeaponFirstPerson") == true
